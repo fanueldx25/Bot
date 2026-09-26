@@ -1,3 +1,5 @@
+// bot.js
+
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -18,11 +20,13 @@ let sock = null;
 let callbacks = {};
 let currentNumber = null;
 let isStopping = false;
+let hasRequestedCode = false; // <-- ADDED: Lock to prevent spam
 
 async function startBot(phoneNumber, cbs) {
   callbacks = cbs || {};
   currentNumber = phoneNumber;
   isStopping = false;
+  hasRequestedCode = false; // <-- ADDED: Reset lock on new start
   
   fs.mkdirSync(SESSION_DIR, { recursive: true });
   
@@ -42,23 +46,29 @@ async function startBot(phoneNumber, cbs) {
     generateHighQualityLinkPreview: true
   });
   
-  // Request pairing code if not already registered
-  if (!sock.authState.creds.registered) {
-    setTimeout(async () => {
+  sock.ev.on('creds.update', saveCreds);
+  
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    
+    // ===== THE FIX: Only request code when the socket is ready (qr event) =====
+    // We use `qr` as the readiness trigger for pairing code mode.
+    // The `hasRequestedCode` flag ensures we only do this ONCE per session start.
+    if (qr && !sock.authState.creds.registered && !hasRequestedCode) {
+      hasRequestedCode = true; // Lock it immediately
+      console.log('[Bot] Socket is ready. Requesting pairing code...');
       try {
+        // Add a tiny delay just to be safe (Baileys can be picky)
+        await new Promise(r => setTimeout(r, 500));
+        
         const code = await sock.requestPairingCode(phoneNumber);
         console.log('[Bot] Pairing code:', code);
         callbacks.onPairingCode?.(code);
       } catch (err) {
         console.error('[Bot] Failed to get pairing code:', err.message);
+        hasRequestedCode = false; // Allow retry if it truly failed
       }
-    }, 3000);
-  }
-  
-  sock.ev.on('creds.update', saveCreds);
-  
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
+    }
     
     if (connection === 'open') {
       console.log('[Bot] Connected!');
