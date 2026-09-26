@@ -1,17 +1,6 @@
 /**
  * ============================================================================
- * WHATSAPP BOT - MAIN LOGIC
- * ============================================================================
- * All bot logic, command handling, and state management.
- * Structure:
- *   1. Imports & Configuration
- *   2. State Management
- *   3. UI Style Constants
- *   4. Utility Helpers
- *   5. Session Management
- *   6. Feature Handlers
- *   7. Command Handler
- *   8. Main Bot Logic
+ * WHATSAPP BOT - MAIN LOGIC (FIXED)
  * ============================================================================
  */
 
@@ -28,9 +17,10 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const readline = require('readline');
 
 // ============================================================================
-// 1. IMPORTS & CONFIGURATION
+// 1. CONFIGURATION
 // ============================================================================
 
 const SESSION_DIR = process.env.SESSION_DIR
@@ -44,7 +34,7 @@ const STATE_FILE = process.env.SESSION_DIR
 const BANNER_PATH = path.join(__dirname, 'assets', 'banner.jpg');
 let BANNER_BUFFER = null;
 
-const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '';
+const ADMIN_NUMBER = (process.env.ADMIN_NUMBER || '').replace(/[^0-9]/g, '');
 
 // ============================================================================
 // 2. STATE MANAGEMENT
@@ -54,7 +44,6 @@ let sock = null;
 let callbacks = {};
 let currentNumber = null;
 let isStopping = false;
-let hasRequestedCode = false;
 let botJid = null;
 
 let pausedChats = new Set();
@@ -199,6 +188,10 @@ function extractText(msg) {
   );
 }
 
+function cleanNumber(num) {
+  return String(num || '').replace(/[^0-9]/g, '');
+}
+
 // ============================================================================
 // 5. SESSION MANAGEMENT
 // ============================================================================
@@ -235,6 +228,12 @@ function restoreSessionFromFile(jsonPath) {
   try {
     if (!fs.existsSync(jsonPath)) return false;
     const bundle = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    // Clear old session first to avoid stale creds
+    if (fs.existsSync(SESSION_DIR)) {
+      for (const f of fs.readdirSync(SESSION_DIR)) {
+        fs.unlinkSync(path.join(SESSION_DIR, f));
+      }
+    }
     fs.mkdirSync(SESSION_DIR, { recursive: true });
     for (const [filename, content] of Object.entries(bundle)) {
       fs.writeFileSync(
@@ -442,10 +441,6 @@ async function handleCommand(msg, from, senderJid, rawText) {
   const admin = isAdmin(senderJid);
   const isGroup = from.endsWith('@g.us');
 
-  const publicCmds = [
-    '.help', '.menu', '.ping', '.id', '.myid', '.time', '.uptime',
-    '.sticker', '.s', '.toimg', '.tts', '.voice', '.getpp'
-  ];
   const adminCmds = [
     '.status', '.backup', '.restore', '.logout', '.pause', '.resume', '.pausestatus',
     '.welcome', '.goodbye', '.setwelcome', '.tagall', '.hidetag', '.kick', '.promote', '.demote',
@@ -702,6 +697,9 @@ async function handleCommand(msg, from, senderJid, rawText) {
       return;
     }
     try {
+      if (typeof fetch !== 'function') {
+        throw new Error('fetch not available (Node 18+ required)');
+      }
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
         targetText
       )}&tl=en&client=tw-ob`;
@@ -1011,9 +1009,15 @@ Reply to a message with *.poststatus* to publish it to your WhatsApp status.`
 
       if (ok) {
         await sock.sendMessage(from, { text: '✅ *Session restored. Restarting bot...*' });
+        // Reset isStopping BEFORE calling stopBot so reconnect logic works
         setTimeout(() => {
-          stopBot();
-          setTimeout(() => startBot(currentNumber, callbacks), 2000);
+          isStopping = true;
+          try { sock?.end(undefined); } catch (e) {}
+          sock = null;
+          setTimeout(() => {
+            isStopping = false;
+            startBot(currentNumber, callbacks);
+          }, 2000);
         }, 1500);
       } else {
         await sock.sendMessage(from, { text: '❌ *Restore failed.*' });
@@ -1026,13 +1030,20 @@ Reply to a message with *.poststatus* to publish it to your WhatsApp status.`
   if (base === '.logout') {
     await sock.sendMessage(from, { text: '🚪 *Logging out...*' });
     try { await sock.logout(); } catch (e) {}
-    stopBot();
+    isStopping = true;
+    try { sock?.end(undefined); } catch (e) {}
+    sock = null;
     return;
   }
   if (base === '.restart') {
     await sock.sendMessage(from, { text: '🔄 *Restarting...*' });
-    stopBot();
-    setTimeout(() => startBot(currentNumber, callbacks), 2000);
+    isStopping = true;
+    try { sock?.end(undefined); } catch (e) {}
+    sock = null;
+    setTimeout(() => {
+      isStopping = false;
+      startBot(currentNumber, callbacks);
+    }, 2000);
     return;
   }
 }
@@ -1043,9 +1054,10 @@ Reply to a message with *.poststatus* to publish it to your WhatsApp status.`
 
 async function startBot(phoneNumber, cbs) {
   callbacks = cbs || {};
-  currentNumber = phoneNumber;
   isStopping = false;
-  hasRequestedCode = false;
+
+  // Sanitize phone number — critical for pairing code validity
+  currentNumber = cleanNumber(phoneNumber);
 
   loadState();
   loadBanner();
@@ -1074,21 +1086,45 @@ async function startBot(phoneNumber, cbs) {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr && !sock.authState.creds.registered && !hasRequestedCode) {
-      hasRequestedCode = true;
+  // ──────────────────────────────────────────────────────────────
+  // PAIRING CODE — must be requested BEFORE QR fires, only once
+  // ──────────────────────────────────────────────────────────────
+  if (!state.creds.registered && currentNumber) {
+    // Wait for socket to be fully initialized before requesting
+    setTimeout(async () => {
+      if (isStopping || !sock) return;
       try {
-        await new Promise((r) => setTimeout(r, 500));
-        const code = await sock.requestPairingCode(phoneNumber);
-        console.log('[Bot] Pairing code:', code);
+        const code = await sock.requestPairingCode(currentNumber);
+        console.log('\n╔════════════════════════════════╗');
+        console.log(`║   PAIRING CODE: ${code}   ║`);
+        console.log('╚════════════════════════════════╝');
+        console.log('📱 WhatsApp → Settings → Linked Devices');
+        console.log('   → Link with phone number → enter code\n');
         callbacks.onPairingCode?.(code);
       } catch (err) {
         console.error('[Bot] Pairing error:', err.message);
-        hasRequestedCode = false;
+        // Retry once after WhatsApp clears the previous code (~15s)
+        setTimeout(async () => {
+          if (isStopping || !sock) return;
+          try {
+            const code = await sock.requestPairingCode(currentNumber);
+            console.log(`[Bot] Pairing code (retry): ${code}`);
+            callbacks.onPairingCode?.(code);
+          } catch (e2) {
+            console.error('[Bot] Pairing retry failed:', e2.message);
+          }
+        }, 15000);
       }
-    }
+    }, 3000);
+  } else if (state.creds.registered) {
+    console.log('[Bot] Registered session found, skipping pairing.');
+  } else {
+    console.error('[Bot] No phone number and no registered session. Cannot start.');
+    return;
+  }
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
 
     if (connection === 'open') {
       console.log('[Bot] Connected!');
@@ -1120,13 +1156,19 @@ async function startBot(phoneNumber, cbs) {
       const from = msg.key.remoteJid;
       if (!from) continue;
 
+      // Skip status broadcasts
+      if (from === 'status@broadcast') continue;
+
       const senderJid = msg.key.participant || from;
       const senderNum = (senderJid || '').split('@')[0].split(':')[0];
       const fromMeIsAdmin = msg.key.fromMe && ADMIN_NUMBER && senderNum === ADMIN_NUMBER;
-      const fromBot = msg.key.fromMe && botJid && (msg.key.participant || '').startsWith(botJid.split(':')[0]);
+      const botNum = botJid ? botJid.split(':')[0].split('@')[0] : null;
+      const fromBot = msg.key.fromMe && botNum && senderNum === botNum;
 
-      if (msg.key.fromMe && !fromMeIsAdmin) continue;
+      // Skip bot's own outgoing messages (unless admin is the sender)
       if (fromBot && !fromMeIsAdmin) continue;
+      // Skip non-admin fromMe messages (prevents loops)
+      if (msg.key.fromMe && !fromMeIsAdmin && !ADMIN_NUMBER) continue;
 
       try { await sock.readMessages([msg.key]); } catch (e) {}
 
@@ -1137,7 +1179,15 @@ async function startBot(phoneNumber, cbs) {
       const text = extractText(msg);
       console.log(`[Msg] ${from}: ${text}`);
 
+      // Pause check applies to everything except commands that unpause
+      const paused = isPaused(from);
+
       if (text.startsWith('.')) {
+        // Allow .resume and .pausestatus even when paused
+        const cmdBase = text.trim().toLowerCase().split(' ')[0];
+        if (paused && cmdBase !== '.resume' && cmdBase !== '.pausestatus') {
+          continue;
+        }
         try {
           await handleCommand(msg, from, senderJid, text);
         } catch (e) {
@@ -1146,7 +1196,7 @@ async function startBot(phoneNumber, cbs) {
         continue;
       }
 
-      if (isPaused(from)) continue;
+      if (paused) continue;
 
       try {
         if (text.toLowerCase() === 'ping') {
@@ -1183,6 +1233,36 @@ function stopBot() {
       sock = null;
     }
   } catch (e) {}
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CLI entry point — if run directly, prompt for number and start
+// ──────────────────────────────────────────────────────────────────────────
+async function main() {
+  let number = process.env.PHONE_NUMBER || '';
+  if (!number) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    number = await new Promise((resolve) =>
+      rl.question('Enter WhatsApp number (country code, no +): ', (a) => {
+        rl.close();
+        resolve(a.trim());
+      })
+    );
+  }
+  await startBot(number, {
+    onPairingCode: (code) => {
+      // Already logged by startBot; hook available for external callers
+    },
+    onConnected: () => console.log('✅ Bot ready.'),
+    onDisconnected: (r) => console.log('❌ Disconnected:', r)
+  });
+}
+
+if (require.main === module) {
+  main().catch((e) => {
+    console.error('Fatal:', e);
+    process.exit(1);
+  });
 }
 
 module.exports = { startBot, stopBot };
