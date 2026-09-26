@@ -1046,8 +1046,6 @@ async function startBot(phoneNumber, cbs) {
   currentNumber = phoneNumber;
   isStopping = false;
   hasRequestedCode = false;
-  
-  fs.rmSync(SESSION_DIR, { recursive: true, force: true });
 
   loadState();
   loadBanner();
