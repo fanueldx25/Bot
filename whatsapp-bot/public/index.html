@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WhatsApp Bot Control</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0b141a;
+      color: #e9edef;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: #111b21;
+      border-radius: 16px;
+      padding: 28px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.5);
+    }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .sub { color: #8696a0; font-size: 13px; margin-bottom: 22px; }
+    input {
+      width: 100%;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid #2a3942;
+      background: #202c33;
+      color: #e9edef;
+      font-size: 16px;
+      outline: none;
+    }
+    input:focus { border-color: #00a884; }
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      border-radius: 10px;
+      border: none;
+      background: #00a884;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.danger { background: #b33; }
+    .code-box {
+      margin-top: 20px;
+      padding: 18px;
+      background: #202c33;
+      border-radius: 12px;
+      text-align: center;
+      border: 1px dashed #00a884;
+    }
+    .code {
+      font-size: 30px;
+      letter-spacing: 6px;
+      font-weight: 700;
+      color: #00a884;
+      font-family: monospace;
+      margin: 8px 0;
+    }
+    .hint { font-size: 12px; color: #8696a0; line-height: 1.5; }
+    .status {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    .s-idle { background: #2a3942; color: #8696a0; }
+    .s-awaiting_code { background: #4a3b00; color: #ffb900; }
+    .s-connected { background: #053d2b; color: #00e08a; }
+    .s-expired { background: #3d0a0a; color: #ff6b6b; }
+    .timer { font-size: 13px; color: #8696a0; margin-top: 14px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>WhatsApp Bot</h1>
+    <div class="sub">Connect using a phone number (no QR needed)</div>
+
+    <div id="statusBadge" class="status s-idle">idle</div>
+
+    <div id="connectForm">
+      <input id="phone" type="tel" placeholder="15551234567 (country code, no +)" />
+      <button id="connectBtn">Get Pairing Code</button>
+    </div>
+
+    <div id="codeSection" style="display:none">
+      <div class="code-box">
+        <div class="hint">Enter this code in WhatsApp → Linked Devices → Link with phone number</div>
+        <div class="code" id="code">--------</div>
+        <div class="hint">Code expires in <span id="codeTimer">5:00</span></div>
+      </div>
+    </div>
+
+    <div id="connectedSection" style="display:none">
+      <div class="code-box" style="border-color:#00e08a">
+        <div style="font-size:18px;font-weight:600;color:#00e08a">✅ Bot is connected</div>
+        <div class="hint" style="margin-top:8px">Number: <span id="connNumber"></span></div>
+      </div>
+      <div class="timer">Session expires in <span id="sessionTimer">--:--</span></div>
+      <button class="danger" id="disconnectBtn">Disconnect</button>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let state = {};
+    let codeExpiresAt = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    socket.on('state', (s) => {
+      state = s;
+      render();
+    });
+
+    function render() {
+      const badge = $('statusBadge');
+      badge.className = 'status s-' + (state.status || 'idle');
+      badge.textContent = state.status || 'idle';
+
+      $('connectForm').style.display =
+        state.status === 'idle' || state.status === 'expired' ? 'block' : 'none';
+      $('codeSection').style.display =
+        state.status === 'awaiting_code' ? 'block' : 'none';
+      $('connectedSection').style.display =
+        state.status === 'connected' ? 'block' : 'none';
+
+      if (state.pairingCode) $('code').textContent = state.pairingCode;
+      if (state.number && state.status === 'connected') $('connNumber').textContent = '+' + state.number;
+
+      if (state.status === 'awaiting_code') {
+        // reset local code expiry countdown (5 min from now, matches server)
+        if (!codeExpiresAt) codeExpiresAt = Date.now() + 5 * 60 * 1000;
+      } else {
+        codeExpiresAt = null;
+      }
+    }
+
+    setInterval(() => {
+      if (codeExpiresAt) {
+        const left = Math.max(0, codeExpiresAt - Date.now());
+        const m = Math.floor(left / 60000);
+        const s = Math.floor((left % 60000) / 1000);
+        $('codeTimer').textContent = `${m}:${s.toString().padStart(2, '0')}`;
+      }
+      if (state.status === 'connected' && state.expiresAt) {
+        const left = Math.max(0, state.expiresAt - Date.now());
+        const h = Math.floor(left / 3600000);
+        const m = Math.floor((left % 3600000) / 60000);
+        $('sessionTimer').textContent = `${h}h ${m}m`;
+      }
+    }, 1000);
+
+    $('connectBtn').onclick = async () => {
+      const number = $('phone').value.trim().replace(/\D/g, '');
+      if (!number) return alert('Enter your phone number with country code');
+      $('connectBtn').disabled = true;
+      $('connectBtn').textContent = 'Requesting...';
+
+      try {
+        const res = await fetch('/api/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ number })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed');
+      } catch (e) {
+        alert(e.message);
+      } finally {
+        $('connectBtn').disabled = false;
+        $('connectBtn').textContent = 'Get Pairing Code';
+      }
+    };
+
+    $('disconnectBtn').onclick = async () => {
+      if (!confirm('Disconnect the bot?')) return;
+      await fetch('/api/disconnect', { method: 'POST' });
+    };
+  </script>
+</body>
+</html>
