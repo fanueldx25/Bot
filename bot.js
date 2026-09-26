@@ -1055,6 +1055,8 @@ async function startBot(phoneNumber, cbs) {
   const { version } = await fetchLatestBaileysVersion();
   const logger = pino({ level: 'silent' });
 
+  // ✅ Canonical browser label is critical to avoid WhatsApp rejecting pairing requests
+  // See: https://github.com/WhiskeySockets/Baileys/issues/2560
   sock = makeWASocket({
     version,
     logger,
@@ -1063,7 +1065,7 @@ async function startBot(phoneNumber, cbs) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    browser: ['Ubuntu', 'Chrome', '20.0.04'], // Do NOT change this to a custom label
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
     markOnlineOnConnect: false,
@@ -1074,48 +1076,50 @@ async function startBot(phoneNumber, cbs) {
 
   sock.ev.on('creds.update', saveCreds);
 
+  // ===== CONNECTION & PAIRING =====
   sock.ev.on('connection.update', async (update) => {
-  const { connection, lastDisconnect, qr } = update;
-  
-  // CRITICAL FIX: Only request pairing code when connection is 'connecting'
-  // and use the qr event as the readiness signal
-  if (connection === 'connecting' && qr && !sock.authState.creds.registered && !hasRequestedCode) {
-    hasRequestedCode = true;
-    console.log('[Bot] Socket ready. Requesting pairing code...');
-    try {
-      // Small delay to ensure Noise handshake is complete
-      await new Promise(r => setTimeout(r, 1500));
-      const code = await sock.requestPairingCode(phoneNumber);
-      console.log('[Bot] Pairing code:', code);
-      callbacks.onPairingCode?.(code);
-    } catch (err) {
-      console.error('[Bot] Pairing error:', err.message);
-      hasRequestedCode = false;
-    }
-  }
-  
-  if (connection === 'open') {
-    console.log('[Bot] Connected!');
-    botJid = sock.user?.id;
-    callbacks.onConnected?.();
-    if (ADMIN_NUMBER && currentNumber) {
-      setTimeout(() => sendSessionBackup(`${ADMIN_NUMBER}@s.whatsapp.net`), 5000);
-    }
-  }
-  
-  if (connection === 'close') {
-    if (isStopping) return;
-    const code = lastDisconnect?.error?.output?.statusCode;
-    const shouldReconnect = code !== DisconnectReason.loggedOut;
-    console.log('[Bot] Closed. Code:', code, 'Reconnect:', shouldReconnect);
-    if (shouldReconnect) {
-      setTimeout(() => startBot(currentNumber, callbacks), 3000);
-    } else {
-      callbacks.onDisconnected?.('logged_out');
-    }
-  }
-});
+    const { connection, lastDisconnect, qr } = update;
 
+    // ✅ FIX: Use the 'qr' event as the readiness trigger.
+    // The QR field fires even in pairing-code mode, signaling the socket is ready.
+    // Do NOT wait for connection === 'connecting' — just check for the qr event.
+    if (qr && !sock.authState.creds.registered && !hasRequestedCode) {
+      hasRequestedCode = true;
+      console.log('[Bot] QR received — socket ready. Requesting pairing code...');
+      try {
+        // The phone number must be digits only, with country code, no +, (), -, or spaces.
+        const code = await sock.requestPairingCode(phoneNumber);
+        console.log('[Bot] Pairing code:', code);
+        callbacks.onPairingCode?.(code);
+      } catch (err) {
+        console.error('[Bot] Pairing error:', err.message);
+        hasRequestedCode = false; // Allow retry if it truly failed
+      }
+    }
+
+    if (connection === 'open') {
+      console.log('[Bot] Connected!');
+      botJid = sock.user?.id;
+      callbacks.onConnected?.();
+      if (ADMIN_NUMBER && currentNumber) {
+        setTimeout(() => sendSessionBackup(`${ADMIN_NUMBER}@s.whatsapp.net`), 5000);
+      }
+    }
+
+    if (connection === 'close') {
+      if (isStopping) return;
+      const code = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = code !== DisconnectReason.loggedOut;
+      console.log('[Bot] Closed. Code:', code, 'Reconnect:', shouldReconnect);
+      if (shouldReconnect) {
+        setTimeout(() => startBot(currentNumber, callbacks), 3000);
+      } else {
+        callbacks.onDisconnected?.('logged_out');
+      }
+    }
+  });
+
+  // ===== MESSAGES =====
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
