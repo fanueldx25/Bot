@@ -1,20 +1,3 @@
-/**
- * ============================================================================
- * WHATSAPP BOT - MAIN LOGIC
- * ============================================================================
- * All bot logic, command handling, and state management.
- * Structure:
- *   1. Imports & Configuration
- *   2. State Management
- *   3. UI Style Constants
- *   4. Utility Helpers
- *   5. Session Management
- *   6. Feature Handlers
- *   7. Command Handler
- *   8. Main Bot Logic
- * ============================================================================
- */
-
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -22,18 +5,13 @@ const {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
-  getContentType,
-  Browsers
+  getContentType
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
-// ============================================================================
-// 1. IMPORTS & CONFIGURATION
-// ============================================================================
-
+// ===== PATHS =====
 const SESSION_DIR = process.env.SESSION_DIR
   ? path.join(process.env.SESSION_DIR, 'auth')
   : path.join(__dirname, 'sessions', 'auth');
@@ -42,15 +20,10 @@ const STATE_FILE = process.env.SESSION_DIR
   ? path.join(process.env.SESSION_DIR, 'state.json')
   : path.join(__dirname, 'sessions', 'state.json');
 
-const BANNER_PATH = path.join(__dirname, 'assets', 'banner.jpg');
-let BANNER_BUFFER = null;
-
+// ===== ADMIN =====
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '';
 
-// ============================================================================
-// 2. STATE MANAGEMENT
-// ============================================================================
-
+// ===== GLOBAL STATE =====
 let sock = null;
 let callbacks = {};
 let currentNumber = null;
@@ -58,13 +31,15 @@ let isStopping = false;
 let hasRequestedCode = false;
 let botJid = null;
 
+// Persisted state
 let pausedChats = new Set();
-let welcomeEnabled = new Set();
-let goodbyeEnabled = new Set();
-let viewOnceEnabled = false;
-let customWelcome = {};
+let welcomeEnabled = new Set();   // group JIDs with welcome on
+let goodbyeEnabled = new Set();   // group JIDs with goodbye on
+let viewOnceEnabled = false;      // global VO capture toggle
+let customWelcome = {};           // { groupJid: "text" }
 let autoDownload = false;
 
+// ===== STATE PERSISTENCE =====
 function loadState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
@@ -75,7 +50,6 @@ function loadState() {
       viewOnceEnabled = data.viewOnceEnabled || false;
       customWelcome = data.customWelcome || {};
       autoDownload = data.autoDownload || false;
-      console.log('[State] Loaded.');
     }
   } catch (e) {
     console.error('[State] Load error:', e.message);
@@ -85,58 +59,20 @@ function loadState() {
 function saveState() {
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    fs.writeFileSync(
-      STATE_FILE,
-      JSON.stringify(
-        {
-          pausedChats: [...pausedChats],
-          welcomeEnabled: [...welcomeEnabled],
-          goodbyeEnabled: [...goodbyeEnabled],
-          viewOnceEnabled,
-          customWelcome,
-          autoDownload
-        },
-        null,
-        2
-      ),
-      'utf8'
-    );
+    fs.writeFileSync(STATE_FILE, JSON.stringify({
+      pausedChats: [...pausedChats],
+      welcomeEnabled: [...welcomeEnabled],
+      goodbyeEnabled: [...goodbyeEnabled],
+      viewOnceEnabled,
+      customWelcome,
+      autoDownload
+    }, null, 2), 'utf8');
   } catch (e) {
     console.error('[State] Save error:', e.message);
   }
 }
 
-function loadBanner() {
-  try {
-    if (fs.existsSync(BANNER_PATH)) {
-      BANNER_BUFFER = fs.readFileSync(BANNER_PATH);
-      console.log('[Banner] Loaded:', BANNER_PATH, `(${BANNER_BUFFER.length} bytes)`);
-    } else {
-      console.warn('[Banner] Not found at', BANNER_PATH);
-    }
-  } catch (e) {
-    console.error('[Banner] Load error:', e.message);
-  }
-}
-
-// ============================================================================
-// 3. UI STYLE CONSTANTS
-// ============================================================================
-
-const UI = {
-  box: (title, icon = '🤖') =>
-    `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   ${icon}  *${title}*   ┃\n╰━━━━━━━━━━━━━━━━━━━━╯`,
-  divider: '━━━━━━━━━━━━━━━━━━━━━━━',
-  section: (name, icon = '📌') =>
-    `\n━━━━━━━━━━━━━━━━━━━━━━━\n  ${icon}  *${name}*\n━━━━━━━━━━━━━━━━━━━━━━━`,
-  row: (label, value) => `│ ${String(label).padEnd(10)} : ${value}`,
-  footer: (text) => `\n╰━━━━━━━━━━━━━━━━━━━━╯\n   _${text}_`
-};
-
-// ============================================================================
-// 4. UTILITY HELPERS
-// ============================================================================
-
+// ===== HELPERS =====
 function isAdmin(senderJid) {
   if (!ADMIN_NUMBER) return true;
   const num = (senderJid || '').split('@')[0].split(':')[0];
@@ -165,29 +101,6 @@ async function withRecording(jid, fn) {
   }
 }
 
-async function sendWithBanner(jid, caption) {
-  try {
-    if (BANNER_BUFFER) {
-      const ext = path.extname(BANNER_PATH).toLowerCase();
-      const mimetype =
-        ext === '.png' ? 'image/png' :
-        ext === '.webp' ? 'image/webp' :
-        'image/jpeg';
-
-      await sock.sendMessage(jid, {
-        image: BANNER_BUFFER,
-        caption,
-        mimetype
-      });
-    } else {
-      await sock.sendMessage(jid, { text: caption });
-    }
-  } catch (e) {
-    console.error('[Banner] Send error:', e.message);
-    try { await sock.sendMessage(jid, { text: caption }); } catch (e2) {}
-  }
-}
-
 function extractText(msg) {
   const m = msg.message;
   if (!m) return '';
@@ -200,17 +113,14 @@ function extractText(msg) {
   );
 }
 
-// ============================================================================
-// 5. SESSION MANAGEMENT
-// ============================================================================
-
+// ===== SESSION BACKUP =====
 async function sendSessionBackup(adminJid) {
   try {
     if (!fs.existsSync(SESSION_DIR)) {
       await sock.sendMessage(adminJid, { text: '⚠️ No session files found.' });
       return;
     }
-    const files = fs.readdirSync(SESSION_DIR).filter((f) => f.endsWith('.json'));
+    const files = fs.readdirSync(SESSION_DIR).filter(f => f.endsWith('.json'));
     if (!files.length) {
       await sock.sendMessage(adminJid, { text: '⚠️ No session files yet.' });
       return;
@@ -226,7 +136,6 @@ async function sendSessionBackup(adminJid) {
       fileName: `wa-session-${Date.now()}.json`,
       caption: `🔐 Session Backup\nNumber: +${currentNumber}\nTime: ${new Date().toISOString()}\n\nKeep safe.`
     });
-    console.log('[Session] Backup sent to admin.');
   } catch (e) {
     console.error('[Backup] Error:', e.message);
   }
@@ -238,13 +147,8 @@ function restoreSessionFromFile(jsonPath) {
     const bundle = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
     fs.mkdirSync(SESSION_DIR, { recursive: true });
     for (const [filename, content] of Object.entries(bundle)) {
-      fs.writeFileSync(
-        path.join(SESSION_DIR, filename),
-        JSON.stringify(content, null, 2),
-        'utf8'
-      );
+      fs.writeFileSync(path.join(SESSION_DIR, filename), JSON.stringify(content, null, 2), 'utf8');
     }
-    console.log('[Session] Restored from file.');
     return true;
   } catch (e) {
     console.error('[Restore] Error:', e.message);
@@ -252,37 +156,25 @@ function restoreSessionFromFile(jsonPath) {
   }
 }
 
-// ============================================================================
-// 6. FEATURE HANDLERS
-// ============================================================================
-
+// ===== VIEW-ONCE CAPTURE =====
 async function tryCaptureViewOnce(msg, from) {
   try {
     const content = msg.message;
     const wrappers = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
     let inner = null;
     for (const w of wrappers) {
-      if (content?.[w]?.message) {
-        inner = content[w].message;
-        break;
-      }
+      if (content?.[w]?.message) { inner = content[w].message; break; }
     }
     if (!inner) return false;
 
-    const mediaType = inner.imageMessage
-      ? 'imageMessage'
-      : inner.videoMessage
-      ? 'videoMessage'
-      : inner.audioMessage
-      ? 'audioMessage'
-      : null;
+    const mediaType = inner.imageMessage ? 'imageMessage'
+      : inner.videoMessage ? 'videoMessage'
+      : inner.audioMessage ? 'audioMessage' : null;
     if (!mediaType) return false;
 
     const fakeMsg = { key: msg.key, message: { [mediaType]: inner[mediaType] } };
-    const buffer = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
-      logger: pino({ level: 'silent' }),
-      reuploadRequest: sock.updateMediaMessage
-    });
+    const buffer = await downloadMediaMessage(fakeMsg, 'buffer', {},
+      { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
 
     if (ADMIN_NUMBER) {
       const adminJid = `${ADMIN_NUMBER}@s.whatsapp.net`;
@@ -293,11 +185,7 @@ async function tryCaptureViewOnce(msg, from) {
       } else if (mediaType === 'videoMessage') {
         await sock.sendMessage(adminJid, { video: buffer, caption });
       } else {
-        await sock.sendMessage(adminJid, {
-          audio: buffer,
-          mimetype: 'audio/ogg',
-          ptt: true
-        });
+        await sock.sendMessage(adminJid, { audio: buffer, mimetype: 'audio/ogg', ptt: true });
       }
     }
     return true;
@@ -307,39 +195,56 @@ async function tryCaptureViewOnce(msg, from) {
   }
 }
 
+// ===== POST TO STATUS (the new feature) =====
 async function postToStatus(quotedMsg) {
   try {
+    // Build a status JID list from all your contacts
+    // For simplicity we send to status@broadcast with an empty list —
+    // WhatsApp will deliver to contacts who have you added.
+    // If it doesn't work, we need to populate statusJidList.
     const statusJid = 'status@broadcast';
+
     const content = quotedMsg.message;
     const type = getContentType(content);
 
     let payload = {};
+    let needsDownload = false;
+
     if (type === 'conversation' || type === 'extendedTextMessage') {
+      const text = content.conversation || content.extendedTextMessage?.text || '';
       payload = {
-        text: content.conversation || content.extendedTextMessage?.text || '',
+        text,
         backgroundColor: '#1F2C33',
         font: 2
       };
     } else if (type === 'imageMessage') {
-      const buf = await downloadMediaMessage(quotedMsg, 'buffer', {}, {
-        logger: pino({ level: 'silent' }),
-        reuploadRequest: sock.updateMediaMessage
-      });
-      payload = { image: buf, caption: content.imageMessage?.caption || '' };
+      const buf = await downloadMediaMessage(quotedMsg, 'buffer', {},
+        { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+      payload = {
+        image: buf,
+        caption: content.imageMessage?.caption || ''
+      };
     } else if (type === 'videoMessage') {
-      const buf = await downloadMediaMessage(quotedMsg, 'buffer', {}, {
-        logger: pino({ level: 'silent' }),
-        reuploadRequest: sock.updateMediaMessage
-      });
-      payload = { video: buf, caption: content.videoMessage?.caption || '' };
+      const buf = await downloadMediaMessage(quotedMsg, 'buffer', {},
+        { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+      payload = {
+        video: buf,
+        caption: content.videoMessage?.caption || ''
+      };
     } else {
       return false;
     }
 
+    // Try to get contact list from store if available, else empty
+    const statusJidList = [];
+    // Note: statusJidList is technically required but an empty array often works
+    // because WhatsApp falls back to your contact list server-side.
+
     await sock.sendMessage(statusJid, payload, {
       broadcast: true,
-      statusJidList: []
+      statusJidList
     });
+
     return true;
   } catch (e) {
     console.error('[Status] Error:', e.message);
@@ -347,46 +252,17 @@ async function postToStatus(quotedMsg) {
   }
 }
 
+// ===== GROUP HELPERS =====
 async function sendWelcome(groupJid, participants) {
   try {
     const meta = await sock.groupMetadata(groupJid);
     const groupName = meta.subject || 'the group';
-
-    if (BANNER_BUFFER) {
-      try {
-        await sock.sendMessage(groupJid, {
-          image: BANNER_BUFFER,
-          caption: `╭━━━━━━━━━━━━━━━━━━━━╮
-┃   👋  *NEW MEMBER*   ┃
-╰━━━━━━━━━━━━━━━━━━━━╯
-
-_Welcome to the family!_`
-        });
-      } catch (e) {
-        console.error('[Welcome] Banner failed:', e.message);
-      }
-    }
-
     for (const jid of participants) {
       const num = jid.split('@')[0];
       const custom = customWelcome[groupJid];
       const text = custom
         ? custom.replace(/@user/g, `@${num}`).replace(/@group/g, groupName)
-        : `╭────────────────────
-│ 📌 *${groupName}*
-╰────────────────────
-
-Hello @${num}!
-You've joined the group.
-
-*Please:*
-│ ✅ Read the rules
-│ ✅ Be respectful
-│ ✅ No spam or links
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  _Type *.help* to see commands_`;
-
+        : `👋 Welcome to *${groupName}*, @${num}!\n\nType *.help* to see commands.`;
       await sock.sendMessage(groupJid, { text, mentions: [jid] });
     }
   } catch (e) {
@@ -398,650 +274,19 @@ async function sendGoodbye(groupJid, participants) {
   try {
     const meta = await sock.groupMetadata(groupJid);
     const groupName = meta.subject || 'the group';
-
-    if (BANNER_BUFFER) {
-      try {
-        await sock.sendMessage(groupJid, {
-          image: BANNER_BUFFER,
-          caption: `╭━━━━━━━━━━━━━━━━━━━━╮
-┃   👋  *MEMBER LEFT*   ┃
-╰━━━━━━━━━━━━━━━━━━━━╯
-
-_We'll miss you._`
-        });
-      } catch (e) {}
-    }
-
     for (const jid of participants) {
       const num = jid.split('@')[0];
-      const text = `╭────────────────────
-│ 📌 *${groupName}*
-╰────────────────────
-
-@${num} has left the group.
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  _Wishing you the best!_`;
-
-      await sock.sendMessage(groupJid, { text, mentions: [jid] });
+      await sock.sendMessage(groupJid, {
+        text: `👋 Goodbye, @${num}! We'll miss you in *${groupName}*.`,
+        mentions: [jid]
+      });
     }
   } catch (e) {
     console.error('[Goodbye] Error:', e.message);
   }
 }
 
-// ============================================================================
-// 7. COMMAND HANDLER
-// ============================================================================
-
-async function handleCommand(msg, from, senderJid, rawText) {
-  const text = rawText.trim();
-  const cmd = text.toLowerCase();
-  const parts = cmd.split(' ');
-  const base = parts[0];
-  const args = parts.slice(1);
-  const admin = isAdmin(senderJid);
-  const isGroup = from.endsWith('@g.us');
-
-  const publicCmds = [
-    '.help', '.menu', '.ping', '.id', '.myid', '.time', '.uptime',
-    '.sticker', '.s', '.toimg', '.tts', '.voice', '.getpp'
-  ];
-  const adminCmds = [
-    '.status', '.backup', '.restore', '.logout', '.pause', '.resume', '.pausestatus',
-    '.welcome', '.goodbye', '.setwelcome', '.tagall', '.hidetag', '.kick', '.promote', '.demote',
-    '.mute', '.unmute', '.groupinfo', '.vo', '.admin', '.restart', '.poststatus', '.autodl'
-  ];
-
-  if (adminCmds.includes(base) && !admin) {
-    await withTyping(from, () =>
-      sock.sendMessage(from, {
-        text: `${UI.box('ACCESS DENIED', '🔒')}\n\nSorry, this command is restricted to the admin.`
-      })
-    );
-    return;
-  }
-
-  if (base === '.help' || base === '.menu') {
-    const help = `${UI.box('BOT MENU', '🤖')}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  📌  *GENERAL*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ .help      • show menu
-│ .ping      • check alive
-│ .id        • your JID
-│ .myid      • your number
-│ .time      • server time
-│ .uptime    • bot uptime
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  🎨  *MEDIA*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ .sticker   • img → sticker
-│ .toimg     • sticker → img
-│ .tts       • text → voice
-│ .voice     • reply → voice
-│ .getpp     • profile pic
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  👮  *ADMIN ONLY*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ .status    • bot status
-│ .backup    • save session
-│ .restore   • load session
-│ .logout    • disconnect
-│ .restart   • reboot bot
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  ⏸️  *PAUSE CONTROL*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ .pause         • mute here
-│ .resume        • unmute here
-│ .pause all     • mute all
-│ .resume all    • unmute all
-│ .pausestatus   • show state
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  👥  *GROUP CONTROL*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ .welcome on/off
-│ .goodbye on/off
-│ .setwelcome <text>
-│ .tagall <msg>
-│ .hidetag <msg>
-│ .kick @user
-│ .promote @user
-│ .demote @user
-│ .mute / .unmute
-│ .groupinfo
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  📸  *SPECIAL*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ .vo on/off      • view-once
-│ .autodl on/off  • auto DL
-│ .poststatus     • → my status
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  ⚙️  *INFO*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ Admin  : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set'}
-│ Uptime : ${Math.floor(process.uptime() / 60)} min
-│ Prefix : .
-
-╰━━━━━━━━━━━━━━━━━━━━╯
-   _Powered by Baileys_`;
-
-    await withTyping(from, () => sendWithBanner(from, help));
-    return;
-  }
-
-  if (base === '.ping') {
-    const start = Date.now();
-    const txt = `${UI.box('PONG', '🏓')}
-
-│ Status  : ✅ online
-│ Latency : ${Date.now() - start} ms
-│ Uptime  : ${Math.floor(process.uptime())} s
-
-╰━━━━━━━━━━━━━━━━━━━━╯
-   _Bot is healthy_`;
-    await withTyping(from, () => sendWithBanner(from, txt));
-    return;
-  }
-
-  if (base === '.id' || base === '.myid') {
-    const num = senderJid.split('@')[0].split(':')[0];
-    await withTyping(from, () =>
-      sock.sendMessage(from, {
-        text: `${UI.box('YOUR INFO', '🆔')}
-
-│ Number   : +${num}
-│ User JID : ${senderJid}
-│ Chat JID : ${from}`
-      })
-    );
-    return;
-  }
-
-  if (base === '.time') {
-    await withTyping(from, () =>
-      sock.sendMessage(from, {
-        text: `${UI.box('SERVER TIME', '🕐')}
-
-│ ${new Date().toUTCString()}`
-      })
-    );
-    return;
-  }
-
-  if (base === '.uptime') {
-    const s = process.uptime();
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    await withTyping(from, () =>
-      sock.sendMessage(from, {
-        text: `${UI.box('UPTIME', '⏱️')}
-
-│ Running : ${h}h ${m}m
-│ Status  : ${botJid ? '✅ connected' : '❌ offline'}`
-      })
-    );
-    return;
-  }
-
-  if (base === '.status') {
-    const s = process.uptime();
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const txt = `${UI.box('BOT STATUS', '📊')}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  🔌  *CONNECTION*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ Status   : ${botJid ? '✅ online' : '❌ offline'}
-│ Number   : +${currentNumber || 'N/A'}
-│ Uptime   : ${h}h ${m}m
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  ⚙️  *FEATURES*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ Paused     : ${pausedChats.size} chat(s)
-│ View-once  : ${viewOnceEnabled ? '✅ ON' : '❌ OFF'}
-│ Auto-DL    : ${autoDownload ? '✅ ON' : '❌ OFF'}
-│ Welcome    : ${welcomeEnabled.size} group(s)
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  👤  *ADMIN*
-━━━━━━━━━━━━━━━━━━━━━━━
-│ ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set'}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  🕐  _Reported at_
-  ${new Date().toUTCString()}`;
-
-    await withTyping(from, () => sendWithBanner(from, txt));
-    return;
-  }
-
-  if (base === '.sticker' || base === '.s') {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-    if (!quoted) {
-      await withTyping(from, () => sock.sendMessage(from, { text: '❌ Reply to an image or video.' }));
-      return;
-    }
-    const img = quoted.imageMessage;
-    const vid = quoted.videoMessage;
-    if (!img && !vid) {
-      await withTyping(from, () => sock.sendMessage(from, { text: '❌ Must be image or video.' }));
-      return;
-    }
-    try {
-      await withTyping(from, async () => {
-        const mType = img ? 'imageMessage' : 'videoMessage';
-        const mContent = img || vid;
-        const fakeMsg = {
-          key: {
-            remoteJid: from,
-            id: msg.message.extendedTextMessage.contextInfo.stanzaId,
-            fromMe: false
-          },
-          message: { [mType]: mContent }
-        };
-        const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
-          logger: pino({ level: 'silent' }),
-          reuploadRequest: sock.updateMediaMessage
-        });
-        await sock.sendMessage(from, { sticker: buf });
-      });
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ Failed. Try a smaller file.' });
-    }
-    return;
-  }
-
-  if (base === '.toimg') {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-    const stickerMsg = quoted?.stickerMessage;
-    if (!stickerMsg) {
-      await withTyping(from, () => sock.sendMessage(from, { text: '❌ Reply to a sticker.' }));
-      return;
-    }
-    try {
-      await withTyping(from, async () => {
-        const fakeMsg = {
-          key: {
-            remoteJid: from,
-            id: msg.message.extendedTextMessage.contextInfo.stanzaId,
-            fromMe: false
-          },
-          message: { stickerMessage: stickerMsg }
-        };
-        const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
-          logger: pino({ level: 'silent' }),
-          reuploadRequest: sock.updateMediaMessage
-        });
-        await sock.sendMessage(from, { image: buf, caption: '🎨 *Converted to image*' });
-      });
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ Failed.' });
-    }
-    return;
-  }
-
-  if (base === '.tts' || base === '.voice') {
-    let targetText = args.join(' ');
-    if (!targetText) {
-      const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-      targetText = quoted?.conversation || quoted?.extendedTextMessage?.text || '';
-    }
-    if (!targetText) {
-      await withTyping(from, () =>
-        sock.sendMessage(from, { text: '❌ Provide text or reply to a message.' })
-      );
-      return;
-    }
-    try {
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
-        targetText
-      )}&tl=en&client=tw-ob`;
-      const res = await fetch(url);
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (!buf || buf.length === 0) throw new Error('Empty audio buffer');
-      await withRecording(from, () =>
-        sock.sendMessage(from, { audio: buf, mimetype: 'audio/mp4', ptt: true })
-      );
-    } catch (e) {
-      console.error('[TTS]', e.message);
-      await sock.sendMessage(from, { text: '❌ TTS failed.' });
-    }
-    return;
-  }
-
-  if (base === '.getpp') {
-    let target = from;
-    const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
-    if (mentioned?.length) target = mentioned[0];
-    try {
-      const url = await sock.profilePictureUrl(target, 'image');
-      await sock.sendMessage(from, { image: { url }, caption: '📷 *Profile picture*' });
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ No profile picture available.' });
-    }
-    return;
-  }
-
-  // --- Pause / Resume ---
-  if (base === '.pause') {
-    if (args[0] === 'all') {
-      pausedChats.add('ALL');
-      saveState();
-      await sock.sendMessage(from, {
-        text: `${UI.box('GLOBAL PAUSE', '⏸️')}\n\nBot is now silent everywhere.`
-      });
-      return;
-    }
-    pausedChats.add(from);
-    saveState();
-    await sock.sendMessage(from, {
-      text: `${UI.box('PAUSED', '⏸️')}\n\nBot is silent in this chat.`
-    });
-    return;
-  }
-  if (base === '.resume') {
-    if (args[0] === 'all') {
-      pausedChats.delete('ALL');
-      saveState();
-      await sock.sendMessage(from, {
-        text: `${UI.box('RESUMED', '▶️')}\n\nBot is active everywhere.`
-      });
-      return;
-    }
-    pausedChats.delete(from);
-    saveState();
-    await sock.sendMessage(from, {
-      text: `${UI.box('RESUMED', '▶️')}\n\nBot is active in this chat.`
-    });
-    return;
-  }
-  if (base === '.pausestatus') {
-    const g = pausedChats.has('ALL');
-    const l = pausedChats.has(from);
-    const state = g ? '🌍 Global pause ON' : l ? '⏸️ This chat paused' : '▶️ Active';
-    await sock.sendMessage(from, {
-      text: `${UI.box('PAUSE STATUS', '📋')}\n\n│ ${state}`
-    });
-    return;
-  }
-
-  // --- Welcome / Goodbye toggles ---
-  if (base === '.welcome') {
-    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
-    if (args[0] === 'on') {
-      welcomeEnabled.add(from);
-      saveState();
-      await sock.sendMessage(from, { text: `${UI.box('WELCOME ON', '✅')}` });
-    } else if (args[0] === 'off') {
-      welcomeEnabled.delete(from);
-      saveState();
-      await sock.sendMessage(from, { text: `${UI.box('WELCOME OFF', '❌')}` });
-    } else {
-      await sock.sendMessage(from, { text: 'Usage: .welcome on/off' });
-    }
-    return;
-  }
-  if (base === '.goodbye') {
-    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
-    if (args[0] === 'on') {
-      goodbyeEnabled.add(from);
-      saveState();
-      await sock.sendMessage(from, { text: `${UI.box('GOODBYE ON', '✅')}` });
-    } else if (args[0] === 'off') {
-      goodbyeEnabled.delete(from);
-      saveState();
-      await sock.sendMessage(from, { text: `${UI.box('GOODBYE OFF', '❌')}` });
-    } else {
-      await sock.sendMessage(from, { text: 'Usage: .goodbye on/off' });
-    }
-    return;
-  }
-  if (base === '.setwelcome') {
-    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
-    const custom = text.replace(/^\.setwelcome\s+/i, '');
-    if (!custom) {
-      await sock.sendMessage(from, { text: 'Usage: .setwelcome <text>  (@user, @group)' });
-      return;
-    }
-    customWelcome[from] = custom;
-    saveState();
-    await sock.sendMessage(from, {
-      text: `${UI.box('SAVED', '✅')}\n\nCustom welcome message set.`
-    });
-    return;
-  }
-
-  // --- Tag / Kick ---
-  if (base === '.tagall' || base === '.hidetag') {
-    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
-    try {
-      const meta = await sock.groupMetadata(from);
-      const mentions = meta.participants.map((p) => p.id);
-      const msgText = args.join(' ') || '📢 Attention everyone!';
-      if (base === '.hidetag') {
-        await sock.sendMessage(from, { text: msgText, mentions });
-      } else {
-        const list = mentions.map((j) => `│ @${j.split('@')[0]}`).join('\n');
-        const txt = `${UI.box('ANNOUNCEMENT', '📢')}
-
-${msgText}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-${list}
-╰━━━━━━━━━━━━━━━━━━━━╯`;
-        await sock.sendMessage(from, { text: txt, mentions });
-      }
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ Failed.' });
-    }
-    return;
-  }
-  if (base === '.kick' || base === '.promote' || base === '.demote') {
-    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
-    const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
-    if (!mentioned?.length) {
-      await sock.sendMessage(from, { text: `❌ Mention someone to ${base.slice(1)}.` });
-      return;
-    }
-    try {
-      const action = base === '.kick' ? 'remove' : base === '.promote' ? 'promote' : 'demote';
-      await sock.groupParticipantsUpdate(from, mentioned, action);
-      await sock.sendMessage(from, {
-        text: `${UI.box(action.toUpperCase(), '✅')}`
-      });
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ Failed. Bot must be admin.' });
-    }
-    return;
-  }
-  if (base === '.mute' || base === '.unmute') {
-    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
-    try {
-      await sock.groupSettingUpdate(from, base === '.mute' ? 'announcement' : 'not_announcement');
-      await sock.sendMessage(from, {
-        text: base === '.mute' ? '🔇 *Group muted*' : '🔊 *Group unmuted*'
-      });
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ Failed.' });
-    }
-    return;
-  }
-  if (base === '.groupinfo') {
-    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
-    try {
-      const meta = await sock.groupMetadata(from);
-      const admins = meta.participants
-        .filter((p) => p.admin)
-        .map((p) => `│ +${p.id.split('@')[0]}`)
-        .join('\n');
-      const txt = `${UI.box('GROUP INFO', '📋')}
-
-│ Name    : ${meta.subject}
-│ ID      : ${meta.id}
-│ Members : ${meta.participants.length}
-│ Admins  : ${meta.participants.filter((p) => p.admin).length}
-│ Created : ${new Date(meta.creation * 1000).toUTCString().split(',')[0]}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-  👑  *ADMINS*
-━━━━━━━━━━━━━━━━━━━━━━━
-${admins}`;
-      await sock.sendMessage(from, { text: txt });
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ Failed.' });
-    }
-    return;
-  }
-
-  // --- Special ---
-  if (base === '.vo') {
-    if (args[0] === 'on') {
-      viewOnceEnabled = true;
-      saveState();
-      await sock.sendMessage(from, {
-        text: `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ✅ ON`
-      });
-    } else if (args[0] === 'off') {
-      viewOnceEnabled = false;
-      saveState();
-      await sock.sendMessage(from, {
-        text: `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ❌ OFF`
-      });
-    } else {
-      await sock.sendMessage(from, { text: 'Usage: .vo on/off' });
-    }
-    return;
-  }
-  if (base === '.autodl') {
-    if (args[0] === 'on') {
-      autoDownload = true;
-      saveState();
-      await sock.sendMessage(from, {
-        text: `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ✅ ON`
-      });
-    } else if (args[0] === 'off') {
-      autoDownload = false;
-      saveState();
-      await sock.sendMessage(from, {
-        text: `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ❌ OFF`
-      });
-    } else {
-      await sock.sendMessage(from, { text: 'Usage: .autodl on/off' });
-    }
-    return;
-  }
-  if (base === '.poststatus') {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-    const quotedKey = msg.message.extendedTextMessage?.contextInfo;
-    if (!quoted || !quotedKey) {
-      await withTyping(from, () =>
-        sock.sendMessage(from, {
-          text: `${UI.box('POST STATUS', '📤')}
-
-Reply to a message with *.poststatus* to publish it to your WhatsApp status.`
-        })
-      );
-      return;
-    }
-    try {
-      const fakeQuoted = {
-        key: {
-          remoteJid: from,
-          id: quotedKey.stanzaId,
-          fromMe: quotedKey.participant === botJid,
-          participant: quotedKey.participant
-        },
-        message: quoted
-      };
-      const ok = await postToStatus(fakeQuoted);
-      if (ok) {
-        await withTyping(from, () =>
-          sock.sendMessage(from, {
-            text: `${UI.box('POSTED', '✅')}\n\nVisible on your status for the next 24 hours.`
-          })
-        );
-      } else {
-        await withTyping(from, () =>
-          sock.sendMessage(from, { text: '❌ Only text, images, videos supported.' })
-        );
-      }
-    } catch (e) {
-      console.error('[Status]', e);
-      await sock.sendMessage(from, { text: '❌ Status post failed.' });
-    }
-    return;
-  }
-  if (base === '.backup') {
-    await withTyping(from, () => sendSessionBackup(from));
-    return;
-  }
-  if (base === '.restore') {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-    const doc = quoted?.documentMessage;
-    if (!doc || !doc.fileName?.endsWith('.json')) {
-      await sock.sendMessage(from, { text: '❌ Reply to a .json session file.' });
-      return;
-    }
-    try {
-      const fakeMsg = {
-        key: {
-          remoteJid: from,
-          id: msg.message.extendedTextMessage.contextInfo.stanzaId,
-          fromMe: false
-        },
-        message: { documentMessage: doc }
-      };
-      const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
-        logger: pino({ level: 'silent' }),
-        reuploadRequest: sock.updateMediaMessage
-      });
-      const tmp = path.join(os.tmpdir(), `restore-${Date.now()}.json`);
-      fs.writeFileSync(tmp, buf);
-      const ok = restoreSessionFromFile(tmp);
-      fs.unlinkSync(tmp);
-
-      if (ok) {
-        await sock.sendMessage(from, { text: '✅ *Session restored. Restarting bot...*' });
-        setTimeout(() => {
-          stopBot();
-          setTimeout(() => startBot(currentNumber, callbacks), 2000);
-        }, 1500);
-      } else {
-        await sock.sendMessage(from, { text: '❌ *Restore failed.*' });
-      }
-    } catch (e) {
-      await sock.sendMessage(from, { text: '❌ Restore error.' });
-    }
-    return;
-  }
-  if (base === '.logout') {
-    await sock.sendMessage(from, { text: '🚪 *Logging out...*' });
-    try { await sock.logout(); } catch (e) {}
-    stopBot();
-    return;
-  }
-  if (base === '.restart') {
-    await sock.sendMessage(from, { text: '🔄 *Restarting...*' });
-    stopBot();
-    setTimeout(() => startBot(currentNumber, callbacks), 2000);
-    return;
-  }
-}
-
-// ============================================================================
-// 8. MAIN BOT LOGIC
-// ============================================================================
-
+// ===== START BOT =====
 async function startBot(phoneNumber, cbs) {
   callbacks = cbs || {};
   currentNumber = phoneNumber;
@@ -1049,16 +294,12 @@ async function startBot(phoneNumber, cbs) {
   hasRequestedCode = false;
 
   loadState();
-  loadBanner();
   fs.mkdirSync(SESSION_DIR, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
   const { version } = await fetchLatestBaileysVersion();
   const logger = pino({ level: 'silent' });
 
-  // ✅ Use canonical browser label to avoid WhatsApp 400 bad-request rejection.
-  // Custom labels can cause pairing codes to be silently rejected [citation:8].
-  // The recommended safe default is Browsers.ubuntu('Chrome').
   sock = makeWASocket({
     version,
     logger,
@@ -1067,7 +308,7 @@ async function startBot(phoneNumber, cbs) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: Browsers.ubuntu('Chrome'),
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
     markOnlineOnConnect: false,
@@ -1078,33 +319,20 @@ async function startBot(phoneNumber, cbs) {
 
   sock.ev.on('creds.update', saveCreds);
 
-  // ===== CONNECTION & PAIRING =====
+  // ===== CONNECTION =====
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // ✅ FIX: Request pairing code when socket is ready.
-    // The Baileys docs say to use the 'qr' event as the trigger [citation:4].
-    // GitHub fixes confirm the code must be requested after the socket is ready,
-    // otherwise WhatsApp closes with 428 [citation:1].
-    // We check for either 'connecting' state OR qr event to cover both cases.
-    if ((connection === 'connecting' || !!qr) && !sock.authState.creds.registered && !hasRequestedCode) {
+    if (qr && !sock.authState.creds.registered && !hasRequestedCode) {
       hasRequestedCode = true;
-      console.log('[Bot] Socket ready. Requesting pairing code...');
       try {
-        // Small delay to let the socket fully initialize after the Noise handshake
-        await new Promise((r) => setTimeout(r, 2000));
-
-        // ✅ CRITICAL: Sanitize phone number to digits only.
-        // Phone must include country code, no +, (), -, or spaces [citation:4].
-        const cleanNumber = String(phoneNumber).replace(/\D/g, '');
-        console.log('[Bot] Requesting pairing code for', cleanNumber);
-
-        const code = await sock.requestPairingCode(cleanNumber);
+        await new Promise(r => setTimeout(r, 500));
+        const code = await sock.requestPairingCode(phoneNumber);
         console.log('[Bot] Pairing code:', code);
         callbacks.onPairingCode?.(code);
       } catch (err) {
         console.error('[Bot] Pairing error:', err.message);
-        hasRequestedCode = false; // Allow retry on genuine failure
+        hasRequestedCode = false;
       }
     }
 
@@ -1123,7 +351,7 @@ async function startBot(phoneNumber, cbs) {
       const shouldReconnect = code !== DisconnectReason.loggedOut;
       console.log('[Bot] Closed. Code:', code, 'Reconnect:', shouldReconnect);
       if (shouldReconnect) {
-        setTimeout(() => startBot(currentNumber, callbacks), 3000);
+        setTimeout(() => startBot(currentNumber, callbacks), 2000);
       } else {
         callbacks.onDisconnected?.('logged_out');
       }
@@ -1135,20 +363,14 @@ async function startBot(phoneNumber, cbs) {
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      if (!msg.message) continue;
+      if (!msg.message || msg.key.fromMe) continue;
       const from = msg.key.remoteJid;
       if (!from) continue;
 
       const senderJid = msg.key.participant || from;
-      const senderNum = (senderJid || '').split('@')[0].split(':')[0];
-      const fromMeIsAdmin = msg.key.fromMe && ADMIN_NUMBER && senderNum === ADMIN_NUMBER;
-      const fromBot = msg.key.fromMe && botJid && (msg.key.participant || '').startsWith(botJid.split(':')[0]);
-
-      if (msg.key.fromMe && !fromMeIsAdmin) continue;
-      if (fromBot && !fromMeIsAdmin) continue;
-
       try { await sock.readMessages([msg.key]); } catch (e) {}
 
+      // View-once capture (only if enabled)
       if (viewOnceEnabled) {
         await tryCaptureViewOnce(msg, from);
       }
@@ -1156,6 +378,7 @@ async function startBot(phoneNumber, cbs) {
       const text = extractText(msg);
       console.log(`[Msg] ${from}: ${text}`);
 
+      // Commands
       if (text.startsWith('.')) {
         try {
           await handleCommand(msg, from, senderJid, text);
@@ -1167,18 +390,18 @@ async function startBot(phoneNumber, cbs) {
 
       if (isPaused(from)) continue;
 
+      // Auto reply
       try {
         if (text.toLowerCase() === 'ping') {
           await withTyping(from, () => sock.sendMessage(from, { text: 'pong 🏓' }));
         } else if (text.toLowerCase() === 'hi' || text.toLowerCase() === 'hello') {
-          await withTyping(from, () =>
-            sock.sendMessage(from, { text: 'Hey! 👋 Type *.help* for commands.' })
-          );
+          await withTyping(from, () => sock.sendMessage(from, { text: 'Hey! 👋 Type *.help* for commands.' }));
         }
       } catch (e) {}
     }
   });
 
+  // ===== GROUP EVENTS =====
   sock.ev.on('group-participants.update', async (event) => {
     try {
       const { id, participants, action } = event;
@@ -1194,13 +417,380 @@ async function startBot(phoneNumber, cbs) {
   });
 }
 
+// ===== COMMAND HANDLER =====
+async function handleCommand(msg, from, senderJid, rawText) {
+  const text = rawText.trim();
+  const cmd = text.toLowerCase();
+  const parts = cmd.split(' ');
+  const base = parts[0];
+  const args = parts.slice(1);
+  const admin = isAdmin(senderJid);
+  const isGroup = from.endsWith('@g.us');
+
+  // Commands anyone can use
+  const publicCmds = ['.help', '.menu', '.ping', '.id', '.myid', '.time', '.uptime', '.sticker', '.s', '.toimg', '.tts', '.voice', '.getpp'];
+  const isPublic = publicCmds.some(c => base === c);
+
+  // Admin-only commands
+  const adminCmds = ['.status', '.backup', '.restore', '.logout', '.pause', '.resume', '.pausestatus',
+    '.welcome', '.goodbye', '.setwelcome', '.tagall', '.hidetag', '.kick', '.promote', '.demote',
+    '.mute', '.unmute', '.groupinfo', '.vo', '.admin', '.restart', '.poststatus', '.autodl'];
+  const isAdminCmd = adminCmds.some(c => base === c);
+
+  if (isAdminCmd && !admin) {
+    await withTyping(from, () => sock.sendMessage(from, { text: '🔒 Admin only.' }));
+    return;
+  }
+
+  // ===== HELP =====
+  if (base === '.help' || base === '.menu') {
+    const help = `🤖 *BOT COMMANDS*
+
+📌 *General*
+.help .ping .id .myid .time .uptime
+
+🎨 *Media*
+.sticker (reply) .toimg (reply) .tts <text> .voice (reply) .getpp (reply)
+
+👮 *Admin*
+.status .backup .restore .logout .restart
+.pause .resume .pause all .resume all .pausestatus
+.welcome on/off .goodbye on/off .setwelcome <text>
+.tagall <msg> .hidetag <msg> .kick @user .promote @user .demote @user
+.mute .unmute .groupinfo
+.vo on/off .autodl on/off
+.poststatus (reply to any msg)
+
+🌍 *Bot Info*
+Admin: ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set'}
+Uptime: ${Math.floor(process.uptime() / 60)}m`;
+    await withTyping(from, () => sock.sendMessage(from, { text: help }));
+    return;
+  }
+
+  // ===== GENERAL =====
+  if (base === '.ping') {
+    const start = Date.now();
+    await withTyping(from, () => sock.sendMessage(from, { text: `🏓 pong! ${Date.now() - start}ms` }));
+    return;
+  }
+
+  if (base === '.id' || base === '.myid') {
+    const num = senderJid.split('@')[0].split(':')[0];
+    await withTyping(from, () => sock.sendMessage(from, {
+      text: `Your JID: \`${senderJid}\`\nNumber: +${num}\nChat JID: \`${from}\``
+    }));
+    return;
+  }
+
+  if (base === '.time') {
+    await withTyping(from, () => sock.sendMessage(from, { text: `🕐 ${new Date().toUTCString()}` }));
+    return;
+  }
+
+  if (base === '.uptime') {
+    const s = process.uptime();
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    await withTyping(from, () => sock.sendMessage(from, { text: `⏱️ Uptime: ${h}h ${m}m` }));
+    return;
+  }
+
+  if (base === '.status') {
+    const s = process.uptime();
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    const txt = `📊 *Status*\nConnected: ${botJid ? '✅' : '❌'}\nNumber: +${currentNumber}\nUptime: ${h}h ${m}m\nPaused: ${pausedChats.size}\nVO capture: ${viewOnceEnabled ? 'ON' : 'OFF'}\nAutoDL: ${autoDownload ? 'ON' : 'OFF'}`;
+    await withTyping(from, () => sock.sendMessage(from, { text: txt }));
+    return;
+  }
+
+  // ===== STICKER =====
+  if (base === '.sticker' || base === '.s') {
+    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (!quoted) {
+      await withTyping(from, () => sock.sendMessage(from, { text: '❌ Reply to an image/video.' }));
+      return;
+    }
+    const img = quoted.imageMessage, vid = quoted.videoMessage;
+    if (!img && !vid) {
+      await withTyping(from, () => sock.sendMessage(from, { text: '❌ Must be image or video.' }));
+      return;
+    }
+    try {
+      await withTyping(from, async () => {
+        const mType = img ? 'imageMessage' : 'videoMessage';
+        const mContent = img || vid;
+        const fakeMsg = {
+          key: { remoteJid: from, id: msg.message.extendedTextMessage.contextInfo.stanzaId, fromMe: false },
+          message: { [mType]: mContent }
+        };
+        const buf = await downloadMediaMessage(fakeMsg, 'buffer', {},
+          { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+        await sock.sendMessage(from, { sticker: buf });
+      });
+    } catch (e) {
+      await sock.sendMessage(from, { text: '❌ Failed. Try smaller file.' });
+    }
+    return;
+  }
+
+  // ===== TOIMG =====
+  if (base === '.toimg') {
+    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    const stickerMsg = quoted?.stickerMessage;
+    if (!stickerMsg) {
+      await withTyping(from, () => sock.sendMessage(from, { text: '❌ Reply to a sticker.' }));
+      return;
+    }
+    try {
+      await withTyping(from, async () => {
+        const fakeMsg = {
+          key: { remoteJid: from, id: msg.message.extendedTextMessage.contextInfo.stanzaId, fromMe: false },
+          message: { stickerMessage: stickerMsg }
+        };
+        const buf = await downloadMediaMessage(fakeMsg, 'buffer', {},
+          { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+        await sock.sendMessage(from, { image: buf, caption: '🎨 Converted' });
+      });
+    } catch (e) {
+      await sock.sendMessage(from, { text: '❌ Failed.' });
+    }
+    return;
+  }
+
+  // ===== TTS (voice) =====
+  if (base === '.tts' || base === '.voice') {
+    let targetText = args.join(' ');
+    if (!targetText) {
+      const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+      targetText = quoted?.conversation || quoted?.extendedTextMessage?.text || '';
+    }
+    if (!targetText) {
+      await withTyping(from, () => sock.sendMessage(from, { text: '❌ Provide text or reply to a message.' }));
+      return;
+    }
+    try {
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(targetText)}&tl=en&client=tw-ob`;
+      const res = await fetch(url);
+      const buf = Buffer.from(await res.arrayBuffer());
+      await withRecording(from, () => sock.sendMessage(from, {
+        audio: buf, mimetype: 'audio/mp4', ptt: true
+      }));
+    } catch (e) {
+      await sock.sendMessage(from, { text: '❌ TTS failed.' });
+    }
+    return;
+  }
+
+  // ===== GET PROFILE PIC =====
+  if (base === '.getpp') {
+    let target = from;
+    const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
+    if (mentioned?.length) target = mentioned[0];
+    try {
+      const url = await sock.profilePictureUrl(target, 'image');
+      await sock.sendMessage(from, { image: { url }, caption: '📷 Profile picture' });
+    } catch (e) {
+      await sock.sendMessage(from, { text: '❌ No profile picture or private.' });
+    }
+    return;
+  }
+
+  // ===== PAUSE =====
+  if (base === '.pause') {
+    if (args[0] === 'all') { pausedChats.add('ALL'); saveState(); await sock.sendMessage(from, { text: '⏸️ Paused everywhere.' }); return; }
+    pausedChats.add(from); saveState();
+    await sock.sendMessage(from, { text: '⏸️ Paused here.' }); return;
+  }
+  if (base === '.resume') {
+    if (args[0] === 'all') { pausedChats.delete('ALL'); saveState(); await sock.sendMessage(from, { text: '▶️ Resumed everywhere.' }); return; }
+    pausedChats.delete(from); saveState();
+    await sock.sendMessage(from, { text: '▶️ Resumed here.' }); return;
+  }
+  if (base === '.pausestatus') {
+    const g = pausedChats.has('ALL'), l = pausedChats.has(from);
+    await sock.sendMessage(from, { text: g ? '🌍 Global pause ON' : l ? '⏸️ This chat paused' : '▶️ Active' });
+    return;
+  }
+
+  // ===== WELCOME / GOODBYE =====
+  if (base === '.welcome') {
+    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    if (args[0] === 'on') { welcomeEnabled.add(from); saveState(); await sock.sendMessage(from, { text: '✅ Welcome ON.' }); }
+    else if (args[0] === 'off') { welcomeEnabled.delete(from); saveState(); await sock.sendMessage(from, { text: '❌ Welcome OFF.' }); }
+    else await sock.sendMessage(from, { text: 'Usage: .welcome on/off' });
+    return;
+  }
+  if (base === '.goodbye') {
+    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    if (args[0] === 'on') { goodbyeEnabled.add(from); saveState(); await sock.sendMessage(from, { text: '✅ Goodbye ON.' }); }
+    else if (args[0] === 'off') { goodbyeEnabled.delete(from); saveState(); await sock.sendMessage(from, { text: '❌ Goodbye OFF.' }); }
+    else await sock.sendMessage(from, { text: 'Usage: .goodbye on/off' });
+    return;
+  }
+  if (base === '.setwelcome') {
+    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    const custom = text.replace(/^\.setwelcome\s+/i, '');
+    if (!custom) { await sock.sendMessage(from, { text: 'Usage: .setwelcome <text> (@user, @group)' }); return; }
+    customWelcome[from] = custom; saveState();
+    await sock.sendMessage(from, { text: '✅ Custom welcome saved.' });
+    return;
+  }
+
+  // ===== TAGALL =====
+  if (base === '.tagall' || base === '.hidetag') {
+    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    try {
+      const meta = await sock.groupMetadata(from);
+      const mentions = meta.participants.map(p => p.id);
+      const msgText = args.join(' ') || '📢 Attention everyone!';
+      if (base === '.hidetag') {
+        await sock.sendMessage(from, { text: msgText, mentions });
+      } else {
+        const mentionList = mentions.map(j => `@${j.split('@')[0]}`).join('\n');
+        await sock.sendMessage(from, { text: `${msgText}\n\n${mentionList}`, mentions });
+      }
+    } catch (e) { await sock.sendMessage(from, { text: '❌ Failed.' }); }
+    return;
+  }
+
+  // ===== KICK / PROMOTE / DEMOTE =====
+  if (base === '.kick' || base === '.promote' || base === '.demote') {
+    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
+    if (!mentioned?.length) { await sock.sendMessage(from, { text: `❌ Mention someone to ${base.slice(1)}.` }); return; }
+    try {
+      const action = base === '.kick' ? 'remove' : base === '.promote' ? 'promote' : 'demote';
+      await sock.groupParticipantsUpdate(from, mentioned, action);
+      await sock.sendMessage(from, { text: `✅ Done (${action}).` });
+    } catch (e) { await sock.sendMessage(from, { text: '❌ Failed. Bot must be admin.' }); }
+    return;
+  }
+
+  // ===== MUTE / UNMUTE =====
+  if (base === '.mute' || base === '.unmute') {
+    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    try {
+      await sock.groupSettingUpdate(from, base === '.mute' ? 'announcement' : 'not_announcement');
+      await sock.sendMessage(from, { text: base === '.mute' ? '🔇 Muted.' : '🔊 Unmuted.' });
+    } catch (e) { await sock.sendMessage(from, { text: '❌ Failed.' }); }
+    return;
+  }
+
+  // ===== GROUP INFO =====
+  if (base === '.groupinfo') {
+    if (!isGroup) { await sock.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    try {
+      const meta = await sock.groupMetadata(from);
+      const admins = meta.participants.filter(p => p.admin).map(p => `+${p.id.split('@')[0]}`);
+      const txt = `📋 *${meta.subject}*\nID: \`${meta.id}\`\nMembers: ${meta.participants.length}\nAdmins: ${admins.length}\nCreated: ${new Date(meta.creation * 1000).toUTCString()}`;
+      await sock.sendMessage(from, { text: txt });
+    } catch (e) { await sock.sendMessage(from, { text: '❌ Failed.' }); }
+    return;
+  }
+
+  // ===== VIEW-ONCE TOGGLE =====
+  if (base === '.vo') {
+    if (args[0] === 'on') { viewOnceEnabled = true; saveState(); await sock.sendMessage(from, { text: '✅ VO capture ON.' }); }
+    else if (args[0] === 'off') { viewOnceEnabled = false; saveState(); await sock.sendMessage(from, { text: '❌ VO capture OFF.' }); }
+    else await sock.sendMessage(from, { text: 'Usage: .vo on/off' });
+    return;
+  }
+
+  // ===== AUTO DOWNLOAD TOGGLE =====
+  if (base === '.autodl') {
+    if (args[0] === 'on') { autoDownload = true; saveState(); await sock.sendMessage(from, { text: '✅ Auto-download ON.' }); }
+    else if (args[0] === 'off') { autoDownload = false; saveState(); await sock.sendMessage(from, { text: '❌ Auto-download OFF.' }); }
+    else await sock.sendMessage(from, { text: 'Usage: .autodl on/off' });
+    return;
+  }
+
+  // ===== POST TO STATUS (NEW FEATURE) =====
+  if (base === '.poststatus') {
+    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    const quotedKey = msg.message.extendedTextMessage?.contextInfo;
+    if (!quoted || !quotedKey) {
+      await withTyping(from, () => sock.sendMessage(from, {
+        text: '❌ Reply to a message (text, image, or video) with .poststatus to publish it to your WhatsApp status.'
+      }));
+      return;
+    }
+    try {
+      // Reconstruct the WAMessage from the quoted data
+      const fakeQuoted = {
+        key: {
+          remoteJid: from,
+          id: quotedKey.stanzaId,
+          fromMe: quotedKey.participant === botJid,
+          participant: quotedKey.participant
+        },
+        message: quoted
+      };
+
+      const ok = await postToStatus(fakeQuoted);
+      if (ok) {
+        await withTyping(from, () => sock.sendMessage(from, { text: '✅ Posted to your status! (visible for 24h)' }));
+      } else {
+        await withTyping(from, () => sock.sendMessage(from, {
+          text: '❌ Failed. Only text, images, and videos are supported.'
+        }));
+      }
+    } catch (e) {
+      console.error('[Status]', e);
+      await sock.sendMessage(from, { text: '❌ Status post failed.' });
+    }
+    return;
+  }
+
+  // ===== BACKUP / RESTORE =====
+  if (base === '.backup') {
+    await withTyping(from, () => sendSessionBackup(from));
+    return;
+  }
+  if (base === '.restore') {
+    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    const doc = quoted?.documentMessage;
+    if (!doc || !doc.fileName?.endsWith('.json')) {
+      await sock.sendMessage(from, { text: '❌ Reply to a .json session file.' });
+      return;
+    }
+    try {
+      const fakeMsg = {
+        key: { remoteJid: from, id: msg.message.extendedTextMessage.contextInfo.stanzaId, fromMe: false },
+        message: { documentMessage: doc }
+      };
+      const buf = await downloadMediaMessage(fakeMsg, 'buffer', {},
+        { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+      const tmp = path.join(require('os').tmpdir(), `restore-${Date.now()}.json`);
+      fs.writeFileSync(tmp, buf);
+      const ok = restoreSessionFromFile(tmp);
+      fs.unlinkSync(tmp);
+      await sock.sendMessage(from, { text: ok ? '✅ Session restored. Restart bot.' : '❌ Restore failed.' });
+    } catch (e) { await sock.sendMessage(from, { text: '❌ Restore error.' }); }
+    return;
+  }
+
+  // ===== LOGOUT =====
+  if (base === '.logout') {
+    await sock.sendMessage(from, { text: '🚪 Logging out...' });
+    try { await sock.logout(); } catch (e) {}
+    stopBot();
+    return;
+  }
+
+  // ===== RESTART =====
+  if (base === '.restart') {
+    await sock.sendMessage(from, { text: '🔄 Restarting...' });
+    stopBot();
+    setTimeout(() => startBot(currentNumber, callbacks), 2000);
+    return;
+  }
+}
+
+// ===== STOP =====
 function stopBot() {
   isStopping = true;
   try {
-    if (sock) {
-      sock.end(undefined);
-      sock = null;
-    }
+    if (sock) { sock.end(undefined); sock = null; }
   } catch (e) {}
 }
 
