@@ -143,7 +143,6 @@
       if (state.number && state.status === 'connected') $('connNumber').textContent = '+' + state.number;
 
       if (state.status === 'awaiting_code') {
-        // reset local code expiry countdown (5 min from now, matches server)
         if (!codeExpiresAt) codeExpiresAt = Date.now() + 5 * 60 * 1000;
       } else {
         codeExpiresAt = null;

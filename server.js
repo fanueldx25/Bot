@@ -2,7 +2,6 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const fs = require('fs');
 const bot = require('./bot');
 
 const app = express();
@@ -12,8 +11,7 @@ const io = new Server(server);
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ===== STATE =====
-// session = { active: bool, number: string, startedAt: Date, expiresAt: Date, pairingCode: string }
+// ===== SESSION STATE =====
 let sessionState = {
   active: false,
   number: null,
@@ -24,19 +22,21 @@ let sessionState = {
 };
 
 const SESSION_DURATION_MS = 60 * 60 * 1000; // 1 hour
-const PAIRING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes to enter code
+const PAIRING_TIMEOUT_MS = 5 * 60 * 1000;   // 5 minutes to enter code
 
-// Broadcast state to all connected UI clients
 function broadcast() {
   io.emit('state', sessionState);
 }
 
-// Check session expiry
+// Expire session automatically
 setInterval(() => {
   if (sessionState.active && sessionState.expiresAt && Date.now() > sessionState.expiresAt) {
     console.log('[Session] Expired');
-    sessionState = { ...sessionState, active: false, status: 'expired' };
     bot.stopBot();
+    sessionState = {
+      active: false, number: null, startedAt: null,
+      expiresAt: null, pairingCode: null, status: 'expired'
+    };
     broadcast();
   }
 }, 10 * 1000);
@@ -47,18 +47,23 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Request pairing code
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
+app.get('/api/state', (req, res) => {
+  res.json(sessionState);
+});
+
 app.post('/api/connect', async (req, res) => {
   const { number } = req.body;
-  
+
   if (!number || !/^\d{7,15}$/.test(number)) {
     return res.status(400).json({ error: 'Invalid phone number. Use country code without +, e.g. 15551234567' });
   }
-  
+
   if (sessionState.active && sessionState.status === 'connected') {
     return res.status(409).json({ error: 'A bot is already connected. Wait for session to expire.' });
   }
-  
+
   try {
     sessionState = {
       active: true,
@@ -69,8 +74,7 @@ app.post('/api/connect', async (req, res) => {
       status: 'awaiting_code'
     };
     broadcast();
-    
-    // Kick off bot with pairing code
+
     bot.startBot(number, {
       onPairingCode: (code) => {
         sessionState.pairingCode = code;
@@ -81,7 +85,7 @@ app.post('/api/connect', async (req, res) => {
         sessionState.status = 'connected';
         broadcast();
       },
-      onDisconnected: (reason) => {
+      onDisconnected: () => {
         sessionState.active = false;
         sessionState.status = 'idle';
         sessionState.number = null;
@@ -89,16 +93,19 @@ app.post('/api/connect', async (req, res) => {
         broadcast();
       }
     });
-    
-    // Timeout for code entry
+
+    // Timeout if code isn't entered
     setTimeout(() => {
       if (sessionState.status === 'awaiting_code') {
         bot.stopBot();
-        sessionState = { active: false, number: null, startedAt: null, expiresAt: null, pairingCode: null, status: 'idle' };
+        sessionState = {
+          active: false, number: null, startedAt: null,
+          expiresAt: null, pairingCode: null, status: 'idle'
+        };
         broadcast();
       }
     }, PAIRING_TIMEOUT_MS);
-    
+
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -106,13 +113,12 @@ app.post('/api/connect', async (req, res) => {
   }
 });
 
-app.get('/api/state', (req, res) => {
-  res.json(sessionState);
-});
-
 app.post('/api/disconnect', (req, res) => {
   bot.stopBot();
-  sessionState = { active: false, number: null, startedAt: null, expiresAt: null, pairingCode: null, status: 'idle' };
+  sessionState = {
+    active: false, number: null, startedAt: null,
+    expiresAt: null, pairingCode: null, status: 'idle'
+  };
   broadcast();
   res.json({ ok: true });
 });
@@ -123,5 +129,5 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });

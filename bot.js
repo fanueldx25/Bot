@@ -9,23 +9,25 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 
-const SESSION_DIR = path.join(__dirname, 'sessions', 'auth');
+// Use env var if set (Render disk), else local folder
+const SESSION_DIR = process.env.SESSION_DIR ?
+  path.join(process.env.SESSION_DIR, 'auth') :
+  path.join(__dirname, 'sessions', 'auth');
 
 let sock = null;
 let callbacks = {};
+let currentNumber = null;
+let isStopping = false;
 
 async function startBot(phoneNumber, cbs) {
-  callbacks = cbs;
+  callbacks = cbs || {};
+  currentNumber = phoneNumber;
+  isStopping = false;
   
-  // Clear any existing session dir (fresh pairing)
-  if (fs.existsSync(SESSION_DIR)) {
-    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
-  }
   fs.mkdirSync(SESSION_DIR, { recursive: true });
   
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
   const { version } = await fetchLatestBaileysVersion();
-  
   const logger = pino({ level: 'silent' });
   
   sock = makeWASocket({
@@ -40,16 +42,15 @@ async function startBot(phoneNumber, cbs) {
     generateHighQualityLinkPreview: true
   });
   
-  // Request pairing code if not registered
+  // Request pairing code if not already registered
   if (!sock.authState.creds.registered) {
-    // Wait a beat to ensure socket is ready
     setTimeout(async () => {
       try {
         const code = await sock.requestPairingCode(phoneNumber);
         console.log('[Bot] Pairing code:', code);
         callbacks.onPairingCode?.(code);
       } catch (err) {
-        console.error('[Bot] Failed to get pairing code:', err);
+        console.error('[Bot] Failed to get pairing code:', err.message);
       }
     }, 3000);
   }
@@ -65,19 +66,20 @@ async function startBot(phoneNumber, cbs) {
     }
     
     if (connection === 'close') {
+      if (isStopping) return;
       const code = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
-      console.log('[Bot] Connection closed. Code:', code, 'Reconnect:', shouldReconnect);
+      console.log('[Bot] Closed. Code:', code, 'Reconnect:', shouldReconnect);
       
       if (shouldReconnect) {
-        setTimeout(() => startBot(phoneNumber, callbacks), 3000);
+        setTimeout(() => startBot(currentNumber, callbacks), 3000);
       } else {
         callbacks.onDisconnected?.('logged_out');
       }
     }
   });
   
-  // ===== HANDLE MESSAGES =====
+  // ===== MESSAGE HANDLER =====
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     
@@ -92,19 +94,23 @@ async function startBot(phoneNumber, cbs) {
       
       console.log(`[Message] ${from}: ${text}`);
       
-      // Simple echo bot — customize this!
-      if (text.toLowerCase() === 'ping') {
-        await sock.sendMessage(from, { text: 'pong 🏓' });
-      } else if (text.toLowerCase() === 'hi' || text.toLowerCase() === 'hello') {
-        await sock.sendMessage(from, { text: 'Hey there! 👋 I am a bot.' });
-      } else if (text) {
-        await sock.sendMessage(from, { text: `You said: ${text}` });
+      try {
+        if (text.toLowerCase() === 'ping') {
+          await sock.sendMessage(from, { text: 'pong 🏓' });
+        } else if (text.toLowerCase() === 'hi' || text.toLowerCase() === 'hello') {
+          await sock.sendMessage(from, { text: 'Hey there! 👋 I am a bot.' });
+        } else if (text) {
+          await sock.sendMessage(from, { text: `You said: ${text}` });
+        }
+      } catch (e) {
+        console.error('[Bot] Send error:', e.message);
       }
     }
   });
 }
 
 function stopBot() {
+  isStopping = true;
   try {
     if (sock) {
       sock.end(undefined);
