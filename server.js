@@ -3,7 +3,8 @@
  * WHATSAPP BOT - WEB SERVER
  * ============================================================================
  * Express server that hosts the control UI and exposes a REST API for
- * connecting, disconnecting, and downloading the session JSON.
+ * connecting, disconnecting, downloading the session JSON, and wiping
+ * all session data to start fresh.
  * ============================================================================
  */
 
@@ -34,11 +35,19 @@ let sessionState = {
 const SESSION_DURATION_MS = 60 * 60 * 1000; // 1 hour
 const PAIRING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes to enter code
 
+// Paths (must match bot.js)
+const SESSIONS_ROOT = process.env.SESSION_DIR ?
+  process.env.SESSION_DIR :
+  path.join(__dirname, 'sessions');
+
+const AUTH_DIR = path.join(SESSIONS_ROOT, 'auth');
+const STATE_FILE = path.join(SESSIONS_ROOT, 'state.json');
+
 function broadcast() {
   io.emit('state', sessionState);
 }
 
-// Expire session automatically
+// ===== SESSION EXPIRY =====
 setInterval(() => {
   if (sessionState.active && sessionState.expiresAt && Date.now() > sessionState.expiresAt) {
     console.log('[Session] Expired');
@@ -55,6 +64,24 @@ setInterval(() => {
   }
 }, 10 * 1000);
 
+// ===== SELF-PING (keep Render awake) =====
+// Pings the /health endpoint every 10 minutes so the free tier doesn't sleep.
+// Only runs when the app is deployed (RENDER_EXTERNAL_URL is set automatically).
+const SELF_PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+
+setInterval(async () => {
+  const url = process.env.RENDER_EXTERNAL_URL ?
+    `${process.env.RENDER_EXTERNAL_URL}/health` :
+    `http://localhost:${process.env.PORT || 3000}/health`;
+  
+  try {
+    const res = await fetch(url);
+    console.log(`[Self-Ping] ${new Date().toISOString()} → ${res.status}`);
+  } catch (e) {
+    console.error('[Self-Ping] Failed:', e.message);
+  }
+}, SELF_PING_INTERVAL_MS);
+
 // ===== ROUTES =====
 
 app.get('/', (req, res) => {
@@ -69,26 +96,21 @@ app.get('/api/state', (req, res) => {
 
 /**
  * Download the session JSON bundle.
- * Returns a .json file containing all auth files from sessions/auth.
  */
 app.get('/api/session', (req, res) => {
   try {
-    const sessionDir = process.env.SESSION_DIR ?
-      path.join(process.env.SESSION_DIR, 'auth') :
-      path.join(__dirname, 'sessions', 'auth');
-    
-    if (!fs.existsSync(sessionDir)) {
+    if (!fs.existsSync(AUTH_DIR)) {
       return res.status(404).json({ error: 'No session directory yet. Connect the bot first.' });
     }
     
-    const files = fs.readdirSync(sessionDir).filter((f) => f.endsWith('.json'));
+    const files = fs.readdirSync(AUTH_DIR).filter((f) => f.endsWith('.json'));
     if (!files.length) {
       return res.status(404).json({ error: 'No session files yet. Wait for pairing to complete.' });
     }
     
     const bundle = {};
     for (const f of files) {
-      bundle[f] = JSON.parse(fs.readFileSync(path.join(sessionDir, f), 'utf8'));
+      bundle[f] = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, f), 'utf8'));
     }
     
     const json = JSON.stringify(bundle, null, 2);
@@ -100,6 +122,47 @@ app.get('/api/session', (req, res) => {
     res.send(json);
   } catch (e) {
     console.error('[Session Download]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Wipe all session data. Deletes sessions/auth and state.json.
+ * Use this when the bot is stuck, corrupted, or you want a fresh start.
+ */
+app.post('/api/wipe', (req, res) => {
+  try {
+    console.log('[Wipe] Requested by client');
+    
+    // Stop the bot first so files aren't locked
+    try { bot.stopBot(); } catch (e) {}
+    
+    // Delete auth folder
+    if (fs.existsSync(AUTH_DIR)) {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+      console.log('[Wipe] Deleted auth folder');
+    }
+    
+    // Delete state file
+    if (fs.existsSync(STATE_FILE)) {
+      fs.rmSync(STATE_FILE, { force: true });
+      console.log('[Wipe] Deleted state.json');
+    }
+    
+    // Reset session state
+    sessionState = {
+      active: false,
+      number: null,
+      startedAt: null,
+      expiresAt: null,
+      pairingCode: null,
+      status: 'idle'
+    };
+    broadcast();
+    
+    res.json({ ok: true, message: 'All session data wiped. Ready for fresh pairing.' });
+  } catch (e) {
+    console.error('[Wipe] Error:', e);
     res.status(500).json({ error: e.message });
   }
 });
