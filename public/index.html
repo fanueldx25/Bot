@@ -1,218 +1,594 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WhatsApp Bot Control</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0b141a;
-      color: #e9edef;
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-    }
-    .card {
-      background: #111b21;
-      border-radius: 16px;
-      padding: 28px;
-      width: 100%;
-      max-width: 440px;
-      box-shadow: 0 8px 40px rgba(0,0,0,.5);
-    }
-    h1 { margin: 0 0 6px; font-size: 22px; }
-    .sub { color: #8696a0; font-size: 13px; margin-bottom: 22px; }
-    input {
-      width: 100%;
-      padding: 14px;
-      border-radius: 10px;
-      border: 1px solid #2a3942;
-      background: #202c33;
-      color: #e9edef;
-      font-size: 16px;
-      outline: none;
-    }
-    input:focus { border-color: #00a884; }
-    button {
-      width: 100%;
-      padding: 14px;
-      margin-top: 12px;
-      border-radius: 10px;
-      border: none;
-      background: #00a884;
-      color: #fff;
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    button.danger { background: #b33; }
-    button.secondary {
-      background: #202c33;
-      border: 1px solid #2a3942;
-      color: #00a884;
-      margin-top: 8px;
-    }
-    button.secondary:hover { background: #2a3942; }
-    .code-box {
-      margin-top: 20px;
-      padding: 18px;
-      background: #202c33;
-      border-radius: 12px;
-      text-align: center;
-      border: 1px dashed #00a884;
-    }
-    .code {
-      font-size: 30px;
-      letter-spacing: 6px;
-      font-weight: 700;
-      color: #00a884;
-      font-family: monospace;
-      margin: 8px 0;
-    }
-    .hint { font-size: 12px; color: #8696a0; line-height: 1.5; }
-    .status {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 600;
-      margin-bottom: 14px;
-    }
-    .s-idle { background: #2a3942; color: #8696a0; }
-    .s-awaiting_code { background: #4a3b00; color: #ffb900; }
-    .s-connected { background: #053d2b; color: #00e08a; }
-    .s-expired { background: #3d0a0a; color: #ff6b6b; }
-    .timer { font-size: 13px; color: #8696a0; margin-top: 14px; text-align: center; }
-    .divider {
-      height: 1px;
-      background: #2a3942;
-      margin: 16px 0;
-    }
-    .banner-preview {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px;
-      background: #202c33;
-      border-radius: 10px;
-      margin-top: 12px;
-      font-size: 12px;
-      color: #8696a0;
-    }
-    .banner-preview img {
-      width: 48px;
-      height: 48px;
-      border-radius: 8px;
-      object-fit: cover;
-      background: #0b141a;
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>WhatsApp Bot · Pairing Dashboard</title>
+<style>
+  :root {
+    --bg: #0b141a;
+    --panel: #111b21;
+    --panel-2: #202c33;
+    --border: #2a3942;
+    --text: #e9edef;
+    --muted: #8696a0;
+    --green: #00a884;
+    --green-2: #06cf9c;
+    --red: #f15c6d;
+    --yellow: #f0b232;
+    --blue: #53bdeb;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: 440px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 26px 22px 22px;
+    box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255,255,255,0.02) inset;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .wrap::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    background: linear-gradient(135deg, rgba(0,168,132,0.15), transparent 40%, transparent 60%, rgba(83,189,235,0.12));
+    z-index: 0;
+    pointer-events: none;
+  }
+  .wrap > * { position: relative; z-index: 1; }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+
+  .logo {
+    width: 46px;
+    height: 46px;
+    border-radius: 13px;
+    background: linear-gradient(135deg, #00a884, #017d63);
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    box-shadow: 0 8px 24px -6px rgba(0,168,132,0.6);
+    flex-shrink: 0;
+  }
+
+  h1 {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+  }
+  .sub {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* Status pill */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 18px 0 20px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  .dot.disconnected { background: var(--red); }
+  .dot.connecting { background: var(--yellow); animation: pulse 1.2s infinite; }
+  .dot.code_ready { background: var(--blue); animation: pulse 1.4s infinite; }
+  .dot.connected { background: var(--green); }
+  .dot.error { background: var(--red); animation: blink 1s infinite; }
+
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 currentColor; }
+    70% { box-shadow: 0 0 0 8px rgba(0,0,0,0); }
+    100% { box-shadow: 0 0 0 0 rgba(0,0,0,0); }
+  }
+  @keyframes blink {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  label {
+    display: block;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-bottom: 7px;
+    letter-spacing: 0.2px;
+  }
+
+  .input-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .input-wrap:focus-within {
+    border-color: var(--green);
+    box-shadow: 0 0 0 3px rgba(0,168,132,0.15);
+  }
+  .input-wrap .prefix {
+    padding: 0 4px 0 14px;
+    color: var(--muted);
+    font-size: 14px;
+    user-select: none;
+  }
+  .input-wrap input {
+    flex: 1;
+    padding: 13px 14px 13px 4px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-size: 15px;
+    letter-spacing: 0.5px;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+  }
+  .input-wrap input::placeholder { color: #5c6b73; letter-spacing: normal; }
+
+  .hint {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 8px;
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+    line-height: 1.4;
+  }
+  .hint b { color: #c3ced3; font-weight: 600; }
+
+  button {
+    width: 100%;
+    margin-top: 16px;
+    padding: 14px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    transition: transform 0.08s, background 0.2s, box-shadow 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+  }
+  button:active { transform: scale(0.985); }
+
+  .btn-primary {
+    background: linear-gradient(180deg, var(--green-2), var(--green));
+    color: #06231c;
+    box-shadow: 0 10px 25px -10px rgba(0,168,132,0.8);
+  }
+  .btn-primary:hover { background: linear-gradient(180deg, #0ee2a8, #00a884); }
+  .btn-primary:disabled {
+    background: var(--panel-2);
+    color: var(--muted);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .btn-secondary {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    margin-top: 10px;
+  }
+  .btn-secondary:hover { background: #2a3942; }
+
+  /* Spinner */
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(6,35,28,0.25);
+    border-top-color: #06231c;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: none;
+  }
+  button.loading .spinner { display: inline-block; }
+  button.loading .btn-label { opacity: 0.8; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Result panels */
+  .panel {
+    margin-top: 18px;
+    padding: 16px;
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    display: none;
+    animation: slidein 0.25s ease;
+  }
+  .panel.show { display: block; }
+  @keyframes slidein {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .panel.error {
+    background: rgba(241,92,109,0.08);
+    border-color: rgba(241,92,109,0.35);
+  }
+  .panel.error .panel-title { color: var(--red); }
+
+  .panel-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--green);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .error-msg {
+    font-size: 14px;
+    color: #ffd7db;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .error-hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(241,92,109,0.25);
+    line-height: 1.5;
+  }
+
+  /* Pairing code */
+  .code-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: #0b141a;
+    border: 1.5px dashed var(--green);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .code {
+    font-family: "SF Mono", "Courier New", monospace;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: var(--green);
+    user-select: all;
+    word-break: break-all;
+  }
+  .copy-btn {
+    width: auto;
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 12px;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    flex-shrink: 0;
+  }
+  .copy-btn:hover { background: #2a3942; }
+
+  .steps {
+    list-style: none;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.9;
+  }
+  .steps li {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .steps .n {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    color: var(--text);
+    font-weight: 600;
+    margin-top: 3px;
+  }
+  .steps b { color: #c3ced3; font-weight: 600; }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--panel);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 10px;
+  }
+  .progress-bar > div {
+    height: 100%;
+    width: 30%;
+    background: linear-gradient(90deg, var(--green), var(--blue));
+    border-radius: 999px;
+    animation: indeterminate 1.4s infinite ease-in-out;
+  }
+  @keyframes indeterminate {
+    0% { margin-left: -30%; }
+    100% { margin-left: 100%; }
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.err { background: rgba(241,92,109,0.15); border-color: rgba(241,92,109,0.4); color: #ffd7db; }
+  .toast.ok { background: rgba(0,168,132,0.15); border-color: rgba(0,168,132,0.4); color: #c6f5e5; }
+
+  .footer {
+    text-align: center;
+    font-size: 11px;
+    color: #5c6b73;
+    margin-top: 18px;
+    letter-spacing: 0.3px;
+  }
+</style>
 </head>
 <body>
-  <div class="card">
-    <h1>WhatsApp Bot</h1>
-    <div class="sub">Connect using a phone number (no QR needed)</div>
-
-    <div id="statusBadge" class="status s-idle">idle</div>
-
-    <div id="connectForm">
-      <input id="phone" type="tel" placeholder="15551234567 (country code, no +)" />
-      <button id="connectBtn">Get Pairing Code</button>
-
-      <div class="banner-preview">
-        <img src="/assets/banner.jpg" onerror="this.style.display='none'" alt="banner" />
-        <span>Bot banner will be attached to help/status replies.</span>
+  <div class="wrap">
+    <div class="header">
+      <div class="logo">🤖</div>
+      <div>
+        <h1>WhatsApp Bot</h1>
+        <div class="sub">Pair with a code — no QR needed</div>
       </div>
     </div>
 
-    <div id="codeSection" style="display:none">
+    <div class="pill">
+      <span id="dot" class="dot disconnected"></span>
+      <span id="stateText">Disconnected</span>
+    </div>
+
+    <label for="number">Phone number (with country code)</label>
+    <div class="input-wrap">
+      <span class="prefix">+</span>
+      <input id="number" type="tel" inputmode="numeric" placeholder="237612345678" autocomplete="off" />
+    </div>
+    <div class="hint">
+      <span>ℹ️</span>
+      <div>Include country code, <b>without</b> the + sign or leading zero.</div>
+    </div>
+
+    <button id="connectBtn" class="btn-primary">
+      <span class="spinner"></span>
+      <span class="btn-label">Request Pairing Code</span>
+    </button>
+
+    <button id="disconnectBtn" class="btn-secondary" style="display:none;">
+      Disconnect
+    </button>
+
+    <!-- Connecting / progress -->
+    <div id="progressPanel" class="panel">
+      <div class="panel-title">⏳ Working…</div>
+      <div id="progressMsg" style="font-size:13px;color:var(--muted);">Opening channel…</div>
+      <div class="progress-bar"><div></div></div>
+    </div>
+
+    <!-- Pairing code -->
+    <div id="codePanel" class="panel">
+      <div class="panel-title">🔑 Pairing Code</div>
       <div class="code-box">
-        <div class="hint">Enter this code in WhatsApp → Linked Devices → Link with phone number</div>
-        <div class="code" id="code">--------</div>
-        <div class="hint">Code expires in <span id="codeTimer">5:00</span></div>
+        <div id="code" class="code">----</div>
+        <button id="copyBtn" class="copy-btn">Copy</button>
       </div>
+      <ul class="steps">
+        <li><span class="n">1</span><div>Open <b>WhatsApp</b> on your phone</div></li>
+        <li><span class="n">2</span><div>Go to <b>Settings → Linked Devices</b></div></li>
+        <li><span class="n">3</span><div>Tap <b>Link a Device</b></div></li>
+        <li><span class="n">4</span><div>Choose <b>Link with phone number</b></div></li>
+        <li><span class="n">5</span><div>Enter the code shown above</div></li>
+      </ul>
     </div>
 
-    <div id="connectedSection" style="display:none">
-      <div class="code-box" style="border-color:#00e08a">
-        <div style="font-size:18px;font-weight:600;color:#00e08a">✅ Bot is connected</div>
-        <div class="hint" style="margin-top:8px">Number: <span id="connNumber"></span></div>
-      </div>
-
-      <div class="divider"></div>
-
-      <div style="font-size:13px;color:#8696a0;margin-bottom:8px;">
-        💾 Save your session so you can reconnect without re-pairing:
-      </div>
-      <button class="secondary" id="downloadSession">⬇️ Download Session JSON</button>
-
-      <div class="timer">Session expires in <span id="sessionTimer">--:--</span></div>
-      <button class="danger" id="disconnectBtn">Disconnect</button>
+    <!-- Connected -->
+    <div id="connectedPanel" class="panel">
+      <div class="panel-title">✅ Connected</div>
+      <div id="connectedInfo" style="font-size:14px;color:var(--text);"></div>
     </div>
+
+    <!-- Error -->
+    <div id="errorPanel" class="panel error">
+      <div class="panel-title">⚠️ Problem</div>
+      <div id="errorMsg" class="error-msg"></div>
+      <div id="errorHint" class="error-hint" style="display:none;"></div>
+    </div>
+
+    <div class="footer">Powered by Baileys · Multi-device</div>
   </div>
+
+  <div id="toast" class="toast"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io();
-    let state = {};
-    let codeExpiresAt = null;
-
+    // ---------- Element refs ----------
     const $ = (id) => document.getElementById(id);
+    const numberInput = $('number');
+    const connectBtn = $('connectBtn');
+    const disconnectBtn = $('disconnectBtn');
+    const dot = $('dot');
+    const stateText = $('stateText');
+    const progressPanel = $('progressPanel');
+    const progressMsg = $('progressMsg');
+    const codePanel = $('codePanel');
+    const codeEl = $('code');
+    const copyBtn = $('copyBtn');
+    const connectedPanel = $('connectedPanel');
+    const connectedInfo = $('connectedInfo');
+    const errorPanel = $('errorPanel');
+    const errorMsg = $('errorMsg');
+    const errorHint = $('errorHint');
+    const toastEl = $('toast');
 
-    socket.on('state', (s) => {
-      state = s;
-      render();
-    });
+    const socket = io();
 
-    function render() {
-      const badge = $('statusBadge');
-      badge.className = 'status s-' + (state.status || 'idle');
-      badge.textContent = state.status || 'idle';
+    // ---------- Toast ----------
+    let toastTimer;
+    function toast(msg, kind = '') {
+      toastEl.textContent = msg;
+      toastEl.className = 'toast show ' + kind;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => (toastEl.className = 'toast'), 2600);
+    }
 
-      $('connectForm').style.display =
-        state.status === 'idle' || state.status === 'expired' ? 'block' : 'none';
-      $('codeSection').style.display =
-        state.status === 'awaiting_code' ? 'block' : 'none';
-      $('connectedSection').style.display =
-        state.status === 'connected' ? 'block' : 'none';
+    // ---------- Panel helpers ----------
+    function hideAllPanels() {
+      progressPanel.classList.remove('show');
+      codePanel.classList.remove('show');
+      connectedPanel.classList.remove('show');
+      errorPanel.classList.remove('show');
+    }
 
-      if (state.pairingCode) $('code').textContent = state.pairingCode;
-      if (state.number && state.status === 'connected')
-        $('connNumber').textContent = '+' + state.number;
-
-      if (state.status === 'awaiting_code') {
-        if (!codeExpiresAt) codeExpiresAt = Date.now() + 5 * 60 * 1000;
+    function showError(msg, hint) {
+      hideAllPanels();
+      errorMsg.textContent = msg || 'Unknown error';
+      if (hint) {
+        errorHint.textContent = hint;
+        errorHint.style.display = 'block';
       } else {
-        codeExpiresAt = null;
+        errorHint.style.display = 'none';
+      }
+      errorPanel.classList.add('show');
+    }
+
+    function setLoading(loading) {
+      connectBtn.disabled = loading;
+      connectBtn.classList.toggle('loading', loading);
+      if (loading) {
+        connectBtn.querySelector('.btn-label').textContent = 'Requesting…';
+      } else {
+        connectBtn.querySelector('.btn-label').textContent = 'Request Pairing Code';
       }
     }
 
-    setInterval(() => {
-      if (codeExpiresAt) {
-        const left = Math.max(0, codeExpiresAt - Date.now());
-        const m = Math.floor(left / 60000);
-        const s = Math.floor((left % 60000) / 1000);
-        $('codeTimer').textContent = `${m}:${s.toString().padStart(2, '0')}`;
-      }
-      if (state.status === 'connected' && state.expiresAt) {
-        const left = Math.max(0, state.expiresAt - Date.now());
-        const h = Math.floor(left / 3600000);
-        const m = Math.floor((left % 3600000) / 60000);
-        $('sessionTimer').textContent = `${h}h ${m}m`;
-      }
-    }, 1000);
+    function formatCode(c) {
+      if (!c) return '----';
+      return c.match(/.{1,4}/g)?.join('-') || c;
+    }
 
-    $('connectBtn').onclick = async () => {
-      const number = $('phone').value.trim().replace(/\D/g, '');
-      if (!number) return alert('Enter your phone number with country code');
-      $('connectBtn').disabled = true;
-      $('connectBtn').textContent = 'Requesting...';
+    // ---------- Render state from server ----------
+    function renderState(data) {
+      const s = data.state || 'disconnected';
+      dot.className = 'dot ' + s;
+
+      const labels = {
+        disconnected: 'Disconnected',
+        connecting: 'Connecting…',
+        code_ready: 'Awaiting code entry',
+        connected: 'Connected',
+        error: 'Error'
+      };
+      stateText.textContent = labels[s] || s;
+
+      if (s === 'connecting') {
+        hideAllPanels();
+        progressMsg.textContent = data.message || 'Working…';
+        progressPanel.classList.add('show');
+        disconnectBtn.style.display = 'block';
+      } else if (s === 'code_ready') {
+        hideAllPanels();
+        codeEl.textContent = formatCode(data.code);
+        codePanel.classList.add('show');
+        disconnectBtn.style.display = 'block';
+      } else if (s === 'connected') {
+        hideAllPanels();
+        const num = data.number ? '+' + data.number : '';
+        const name = data.name ? ' · ' + data.name : '';
+        connectedInfo.textContent = (num + name) || 'Session active.';
+        connectedPanel.classList.add('show');
+        disconnectBtn.style.display = 'block';
+      } else if (s === 'error') {
+        showError(data.message || 'Something went wrong', data.hint);
+        disconnectBtn.style.display = 'none';
+      } else {
+        hideAllPanels();
+        disconnectBtn.style.display = 'none';
+      }
+    }
+
+    // ---------- Actions ----------
+    connectBtn.addEventListener('click', async () => {
+      const number = numberInput.value.trim();
+      if (!number) {
+        toast('Please enter your phone number', 'err');
+        numberInput.focus();
+        return;
+      }
+      if (number.replace(/\D/g, '').length < 10) {
+        toast('Number too short — include country code', 'err');
+        return;
+      }
+
+      setLoading(true);
+      // optimistic UI
+      dot.className = 'dot connecting';
+      stateText.textContent = 'Connecting…';
+      hideAllPanels();
+      progressMsg.textContent = 'Sending request…';
+      progressPanel.classList.add('show');
 
       try {
         const res = await fetch('/api/connect', {
@@ -221,23 +597,60 @@
           body: JSON.stringify({ number })
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed');
+
+        if (!res.ok || data.error) {
+          showError(data.error || 'Request failed', 'Check the number and try again.');
+          toast(data.error || 'Request failed', 'err');
+          setLoading(false);
+        } else {
+          // socket will push the code_ready / error state
+          toast('Request accepted — waiting for code…', 'ok');
+        }
       } catch (e) {
-        alert(e.message);
-      } finally {
-        $('connectBtn').disabled = false;
-        $('connectBtn').textContent = 'Get Pairing Code';
+        showError('Network error: ' + e.message, 'Is the server running?');
+        toast('Network error', 'err');
+        setLoading(false);
       }
-    };
+    });
 
-    $('downloadSession').onclick = () => {
-      window.location.href = '/api/session';
-    };
+    disconnectBtn.addEventListener('click', async () => {
+      disconnectBtn.disabled = true;
+      try {
+        await fetch('/api/disconnect', { method: 'POST' });
+        toast('Disconnected', 'ok');
+      } catch (e) {
+        toast('Failed to disconnect', 'err');
+      } finally {
+        disconnectBtn.disabled = false;
+      }
+    });
 
-    $('disconnectBtn').onclick = async () => {
-      if (!confirm('Disconnect the bot?')) return;
-      await fetch('/api/disconnect', { method: 'POST' });
-    };
+    copyBtn.addEventListener('click', async () => {
+      const raw = codeEl.textContent.replace(/-/g, '');
+      try {
+        await navigator.clipboard.writeText(raw);
+        copyBtn.textContent = 'Copied!';
+        toast('Code copied', 'ok');
+        setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
+      } catch (e) {
+        toast('Copy failed — select manually', 'err');
+      }
+    });
+
+    // ---------- Socket ----------
+    socket.on('connect', () => socket.emit('request_state'));
+
+    socket.on('state', (data) => {
+      renderState(data);
+
+      // stop loading spinner whenever we reach a terminal state
+      if (data.state === 'code_ready' || data.state === 'connected' || data.state === 'error') {
+        setLoading(false);
+      }
+    });
+
+    // ---------- First paint ----------
+    fetch('/api/state').then((r) => r.json()).then(renderState).catch(() => {});
   </script>
 </body>
 </html>

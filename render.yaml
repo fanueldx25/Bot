@@ -3,9 +3,20 @@ services:
     name: whatsapp-bot
     runtime: node
     plan: free
+    region: frankfurt
+    branch: main
+    autoDeploy: true
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /api/state
     envVars:
       - key: NODE_VERSION
-        value: 20.18.0
+        value: 20.11.0
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_NUMBER
+        sync: false          # set manually in Render dashboard (secret)
+      - key: PORT
+        value: 10000         # Render injects PORT automatically, but explicit helps
+      - key: SESSION_SECRET
+        generateValue: true  # random secret if you add dashboard auth later
