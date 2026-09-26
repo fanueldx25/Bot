@@ -1246,3 +1246,4 @@ function stopBot() {
 }
 
 module.exports = { startBot, stopBot };
+console.log('[Bot] Pairing code:', code);
