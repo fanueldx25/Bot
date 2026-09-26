@@ -22,7 +22,7 @@
       border-radius: 16px;
       padding: 28px;
       width: 100%;
-      max-width: 420px;
+      max-width: 440px;
       box-shadow: 0 8px 40px rgba(0,0,0,.5);
     }
     h1 { margin: 0 0 6px; font-size: 22px; }
@@ -52,6 +52,13 @@
     }
     button:disabled { opacity: .5; cursor: not-allowed; }
     button.danger { background: #b33; }
+    button.secondary {
+      background: #202c33;
+      border: 1px solid #2a3942;
+      color: #00a884;
+      margin-top: 8px;
+    }
+    button.secondary:hover { background: #2a3942; }
     .code-box {
       margin-top: 20px;
       padding: 18px;
@@ -82,6 +89,29 @@
     .s-connected { background: #053d2b; color: #00e08a; }
     .s-expired { background: #3d0a0a; color: #ff6b6b; }
     .timer { font-size: 13px; color: #8696a0; margin-top: 14px; text-align: center; }
+    .divider {
+      height: 1px;
+      background: #2a3942;
+      margin: 16px 0;
+    }
+    .banner-preview {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      background: #202c33;
+      border-radius: 10px;
+      margin-top: 12px;
+      font-size: 12px;
+      color: #8696a0;
+    }
+    .banner-preview img {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: #0b141a;
+    }
   </style>
 </head>
 <body>
@@ -94,6 +124,11 @@
     <div id="connectForm">
       <input id="phone" type="tel" placeholder="15551234567 (country code, no +)" />
       <button id="connectBtn">Get Pairing Code</button>
+
+      <div class="banner-preview">
+        <img src="/assets/banner.jpg" onerror="this.style.display='none'" alt="banner" />
+        <span>Bot banner will be attached to help/status replies.</span>
+      </div>
     </div>
 
     <div id="codeSection" style="display:none">
@@ -109,6 +144,14 @@
         <div style="font-size:18px;font-weight:600;color:#00e08a">✅ Bot is connected</div>
         <div class="hint" style="margin-top:8px">Number: <span id="connNumber"></span></div>
       </div>
+
+      <div class="divider"></div>
+
+      <div style="font-size:13px;color:#8696a0;margin-bottom:8px;">
+        💾 Save your session so you can reconnect without re-pairing:
+      </div>
+      <button class="secondary" id="downloadSession">⬇️ Download Session JSON</button>
+
       <div class="timer">Session expires in <span id="sessionTimer">--:--</span></div>
       <button class="danger" id="disconnectBtn">Disconnect</button>
     </div>
@@ -140,7 +183,8 @@
         state.status === 'connected' ? 'block' : 'none';
 
       if (state.pairingCode) $('code').textContent = state.pairingCode;
-      if (state.number && state.status === 'connected') $('connNumber').textContent = '+' + state.number;
+      if (state.number && state.status === 'connected')
+        $('connNumber').textContent = '+' + state.number;
 
       if (state.status === 'awaiting_code') {
         if (!codeExpiresAt) codeExpiresAt = Date.now() + 5 * 60 * 1000;
@@ -184,6 +228,10 @@
         $('connectBtn').disabled = false;
         $('connectBtn').textContent = 'Get Pairing Code';
       }
+    };
+
+    $('downloadSession').onclick = () => {
+      window.location.href = '/api/session';
     };
 
     $('disconnectBtn').onclick = async () => {

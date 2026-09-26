@@ -1,7 +1,17 @@
+/**
+ * ============================================================================
+ * WHATSAPP BOT - WEB SERVER
+ * ============================================================================
+ * Express server that hosts the control UI and exposes a REST API for
+ * connecting, disconnecting, and downloading the session JSON.
+ * ============================================================================
+ */
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 const bot = require('./bot');
 
 const app = express();
@@ -22,7 +32,7 @@ let sessionState = {
 };
 
 const SESSION_DURATION_MS = 60 * 60 * 1000; // 1 hour
-const PAIRING_TIMEOUT_MS = 5 * 60 * 1000;   // 5 minutes to enter code
+const PAIRING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes to enter code
 
 function broadcast() {
   io.emit('state', sessionState);
@@ -34,8 +44,12 @@ setInterval(() => {
     console.log('[Session] Expired');
     bot.stopBot();
     sessionState = {
-      active: false, number: null, startedAt: null,
-      expiresAt: null, pairingCode: null, status: 'expired'
+      active: false,
+      number: null,
+      startedAt: null,
+      expiresAt: null,
+      pairingCode: null,
+      status: 'expired'
     };
     broadcast();
   }
@@ -53,17 +67,56 @@ app.get('/api/state', (req, res) => {
   res.json(sessionState);
 });
 
+/**
+ * Download the session JSON bundle.
+ * Returns a .json file containing all auth files from sessions/auth.
+ */
+app.get('/api/session', (req, res) => {
+  try {
+    const sessionDir = process.env.SESSION_DIR ?
+      path.join(process.env.SESSION_DIR, 'auth') :
+      path.join(__dirname, 'sessions', 'auth');
+    
+    if (!fs.existsSync(sessionDir)) {
+      return res.status(404).json({ error: 'No session directory yet. Connect the bot first.' });
+    }
+    
+    const files = fs.readdirSync(sessionDir).filter((f) => f.endsWith('.json'));
+    if (!files.length) {
+      return res.status(404).json({ error: 'No session files yet. Wait for pairing to complete.' });
+    }
+    
+    const bundle = {};
+    for (const f of files) {
+      bundle[f] = JSON.parse(fs.readFileSync(path.join(sessionDir, f), 'utf8'));
+    }
+    
+    const json = JSON.stringify(bundle, null, 2);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="wa-session-${Date.now()}.json"`
+    );
+    res.send(json);
+  } catch (e) {
+    console.error('[Session Download]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/connect', async (req, res) => {
   const { number } = req.body;
-
+  
   if (!number || !/^\d{7,15}$/.test(number)) {
-    return res.status(400).json({ error: 'Invalid phone number. Use country code without +, e.g. 15551234567' });
+    return res.status(400).json({
+      error: 'Invalid phone number. Use country code without +, e.g. 15551234567'
+    });
   }
-
+  
   if (sessionState.active && sessionState.status === 'connected') {
     return res.status(409).json({ error: 'A bot is already connected. Wait for session to expire.' });
   }
-
+  
   try {
     sessionState = {
       active: true,
@@ -74,7 +127,7 @@ app.post('/api/connect', async (req, res) => {
       status: 'awaiting_code'
     };
     broadcast();
-
+    
     bot.startBot(number, {
       onPairingCode: (code) => {
         sessionState.pairingCode = code;
@@ -93,19 +146,22 @@ app.post('/api/connect', async (req, res) => {
         broadcast();
       }
     });
-
-    // Timeout if code isn't entered
+    
     setTimeout(() => {
       if (sessionState.status === 'awaiting_code') {
         bot.stopBot();
         sessionState = {
-          active: false, number: null, startedAt: null,
-          expiresAt: null, pairingCode: null, status: 'idle'
+          active: false,
+          number: null,
+          startedAt: null,
+          expiresAt: null,
+          pairingCode: null,
+          status: 'idle'
         };
         broadcast();
       }
     }, PAIRING_TIMEOUT_MS);
-
+    
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -116,8 +172,12 @@ app.post('/api/connect', async (req, res) => {
 app.post('/api/disconnect', (req, res) => {
   bot.stopBot();
   sessionState = {
-    active: false, number: null, startedAt: null,
-    expiresAt: null, pairingCode: null, status: 'idle'
+    active: false,
+    number: null,
+    startedAt: null,
+    expiresAt: null,
+    pairingCode: null,
+    status: 'idle'
   };
   broadcast();
   res.json({ ok: true });
