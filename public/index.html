@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-<title>WhatsApp Bot · Pairing Dashboard</title>
+<title>WhatsApp Bot · Dashboard</title>
 <style>
   :root {
     --bg: #0b141a;
@@ -35,6 +35,107 @@
     line-height: 1.5;
   }
 
+  /* ---------- LOGIN SCREEN ---------- */
+  #loginScreen {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, var(--bg) 60%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #loginScreen.show { display: flex; }
+
+  .login-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 28px 22px;
+    width: 100%;
+    max-width: 380px;
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.7);
+    animation: slidein 0.3s ease;
+  }
+
+  .login-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+
+  .login-logo {
+    width: 46px;
+    height: 46px;
+    border-radius: 13px;
+    background: linear-gradient(135deg, #00a884, #017d63);
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    box-shadow: 0 8px 24px -6px rgba(0,168,132,0.6);
+    flex-shrink: 0;
+  }
+
+  .login-title {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+  }
+  .login-sub {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .login-input {
+    width: 100%;
+    padding: 13px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .login-input:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 3px rgba(0,168,132,0.15);
+  }
+
+  .login-btn {
+    width: 100%;
+    margin-top: 14px;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    background: linear-gradient(180deg, var(--green-2), var(--green));
+    color: #06231c;
+    box-shadow: 0 10px 25px -10px rgba(0,168,132,0.8);
+    transition: transform 0.08s, background 0.2s;
+  }
+  .login-btn:active { transform: scale(0.985); }
+  .login-btn:disabled {
+    background: var(--panel-2);
+    color: var(--muted);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .login-error {
+    color: var(--red);
+    font-size: 13px;
+    margin-top: 10px;
+    display: none;
+  }
+  .login-error.show { display: block; }
+
+  /* ---------- MAIN DASHBOARD ---------- */
   .wrap {
     width: 100%;
     max-width: 440px;
@@ -46,7 +147,6 @@
     position: relative;
     overflow: hidden;
   }
-
   .wrap::before {
     content: "";
     position: absolute;
@@ -87,7 +187,20 @@
     margin-top: 2px;
   }
 
-  /* Status pill */
+  .logout-btn {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: auto;
+    padding: 6px 10px;
+    border-radius: 9px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .logout-btn:hover { background: var(--panel-2); color: var(--text); }
+
   .pill {
     display: inline-flex;
     align-items: center;
@@ -100,6 +213,7 @@
     font-size: 12.5px;
     color: var(--muted);
   }
+
   .dot {
     width: 8px;
     height: 8px;
@@ -214,7 +328,6 @@
   }
   .btn-secondary:hover { background: #2a3942; }
 
-  /* Spinner */
   .spinner {
     width: 16px;
     height: 16px;
@@ -229,7 +342,6 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Result panels */
   .panel {
     margin-top: 18px;
     padding: 16px;
@@ -278,7 +390,6 @@
     line-height: 1.5;
   }
 
-  /* Pairing code */
   .code-box {
     display: flex;
     align-items: center;
@@ -372,7 +483,7 @@
     opacity: 0;
     transition: opacity 0.25s, transform 0.25s;
     pointer-events: none;
-    z-index: 10;
+    z-index: 200;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .toast.err { background: rgba(241,92,109,0.15); border-color: rgba(241,92,109,0.4); color: #ffd7db; }
@@ -385,272 +496,411 @@
     margin-top: 18px;
     letter-spacing: 0.3px;
   }
+
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="header">
-      <div class="logo">🤖</div>
+
+<!-- ============================================================ -->
+<!-- LOGIN SCREEN                                                  -->
+<!-- ============================================================ -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-head">
+      <div class="login-logo">🔐</div>
       <div>
-        <h1>WhatsApp Bot</h1>
-        <div class="sub">Pair with a code — no QR needed</div>
+        <div class="login-title">Bot Dashboard</div>
+        <div class="login-sub">Enter password to continue</div>
       </div>
     </div>
+    <input id="pwInput" class="login-input" type="password" placeholder="Password" autocomplete="current-password" />
+    <button id="pwBtn" class="login-btn">Unlock</button>
+    <div id="pwError" class="login-error"></div>
+  </div>
+</div>
 
-    <div class="pill">
-      <span id="dot" class="dot disconnected"></span>
-      <span id="stateText">Disconnected</span>
+<!-- ============================================================ -->
+<!-- MAIN DASHBOARD                                                -->
+<!-- ============================================================ -->
+<div id="app" class="wrap hidden">
+  <div class="header">
+    <div class="logo">🤖</div>
+    <div>
+      <h1>WhatsApp Bot</h1>
+      <div class="sub">Pair with a code — no QR needed</div>
     </div>
-
-    <label for="number">Phone number (with country code)</label>
-    <div class="input-wrap">
-      <span class="prefix">+</span>
-      <input id="number" type="tel" inputmode="numeric" placeholder="237612345678" autocomplete="off" />
-    </div>
-    <div class="hint">
-      <span>ℹ️</span>
-      <div>Include country code, <b>without</b> the + sign or leading zero.</div>
-    </div>
-
-    <button id="connectBtn" class="btn-primary">
-      <span class="spinner"></span>
-      <span class="btn-label">Request Pairing Code</span>
-    </button>
-
-    <button id="disconnectBtn" class="btn-secondary" style="display:none;">
-      Disconnect
-    </button>
-
-    <!-- Connecting / progress -->
-    <div id="progressPanel" class="panel">
-      <div class="panel-title">⏳ Working…</div>
-      <div id="progressMsg" style="font-size:13px;color:var(--muted);">Opening channel…</div>
-      <div class="progress-bar"><div></div></div>
-    </div>
-
-    <!-- Pairing code -->
-    <div id="codePanel" class="panel">
-      <div class="panel-title">🔑 Pairing Code</div>
-      <div class="code-box">
-        <div id="code" class="code">----</div>
-        <button id="copyBtn" class="copy-btn">Copy</button>
-      </div>
-      <ul class="steps">
-        <li><span class="n">1</span><div>Open <b>WhatsApp</b> on your phone</div></li>
-        <li><span class="n">2</span><div>Go to <b>Settings → Linked Devices</b></div></li>
-        <li><span class="n">3</span><div>Tap <b>Link a Device</b></div></li>
-        <li><span class="n">4</span><div>Choose <b>Link with phone number</b></div></li>
-        <li><span class="n">5</span><div>Enter the code shown above</div></li>
-      </ul>
-    </div>
-
-    <!-- Connected -->
-    <div id="connectedPanel" class="panel">
-      <div class="panel-title">✅ Connected</div>
-      <div id="connectedInfo" style="font-size:14px;color:var(--text);"></div>
-    </div>
-
-    <!-- Error -->
-    <div id="errorPanel" class="panel error">
-      <div class="panel-title">⚠️ Problem</div>
-      <div id="errorMsg" class="error-msg"></div>
-      <div id="errorHint" class="error-hint" style="display:none;"></div>
-    </div>
-
-    <div class="footer">Powered by Baileys · Multi-device</div>
+    <button id="logoutBtn" class="logout-btn">Logout</button>
   </div>
 
-  <div id="toast" class="toast"></div>
+  <div class="pill">
+    <span id="dot" class="dot disconnected"></span>
+    <span id="stateText">Disconnected</span>
+  </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    // ---------- Element refs ----------
-    const $ = (id) => document.getElementById(id);
-    const numberInput = $('number');
-    const connectBtn = $('connectBtn');
-    const disconnectBtn = $('disconnectBtn');
-    const dot = $('dot');
-    const stateText = $('stateText');
-    const progressPanel = $('progressPanel');
-    const progressMsg = $('progressMsg');
-    const codePanel = $('codePanel');
-    const codeEl = $('code');
-    const copyBtn = $('copyBtn');
-    const connectedPanel = $('connectedPanel');
-    const connectedInfo = $('connectedInfo');
-    const errorPanel = $('errorPanel');
-    const errorMsg = $('errorMsg');
-    const errorHint = $('errorHint');
-    const toastEl = $('toast');
+  <label for="number">Phone number (with country code)</label>
+  <div class="input-wrap">
+    <span class="prefix">+</span>
+    <input id="number" type="tel" inputmode="numeric" placeholder="237612345678" autocomplete="off" />
+  </div>
+  <div class="hint">
+    <span>ℹ️</span>
+    <div>Include country code, <b>without</b> the + sign or leading zero.</div>
+  </div>
 
-    const socket = io();
+  <button id="connectBtn" class="btn-primary">
+    <span class="spinner"></span>
+    <span class="btn-label">Request Pairing Code</span>
+  </button>
 
-    // ---------- Toast ----------
-    let toastTimer;
-    function toast(msg, kind = '') {
-      toastEl.textContent = msg;
-      toastEl.className = 'toast show ' + kind;
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => (toastEl.className = 'toast'), 2600);
+  <button id="disconnectBtn" class="btn-secondary hidden">
+    Disconnect
+  </button>
+
+  <!-- Connecting -->
+  <div id="progressPanel" class="panel">
+    <div class="panel-title">⏳ Working…</div>
+    <div id="progressMsg" style="font-size:13px;color:var(--muted);">Opening channel…</div>
+    <div class="progress-bar"><div></div></div>
+  </div>
+
+  <!-- Pairing code -->
+  <div id="codePanel" class="panel">
+    <div class="panel-title">🔑 Pairing Code</div>
+    <div class="code-box">
+      <div id="code" class="code">----</div>
+      <button id="copyBtn" class="copy-btn">Copy</button>
+    </div>
+    <ul class="steps">
+      <li><span class="n">1</span><div>Open <b>WhatsApp</b> on your phone</div></li>
+      <li><span class="n">2</span><div>Go to <b>Settings → Linked Devices</b></div></li>
+      <li><span class="n">3</span><div>Tap <b>Link a Device</b></div></li>
+      <li><span class="n">4</span><div>Choose <b>Link with phone number</b></div></li>
+      <li><span class="n">5</span><div>Enter the code shown above</div></li>
+    </ul>
+  </div>
+
+  <!-- Connected -->
+  <div id="connectedPanel" class="panel">
+    <div class="panel-title">✅ Connected</div>
+    <div id="connectedInfo" style="font-size:14px;color:var(--text);"></div>
+  </div>
+
+  <!-- Error -->
+  <div id="errorPanel" class="panel error">
+    <div class="panel-title">⚠️ Problem</div>
+    <div id="errorMsg" class="error-msg"></div>
+    <div id="errorHint" class="error-hint hidden"></div>
+  </div>
+
+  <div class="footer">Powered by Baileys · Multi-device</div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// ============================================================================
+// ELEMENT REFS
+// ============================================================================
+const $ = (id) => document.getElementById(id);
+
+const loginScreen = $('loginScreen');
+const pwInput = $('pwInput');
+const pwBtn = $('pwBtn');
+const pwError = $('pwError');
+
+const app = $('app');
+const logoutBtn = $('logoutBtn');
+const numberInput = $('number');
+const connectBtn = $('connectBtn');
+const disconnectBtn = $('disconnectBtn');
+const dot = $('dot');
+const stateText = $('stateText');
+const progressPanel = $('progressPanel');
+const progressMsg = $('progressMsg');
+const codePanel = $('codePanel');
+const codeEl = $('code');
+const copyBtn = $('copyBtn');
+const connectedPanel = $('connectedPanel');
+const connectedInfo = $('connectedInfo');
+const errorPanel = $('errorPanel');
+const errorMsg = $('errorMsg');
+const errorHint = $('errorHint');
+const toastEl = $('toast');
+
+let socket = null;
+
+// ============================================================================
+// TOAST
+// ============================================================================
+let toastTimer;
+function toast(msg, kind = '') {
+  toastEl.textContent = msg;
+  toastEl.className = 'toast show ' + kind;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (toastEl.className = 'toast'), 2600);
+}
+
+// ============================================================================
+// PANEL HELPERS
+// ============================================================================
+function hideAllPanels() {
+  progressPanel.classList.remove('show');
+  codePanel.classList.remove('show');
+  connectedPanel.classList.remove('show');
+  errorPanel.classList.remove('show');
+}
+
+function showError(msg, hint) {
+  hideAllPanels();
+  errorMsg.textContent = msg || 'Unknown error';
+  if (hint) {
+    errorHint.textContent = hint;
+    errorHint.classList.remove('hidden');
+  } else {
+    errorHint.classList.add('hidden');
+  }
+  errorPanel.classList.add('show');
+}
+
+function setLoading(loading) {
+  connectBtn.disabled = loading;
+  connectBtn.classList.toggle('loading', loading);
+  connectBtn.querySelector('.btn-label').textContent = loading
+    ? 'Requesting…'
+    : 'Request Pairing Code';
+}
+
+function formatCode(c) {
+  if (!c) return '----';
+  return c.match(/.{1,4}/g)?.join('-') || c;
+}
+
+// ============================================================================
+// RENDER STATE
+// ============================================================================
+function renderState(data) {
+  const s = data.state || 'disconnected';
+  dot.className = 'dot ' + s;
+
+  const labels = {
+    disconnected: 'Disconnected',
+    connecting: 'Connecting…',
+    code_ready: 'Awaiting code entry',
+    connected: 'Connected',
+    error: 'Error'
+  };
+  stateText.textContent = labels[s] || s;
+
+  if (s === 'connecting') {
+    hideAllPanels();
+    progressMsg.textContent = data.message || 'Working…';
+    progressPanel.classList.add('show');
+    disconnectBtn.classList.remove('hidden');
+  } else if (s === 'code_ready') {
+    hideAllPanels();
+    codeEl.textContent = formatCode(data.code);
+    codePanel.classList.add('show');
+    disconnectBtn.classList.remove('hidden');
+  } else if (s === 'connected') {
+    hideAllPanels();
+    const num = data.number ? '+' + data.number : '';
+    const name = data.name ? ' · ' + data.name : '';
+    connectedInfo.textContent = (num + name) || 'Session active.';
+    connectedPanel.classList.add('show');
+    disconnectBtn.classList.remove('hidden');
+  } else if (s === 'error') {
+    showError(data.message || 'Something went wrong', data.hint);
+    disconnectBtn.classList.add('hidden');
+  } else {
+    hideAllPanels();
+    disconnectBtn.classList.add('hidden');
+  }
+}
+
+// ============================================================================
+// AUTH GATE
+// ============================================================================
+async function checkSession() {
+  try {
+    const r = await fetch('/api/session');
+    const d = await r.json();
+    if (d.authed) {
+      enterApp();
+    } else {
+      showLogin();
     }
+  } catch {
+    showLogin();
+  }
+}
 
-    // ---------- Panel helpers ----------
-    function hideAllPanels() {
-      progressPanel.classList.remove('show');
-      codePanel.classList.remove('show');
-      connectedPanel.classList.remove('show');
-      errorPanel.classList.remove('show');
-    }
+function showLogin() {
+  loginScreen.classList.add('show');
+  app.classList.add('hidden');
+  setTimeout(() => pwInput.focus(), 100);
+}
 
-    function showError(msg, hint) {
-      hideAllPanels();
-      errorMsg.textContent = msg || 'Unknown error';
-      if (hint) {
-        errorHint.textContent = hint;
-        errorHint.style.display = 'block';
-      } else {
-        errorHint.style.display = 'none';
-      }
-      errorPanel.classList.add('show');
-    }
+function enterApp() {
+  loginScreen.classList.remove('show');
+  app.classList.remove('hidden');
+  startSocket();
+}
 
-    function setLoading(loading) {
-      connectBtn.disabled = loading;
-      connectBtn.classList.toggle('loading', loading);
-      if (loading) {
-        connectBtn.querySelector('.btn-label').textContent = 'Requesting…';
-      } else {
-        connectBtn.querySelector('.btn-label').textContent = 'Request Pairing Code';
-      }
-    }
+async function doLogin() {
+  pwError.classList.remove('show');
+  const password = pwInput.value;
+  if (!password) return;
 
-    function formatCode(c) {
-      if (!c) return '----';
-      return c.match(/.{1,4}/g)?.join('-') || c;
-    }
+  pwBtn.disabled = true;
+  pwBtn.textContent = 'Checking…';
 
-    // ---------- Render state from server ----------
-    function renderState(data) {
-      const s = data.state || 'disconnected';
-      dot.className = 'dot ' + s;
-
-      const labels = {
-        disconnected: 'Disconnected',
-        connecting: 'Connecting…',
-        code_ready: 'Awaiting code entry',
-        connected: 'Connected',
-        error: 'Error'
-      };
-      stateText.textContent = labels[s] || s;
-
-      if (s === 'connecting') {
-        hideAllPanels();
-        progressMsg.textContent = data.message || 'Working…';
-        progressPanel.classList.add('show');
-        disconnectBtn.style.display = 'block';
-      } else if (s === 'code_ready') {
-        hideAllPanels();
-        codeEl.textContent = formatCode(data.code);
-        codePanel.classList.add('show');
-        disconnectBtn.style.display = 'block';
-      } else if (s === 'connected') {
-        hideAllPanels();
-        const num = data.number ? '+' + data.number : '';
-        const name = data.name ? ' · ' + data.name : '';
-        connectedInfo.textContent = (num + name) || 'Session active.';
-        connectedPanel.classList.add('show');
-        disconnectBtn.style.display = 'block';
-      } else if (s === 'error') {
-        showError(data.message || 'Something went wrong', data.hint);
-        disconnectBtn.style.display = 'none';
-      } else {
-        hideAllPanels();
-        disconnectBtn.style.display = 'none';
-      }
-    }
-
-    // ---------- Actions ----------
-    connectBtn.addEventListener('click', async () => {
-      const number = numberInput.value.trim();
-      if (!number) {
-        toast('Please enter your phone number', 'err');
-        numberInput.focus();
-        return;
-      }
-      if (number.replace(/\D/g, '').length < 10) {
-        toast('Number too short — include country code', 'err');
-        return;
-      }
-
-      setLoading(true);
-      // optimistic UI
-      dot.className = 'dot connecting';
-      stateText.textContent = 'Connecting…';
-      hideAllPanels();
-      progressMsg.textContent = 'Sending request…';
-      progressPanel.classList.add('show');
-
-      try {
-        const res = await fetch('/api/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ number })
-        });
-        const data = await res.json();
-
-        if (!res.ok || data.error) {
-          showError(data.error || 'Request failed', 'Check the number and try again.');
-          toast(data.error || 'Request failed', 'err');
-          setLoading(false);
-        } else {
-          // socket will push the code_ready / error state
-          toast('Request accepted — waiting for code…', 'ok');
-        }
-      } catch (e) {
-        showError('Network error: ' + e.message, 'Is the server running?');
-        toast('Network error', 'err');
-        setLoading(false);
-      }
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
     });
+    const d = await r.json();
 
-    disconnectBtn.addEventListener('click', async () => {
-      disconnectBtn.disabled = true;
-      try {
-        await fetch('/api/disconnect', { method: 'POST' });
-        toast('Disconnected', 'ok');
-      } catch (e) {
-        toast('Failed to disconnect', 'err');
-      } finally {
-        disconnectBtn.disabled = false;
-      }
+    if (d.ok) {
+      pwInput.value = '';
+      enterApp();
+    } else {
+      pwError.textContent = d.error || 'Login failed';
+      pwError.classList.add('show');
+      pwInput.select();
+    }
+  } catch (e) {
+    pwError.textContent = 'Network error — is the server up?';
+    pwError.classList.add('show');
+  } finally {
+    pwBtn.disabled = false;
+    pwBtn.textContent = 'Unlock';
+  }
+}
+
+pwBtn.addEventListener('click', doLogin);
+pwInput.addEventListener('keydown', (e) => e.key === 'Enter' && doLogin());
+
+// ============================================================================
+// LOGOUT
+// ============================================================================
+logoutBtn.addEventListener('click', async () => {
+  try { await fetch('/api/logout', { method: 'POST' }); } catch {}
+  if (socket) { socket.disconnect(); socket = null; }
+  showLogin();
+  toast('Logged out', 'ok');
+});
+
+// ============================================================================
+// SOCKET
+// ============================================================================
+function startSocket() {
+  if (socket) socket.disconnect();
+  socket = io();
+
+  socket.on('connect', () => {
+    socket.emit('request_state');
+  });
+
+  socket.on('connect_error', (err) => {
+    console.log('[Socket] error:', err.message);
+    if (err.message === 'Unauthorized') showLogin();
+  });
+
+  socket.on('state', (data) => {
+    renderState(data);
+    if (['code_ready', 'connected', 'error'].includes(data.state)) {
+      setLoading(false);
+    }
+  });
+
+  // initial fetch in case socket is slow
+  fetch('/api/state')
+    .then((r) => {
+      if (r.status === 401) { showLogin(); return null; }
+      return r.json();
+    })
+    .then((d) => d && renderState(d))
+    .catch(() => {});
+}
+
+// ============================================================================
+// ACTIONS
+// ============================================================================
+connectBtn.addEventListener('click', async () => {
+  const number = numberInput.value.trim();
+  if (!number) {
+    toast('Please enter your phone number', 'err');
+    numberInput.focus();
+    return;
+  }
+  if (number.replace(/\D/g, '').length < 10) {
+    toast('Number too short — include country code', 'err');
+    return;
+  }
+
+  setLoading(true);
+  dot.className = 'dot connecting';
+  stateText.textContent = 'Connecting…';
+  hideAllPanels();
+  progressMsg.textContent = 'Sending request…';
+  progressPanel.classList.add('show');
+
+  try {
+    const res = await fetch('/api/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number })
     });
+    const data = await res.json();
 
-    copyBtn.addEventListener('click', async () => {
-      const raw = codeEl.textContent.replace(/-/g, '');
-      try {
-        await navigator.clipboard.writeText(raw);
-        copyBtn.textContent = 'Copied!';
-        toast('Code copied', 'ok');
-        setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
-      } catch (e) {
-        toast('Copy failed — select manually', 'err');
-      }
-    });
+    if (res.status === 401) { showLogin(); return; }
 
-    // ---------- Socket ----------
-    socket.on('connect', () => socket.emit('request_state'));
+    if (!res.ok || data.error) {
+      showError(data.error || 'Request failed', 'Check the number and try again.');
+      toast(data.error || 'Request failed', 'err');
+      setLoading(false);
+    } else {
+      toast('Request accepted — waiting for code…', 'ok');
+    }
+  } catch (e) {
+    showError('Network error: ' + e.message, 'Is the server running?');
+    toast('Network error', 'err');
+    setLoading(false);
+  }
+});
 
-    socket.on('state', (data) => {
-      renderState(data);
+disconnectBtn.addEventListener('click', async () => {
+  disconnectBtn.disabled = true;
+  try {
+    await fetch('/api/disconnect', { method: 'POST' });
+    toast('Disconnected', 'ok');
+  } catch (e) {
+    toast('Failed to disconnect', 'err');
+  } finally {
+    disconnectBtn.disabled = false;
+  }
+});
 
-      // stop loading spinner whenever we reach a terminal state
-      if (data.state === 'code_ready' || data.state === 'connected' || data.state === 'error') {
-        setLoading(false);
-      }
-    });
+copyBtn.addEventListener('click', async () => {
+  const raw = codeEl.textContent.replace(/-/g, '');
+  try {
+    await navigator.clipboard.writeText(raw);
+    copyBtn.textContent = 'Copied!';
+    toast('Code copied', 'ok');
+    setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
+  } catch (e) {
+    toast('Copy failed — select manually', 'err');
+  }
+});
 
-    // ---------- First paint ----------
-    fetch('/api/state').then((r) => r.json()).then(renderState).catch(() => {});
-  </script>
+// ============================================================================
+// BOOT
+// ============================================================================
+checkSession();
+</script>
 </body>
 </html>

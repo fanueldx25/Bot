@@ -1,10 +1,11 @@
 // ============================================================================
-// server.js — Express + Socket.io dashboard + pairing API
+// server.js — Express + Socket.io + Auth + Self-ping dashboard
 // ============================================================================
 
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const crypto = require('crypto');
 const { Server } = require('socket.io');
 
 const state = require('./state');
@@ -20,7 +21,99 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 state.io = io;
 
-// ---------- Snapshot helper ----------
+// ============================================================================
+// AUTH
+// ============================================================================
+
+const PASSWORD = process.env.DASHBOARD_PASSWORD || '';
+const SESSIONS = new Set();
+const SESSION_TIMESTAMPS = new Map();
+const SESSION_TTL = 1000 * 60 * 60 * 24; // 24h
+
+function makeToken() {
+  const t = crypto.randomBytes(32).toString('hex');
+  SESSIONS.add(t);
+  SESSION_TIMESTAMPS.set(t, Date.now() + SESSION_TTL);
+  return t;
+}
+
+function isValidToken(t) {
+  if (!t || !SESSIONS.has(t)) return false;
+  const exp = SESSION_TIMESTAMPS.get(t) || 0;
+  if (Date.now() > exp) {
+    SESSIONS.delete(t);
+    SESSION_TIMESTAMPS.delete(t);
+    return false;
+  }
+  return true;
+}
+
+function parseCookies(req) {
+  const raw = req.headers.cookie || '';
+  const out = {};
+  raw.split(';').forEach((p) => {
+    const [k, ...v] = p.trim().split('=');
+    if (k) out[k] = decodeURIComponent(v.join('='));
+  });
+  return out;
+}
+
+// ============================================================================
+// PUBLIC ROUTES (no auth)
+// ============================================================================
+
+app.get('/healthz', (req, res) => {
+  res.json({ ok: true, uptime: Math.floor(process.uptime()) });
+});
+
+app.post('/api/login', (req, res) => {
+  if (!PASSWORD) {
+    return res.json({ ok: true, disabled: true });
+  }
+  const { password } = req.body || {};
+  if (password !== PASSWORD) {
+    console.log(`[Auth] failed login attempt from ${req.ip}`);
+    return res.status(401).json({ ok: false, error: 'Wrong password' });
+  }
+  const token = makeToken();
+  res.setHeader(
+    'Set-Cookie',
+    `sid=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL / 1000}`
+  );
+  console.log(`[Auth] login OK from ${req.ip}`);
+  res.json({ ok: true });
+});
+
+app.post('/api/logout', (req, res) => {
+  const { sid } = parseCookies(req);
+  if (sid) {
+    SESSIONS.delete(sid);
+    SESSION_TIMESTAMPS.delete(sid);
+  }
+  res.setHeader('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0');
+  res.json({ ok: true });
+});
+
+app.get('/api/session', (req, res) => {
+  const { sid } = parseCookies(req);
+  res.json({ authed: isValidToken(sid) || !PASSWORD, passwordRequired: !!PASSWORD });
+});
+
+// ============================================================================
+// AUTH MIDDLEWARE
+// ============================================================================
+
+function requireAuth(req, res, next) {
+  if (!PASSWORD) return next();
+  const { sid } = parseCookies(req);
+  if (isValidToken(sid)) return next();
+  return res.status(401).json({ ok: false, error: 'Unauthorized — login required' });
+}
+
+// ============================================================================
+// SNAPSHOT
+// ============================================================================
+
 function snapshot() {
   return {
     state: state.connectionState,
@@ -32,21 +125,17 @@ function snapshot() {
   };
 }
 
-// ---------- POST /api/connect ----------
-app.post('/api/connect', async (req, res) => {
+// ============================================================================
+// PROTECTED API
+// ============================================================================
+
+app.post('/api/connect', requireAuth, async (req, res) => {
   const { number } = req.body || {};
-  
-  // first-level validation
   const v = connection.validateNumber(number);
-  if (!v.ok) {
-    return res.status(400).json({ ok: false, error: v.error });
-  }
-  
+  if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
   try {
     const result = await connection.startBot(v.clean);
-    if (!result.ok) {
-      return res.status(500).json({ ok: false, error: result.error });
-    }
+    if (!result.ok) return res.status(500).json({ ok: false, error: result.error });
     res.json({ ok: true, number: v.clean });
   } catch (e) {
     console.error('[API /connect]', e);
@@ -54,13 +143,11 @@ app.post('/api/connect', async (req, res) => {
   }
 });
 
-// ---------- GET /api/state ----------
-app.get('/api/state', (req, res) => {
+app.get('/api/state', requireAuth, (req, res) => {
   res.json(snapshot());
 });
 
-// ---------- POST /api/disconnect ----------
-app.post('/api/disconnect', (req, res) => {
+app.post('/api/disconnect', requireAuth, (req, res) => {
   try {
     connection.stopBot();
     res.json({ ok: true });
@@ -69,21 +156,82 @@ app.post('/api/disconnect', (req, res) => {
   }
 });
 
-// ---------- GET /api/commands ----------
-app.get('/api/commands', (req, res) => {
+app.get('/api/commands', requireAuth, (req, res) => {
   res.json(collection.all());
 });
 
-// ---------- Socket.io ----------
-io.on('connection', (socket) => {
-  socket.emit('state', snapshot());
-  socket.on('request_state', () => socket.emit('state', snapshot()));
+// ============================================================================
+// SOCKET.IO WITH AUTH
+// ============================================================================
+
+io.use((socket, next) => {
+  if (!PASSWORD) return next();
+  const cookies = socket.handshake.headers.cookie || '';
+  const match = cookies.match(/sid=([^;]+)/);
+  const sid = match ? decodeURIComponent(match[1]) : null;
+  if (isValidToken(sid)) return next();
+  return next(new Error('Unauthorized'));
 });
 
-// ---------- Boot ----------
+io.on('connection', (socket) => {
+  console.log('[Socket] client connected');
+  socket.emit('state', snapshot());
+  socket.on('request_state', () => socket.emit('state', snapshot()));
+  socket.on('disconnect', () => console.log('[Socket] client disconnected'));
+});
+
+// ============================================================================
+// SELF-PING (keep-alive for Render free tier)
+// ============================================================================
+
+const SELF_URL = process.env.SELF_URL || '';
+
+function startSelfPing() {
+  if (!SELF_URL) {
+    console.log('[Ping] SELF_URL not set — self-ping disabled');
+    return;
+  }
+  const url = SELF_URL.replace(/\/$/, '') + '/healthz';
+  const INTERVAL = 1000 * 60 * 4; // 4 min — under Render's 15-min sleep
+  
+  const ping = async () => {
+    try {
+      const res = await fetch(url);
+      console.log(`[Ping] ${new Date().toISOString()} → ${res.status}`);
+    } catch (e) {
+      console.log('[Ping] failed:', e.message);
+    }
+  };
+  
+  // first ping after 30s, then every 4 min
+  setTimeout(ping, 30 * 1000);
+  setInterval(ping, INTERVAL);
+  console.log('[Ping] enabled →', url, 'every 4 min');
+}
+
+// ============================================================================
+// BOOT
+// ============================================================================
+
 const PORT = process.env.PORT || 3000;
+
 server.listen(PORT, () => {
-  console.log(`🌐 Dashboard: http://localhost:${PORT}`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`🌐 Dashboard : http://localhost:${PORT}`);
+  console.log(`🔐 Password  : ${PASSWORD ? 'ENABLED' : 'disabled (no DASHBOARD_PASSWORD set)'}`);
+  console.log(`👑 Admin     : ${state.ADMIN_NUMBER ? '+' + state.ADMIN_NUMBER : 'NOT SET'}`);
+  console.log(`📡 Self-ping : ${SELF_URL || 'disabled (no SELF_URL set)'}`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  
   state.loadState();
   connection.loadBanner();
+  startSelfPing();
+});
+
+// ---------- Graceful shutdown ----------
+process.on('SIGTERM', () => {
+  console.log('[Shutdown] SIGTERM received');
+  try { connection.stopBot(); } catch (e) {}
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 5000);
 });
