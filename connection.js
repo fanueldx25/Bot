@@ -60,37 +60,51 @@ function validateNumber(raw) {
 
 // ---------- Start ----------
 async function startBot(rawNumber) {
-  // validate
+  // 1. validate
   const v = validateNumber(rawNumber);
   if (!v.ok) {
     state.setState('error', { message: v.error });
     return { ok: false, error: v.error };
   }
   const phoneNumber = v.clean;
-  
-  // stop old socket
+
+  // 2. stop old socket
   if (state.sock) {
     try { state.sock.end(undefined); } catch (e) {}
     state.sock = null;
   }
-  
+
   state.currentNumber = phoneNumber;
   state.pairingCode = null;
   state.setState('connecting', {
     number: phoneNumber,
     message: 'Opening secure channel with WhatsApp...'
   });
-  
-  let authState, version;
+
+  // 3. init auth state
+  let authState, saveCreds, version;
   try {
-    ({ state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR));
-    ({ version } = await fetchLatestBaileysVersion());
-    state._saveCreds = saveCreds; // stash for later
+    const auth = await useMultiFileAuthState(AUTH_DIR);
+    authState = auth.state;
+    saveCreds = auth.saveCreds;
   } catch (e) {
-    state.setState('error', { message: 'Failed to init auth: ' + e.message });
+    console.error('[Auth] init failed:', e.message);
+    state.setState('error', {
+      message: 'Failed to initialize auth storage: ' + e.message,
+      hint: 'Try deleting the auth_info_baileys folder and retry.'
+    });
     return { ok: false, error: e.message };
   }
-  
+
+  try {
+    const vres = await fetchLatestBaileysVersion();
+    version = vres.version;
+  } catch (e) {
+    console.error('[Version] fetch failed, using default:', e.message);
+    version = undefined; // Baileys falls back to bundled version
+  }
+
+  // 4. create socket
   let sock;
   try {
     sock = makeWASocket({
@@ -110,28 +124,30 @@ async function startBot(rawNumber) {
       keepAliveIntervalMs: 30000
     });
   } catch (e) {
+    console.error('[Socket] creation failed:', e.message);
     state.setState('error', { message: 'Socket creation failed: ' + e.message });
     return { ok: false, error: e.message };
   }
-  
+
   state.sock = sock;
-  sock.ev.on('creds.update', authState.saveCreds);
-  
-  // ---------- Pairing code request ----------
+
+  // ✅ FIX: use the actual saveCreds function (was authState.saveCreds before)
+  sock.ev.on('creds.update', saveCreds);
+
+  // ---------- Pairing code ----------
   if (!sock.authState.creds.registered) {
     state.setState('connecting', {
       number: phoneNumber,
       message: 'Requesting pairing code from WhatsApp...'
     });
-    
-    // retry up to 3 times — WhatsApp sometimes drops the first request
+
     let attempt = 0;
     const requestCode = async () => {
       attempt++;
       try {
         const code = await sock.requestPairingCode(phoneNumber);
         if (!code || typeof code !== 'string') throw new Error('Empty code returned');
-        
+
         state.pairingCode = code;
         state.setState('code_ready', {
           number: phoneNumber,
@@ -157,20 +173,14 @@ async function startBot(rawNumber) {
         return false;
       }
     };
-    
-    // small delay — socket needs to be ready
+
     setTimeout(requestCode, 3500);
   }
-  
+
   // ---------- Connection updates ----------
   sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, isNewLogin, qr } = update;
-    
-    if (qr) {
-      // shouldn't happen (printQRInTerminal=false) but keep for safety
-      console.log('[QR] received (ignored — using pairing code)');
-    }
-    
+    const { connection, lastDisconnect, isNewLogin } = update;
+
     if (connection === 'open') {
       state.botJid = sock.user.id;
       state.setState('connected', {
@@ -180,23 +190,23 @@ async function startBot(rawNumber) {
       });
       console.log('✅ Connected as', sock.user.id);
     }
-    
+
     if (connection === 'connecting') {
       state.setState('connecting', {
         number: phoneNumber,
         message: isNewLogin ? 'Completing login...' : 'Handshaking...'
       });
     }
-    
+
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const reason = DISCONNECT_MESSAGES[statusCode] || 'Unknown disconnect.';
       const shouldReconnect =
         statusCode !== DisconnectReason.loggedOut &&
         statusCode !== DisconnectReason.forbidden;
-      
+
       state.setState('disconnected', { code: statusCode, message: reason });
-      
+
       if (shouldReconnect) {
         console.log('↻ Reconnecting in 3s...');
         setTimeout(() => startBot(state.currentNumber), 3000);
@@ -211,7 +221,7 @@ async function startBot(rawNumber) {
       }
     }
   });
-  
+
   // ---------- Messages ----------
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
@@ -223,7 +233,7 @@ async function startBot(rawNumber) {
       }
     }
   });
-  
+
   // ---------- Group events ----------
   sock.ev.on('group-participants.update', async (update) => {
     const { id, participants, action } = update;
@@ -237,7 +247,7 @@ async function startBot(rawNumber) {
       console.error('[Group]', e.message);
     }
   });
-  
+
   return { ok: true };
 }
 
@@ -246,19 +256,19 @@ async function handleIncoming(msg) {
   if (!msg.message) return;
   const from = msg.key.remoteJid;
   if (!from || from === 'status@broadcast') return;
-  
+
   const senderJid = msg.key.participant || from;
-  
+
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) return;
-  
+
   if (state.viewOnceEnabled) {
     const captured = await handlers.tryCaptureViewOnce(msg, from);
     if (captured) return;
   }
-  
+
   const text = extractText(msg);
   if (!text || !text.startsWith('.')) return;
-  
+
   await handlers.handleCommand(msg, from, senderJid, text);
 }
 
