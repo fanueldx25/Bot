@@ -3,565 +3,157 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WA-BOT // CONTROL TERMINAL</title>
+  <title>WhatsApp Bot Control</title>
   <style>
-    /* ============ RESET ============ */
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:        #050807;
-      --panel:     #0a0f0d;
-      --panel-2:   #0d1412;
-      --border:    #1a2924;
-      --green:     #00ff9d;
-      --green-dim: #00b872;
-      --green-glow: rgba(0, 255, 157, 0.35);
-      --amber:     #ffb300;
-      --red:       #ff3b5c;
-      --blue:      #00d0ff;
-      --text:      #c8ffec;
-      --text-dim:  #4a6b60;
-      --mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-    }
-
-    html, body {
-      height: 100%;
-      background: var(--bg);
-      color: var(--text);
-      font-family: var(--mono);
-      font-size: 14px;
-      overflow-x: hidden;
-      scrollbar-width: thin;
-      scrollbar-color: var(--green-dim) var(--bg);
-    }
-    body::-webkit-scrollbar { width: 8px; }
-    body::-webkit-scrollbar-track { background: var(--bg); }
-    body::-webkit-scrollbar-thumb { background: var(--green-dim); }
-
-    /* ============ BACKGROUND GRID ============ */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(0, 255, 157, 0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 255, 157, 0.04) 1px, transparent 1px);
-      background-size: 32px 32px;
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    /* Scanlines overlay */
-    body::after {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background: repeating-linear-gradient(
-        0deg,
-        rgba(0, 0, 0, 0.15) 0px,
-        rgba(0, 0, 0, 0.15) 1px,
-        transparent 1px,
-        transparent 3px
-      );
-      pointer-events: none;
-      z-index: 1;
-      opacity: 0.5;
-    }
-
-    /* ============ LAYOUT ============ */
-    .terminal {
-      position: relative;
-      z-index: 2;
-      max-width: 720px;
-      margin: 40px auto;
-      padding: 0 20px 60px;
-    }
-
-    /* ============ HEADER BAR ============ */
-    .topbar {
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0b141a;
+      color: #e9edef;
+      margin: 0;
+      min-height: 100vh;
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 10px 14px;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 10px 10px 0 0;
-      font-size: 12px;
-      color: var(--text-dim);
-      letter-spacing: 0.05em;
+      justify-content: center;
+      padding: 20px;
     }
-    .dot {
-      width: 12px; height: 12px; border-radius: 50%;
-      background: var(--border);
-    }
-    .dot.red    { background: #ff5f56; box-shadow: 0 0 8px #ff5f56; }
-    .dot.amber  { background: #ffbd2e; box-shadow: 0 0 8px #ffbd2e; }
-    .dot.green  { background: #27c93f; box-shadow: 0 0 8px #27c93f; }
-    .topbar-title {
-      flex: 1;
-      text-align: center;
-      color: var(--text);
-      font-weight: 600;
-      letter-spacing: 0.1em;
-    }
-    .topbar-time {
-      font-variant-numeric: tabular-nums;
-      color: var(--green-dim);
-    }
-
-    /* ============ MAIN CARD ============ */
     .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-top: none;
-      border-radius: 0 0 10px 10px;
+      background: #111b21;
+      border-radius: 16px;
       padding: 28px;
-      box-shadow:
-        0 0 40px rgba(0, 255, 157, 0.08),
-        inset 0 0 60px rgba(0, 255, 157, 0.02);
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.5);
     }
-
-    /* ============ ASCII TITLE ============ */
-    .ascii {
-      font-family: var(--mono);
-      font-size: 9px;
-      line-height: 1.15;
-      color: var(--green);
-      text-shadow: 0 0 10px var(--green-glow);
-      white-space: pre;
-      margin-bottom: 18px;
-      overflow-x: auto;
-      scrollbar-width: none;
-    }
-    .ascii::-webkit-scrollbar { display: none; }
-
-    .sub {
-      color: var(--text-dim);
-      font-size: 12px;
-      margin-bottom: 24px;
-      border-left: 2px solid var(--green);
-      padding-left: 10px;
-    }
-    .sub::before { content: '> '; color: var(--green); }
-
-    /* ============ STATUS BADGE ============ */
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 14px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      margin-bottom: 22px;
-      border: 1px solid transparent;
-      transition: all 0.3s ease;
-    }
-    .status::before {
-      content: '';
-      width: 8px; height: 8px; border-radius: 50%;
-      background: currentColor;
-      box-shadow: 0 0 10px currentColor;
-      animation: pulse 1.6s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: 0.4; transform: scale(0.85); }
-    }
-    .s-idle         { color: var(--text-dim); border-color: var(--border); }
-    .s-awaiting_code{ color: var(--amber);    border-color: var(--amber); background: rgba(255,179,0,0.05); }
-    .s-connected    { color: var(--green);    border-color: var(--green); background: rgba(0,255,157,0.06); }
-    .s-expired      { color: var(--red);      border-color: var(--red);   background: rgba(255,59,92,0.05); }
-
-    /* ============ METRICS GRID ============ */
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      margin-bottom: 24px;
-    }
-    .metric {
-      background: var(--panel-2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 10px;
-      text-align: center;
-      transition: all 0.25s ease;
-      position: relative;
-      overflow: hidden;
-    }
-    .metric:hover {
-      border-color: var(--green-dim);
-      box-shadow: 0 0 20px rgba(0,255,157,0.12);
-      transform: translateY(-2px);
-    }
-    .metric-label {
-      font-size: 9px;
-      color: var(--text-dim);
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      margin-bottom: 6px;
-    }
-    .metric-value {
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--green);
-      text-shadow: 0 0 12px var(--green-glow);
-      font-variant-numeric: tabular-nums;
-      transition: color 0.3s;
-    }
-    .metric-value.amber { color: var(--amber); text-shadow: 0 0 12px rgba(255,179,0,0.4); }
-    .metric-value.red   { color: var(--red);   text-shadow: 0 0 12px rgba(255,59,92,0.4); }
-    .metric-value.blue  { color: var(--blue);  text-shadow: 0 0 12px rgba(0,208,255,0.4); }
-
-    /* ============ INPUTS ============ */
-    label.field-label {
-      display: block;
-      font-size: 10px;
-      color: var(--text-dim);
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      margin-bottom: 8px;
-    }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .sub { color: #8696a0; font-size: 13px; margin-bottom: 22px; }
     input {
       width: 100%;
-      padding: 14px 16px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--green);
-      font-family: var(--mono);
-      font-size: 15px;
-      letter-spacing: 0.05em;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid #2a3942;
+      background: #202c33;
+      color: #e9edef;
+      font-size: 16px;
       outline: none;
-      transition: all 0.25s ease;
-      caret-color: var(--green);
     }
-    input::placeholder { color: var(--text-dim); opacity: 0.6; }
-    input:focus {
-      border-color: var(--green);
-      box-shadow: 0 0 0 3px rgba(0,255,157,0.1), 0 0 20px rgba(0,255,157,0.15);
-    }
-
-    /* ============ BUTTONS ============ */
+    input:focus { border-color: #00a884; }
     button {
       width: 100%;
       padding: 14px;
       margin-top: 12px;
-      border-radius: 8px;
-      border: 1px solid var(--green);
-      background: transparent;
-      color: var(--green);
-      font-family: var(--mono);
-      font-size: 14px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
+      border-radius: 10px;
+      border: none;
+      background: #00a884;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
       cursor: pointer;
-      position: relative;
-      overflow: hidden;
-      transition: all 0.25s ease;
     }
-    button::before {
-      content: '';
-      position: absolute;
-      top: 0; left: -100%;
-      width: 100%; height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(0,255,157,0.2), transparent);
-      transition: left 0.6s ease;
-    }
-    button:hover:not(:disabled) {
-      background: rgba(0,255,157,0.1);
-      box-shadow: 0 0 30px var(--green-glow), inset 0 0 20px rgba(0,255,157,0.05);
-    }
-    button:hover:not(:disabled)::before { left: 100%; }
-    button:active:not(:disabled) { transform: scale(0.98); }
-    button:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-      border-color: var(--text-dim);
-      color: var(--text-dim);
-    }
-
-    button.danger {
-      border-color: var(--red);
-      color: var(--red);
-    }
-    button.danger:hover:not(:disabled) {
-      background: rgba(255,59,92,0.1);
-      box-shadow: 0 0 30px rgba(255,59,92,0.35);
-    }
-
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.danger { background: #b33; }
     button.secondary {
-      border-color: var(--blue);
-      color: var(--blue);
+      background: #202c33;
+      border: 1px solid #2a3942;
+      color: #00a884;
+      margin-top: 8px;
     }
-    button.secondary:hover:not(:disabled) {
-      background: rgba(0,208,255,0.1);
-      box-shadow: 0 0 30px rgba(0,208,255,0.35);
-    }
-
-    button.wipe {
-      border-color: var(--red);
-      color: var(--red);
-      margin-top: 10px;
-      font-size: 12px;
-    }
-
-    /* ============ CODE BOX ============ */
+    button.secondary:hover { background: #2a3942; }
     .code-box {
       margin-top: 20px;
-      padding: 22px 18px;
-      background: var(--panel-2);
-      border-radius: 10px;
+      padding: 18px;
+      background: #202c33;
+      border-radius: 12px;
       text-align: center;
-      border: 1px dashed var(--amber);
-      position: relative;
-      animation: boxGlow 2.5s ease-in-out infinite;
-    }
-    @keyframes boxGlow {
-      0%, 100% { box-shadow: 0 0 0 rgba(255,179,0,0); }
-      50%      { box-shadow: 0 0 30px rgba(255,179,0,0.15); }
-    }
-    .code-box.connected {
-      border-color: var(--green);
-      border-style: solid;
-      animation: boxGlowGreen 2.5s ease-in-out infinite;
-    }
-    @keyframes boxGlowGreen {
-      0%, 100% { box-shadow: 0 0 0 rgba(0,255,157,0); }
-      50%      { box-shadow: 0 0 30px rgba(0,255,157,0.2); }
+      border: 1px dashed #00a884;
     }
     .code {
-      font-size: 34px;
-      letter-spacing: 8px;
+      font-size: 30px;
+      letter-spacing: 6px;
       font-weight: 700;
-      color: var(--green);
-      text-shadow: 0 0 20px var(--green-glow);
-      margin: 10px 0;
-      font-variant-numeric: tabular-nums;
-      animation: flicker 4s infinite;
+      color: #00a884;
+      font-family: monospace;
+      margin: 8px 0;
     }
-    @keyframes flicker {
-      0%, 95%, 100% { opacity: 1; }
-      96%, 98%      { opacity: 0.7; }
-    }
-
-    .hint {
-      font-size: 11px;
-      color: var(--text-dim);
-      line-height: 1.6;
-      letter-spacing: 0.03em;
-    }
-
-    /* ============ TIMER ============ */
-    .timer {
+    .hint { font-size: 12px; color: #8696a0; line-height: 1.5; }
+    .status {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
       font-size: 12px;
-      color: var(--text-dim);
-      margin-top: 16px;
-      text-align: center;
-      letter-spacing: 0.1em;
+      font-weight: 600;
+      margin-bottom: 14px;
     }
-    .timer span {
-      color: var(--amber);
-      font-weight: 700;
-      text-shadow: 0 0 8px rgba(255,179,0,0.4);
-      font-variant-numeric: tabular-nums;
-    }
-
-    /* ============ PROGRESS BAR ============ */
-    .progress {
-      width: 100%;
-      height: 4px;
-      background: var(--border);
-      border-radius: 2px;
-      overflow: hidden;
-      margin-top: 12px;
-    }
-    .progress-bar {
-      height: 100%;
-      background: linear-gradient(90deg, var(--green-dim), var(--green));
-      box-shadow: 0 0 12px var(--green-glow);
-      transition: width 1s linear;
-      border-radius: 2px;
-    }
-    .progress-bar.amber {
-      background: linear-gradient(90deg, #8a6000, var(--amber));
-      box-shadow: 0 0 12px rgba(255,179,0,0.5);
-    }
-
-    /* ============ DIVIDER ============ */
+    .s-idle { background: #2a3942; color: #8696a0; }
+    .s-awaiting_code { background: #4a3b00; color: #ffb900; }
+    .s-connected { background: #053d2b; color: #00e08a; }
+    .s-expired { background: #3d0a0a; color: #ff6b6b; }
+    .timer { font-size: 13px; color: #8696a0; margin-top: 14px; text-align: center; }
     .divider {
       height: 1px;
-      background: linear-gradient(90deg, transparent, var(--border), transparent);
-      margin: 20px 0;
+      background: #2a3942;
+      margin: 16px 0;
     }
-
-    /* ============ BANNER PREVIEW ============ */
     .banner-preview {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 12px;
-      background: var(--panel-2);
-      border-radius: 8px;
-      margin-top: 16px;
-      font-size: 11px;
-      color: var(--text-dim);
-      border: 1px solid var(--border);
+      gap: 10px;
+      padding: 10px;
+      background: #202c33;
+      border-radius: 10px;
+      margin-top: 12px;
+      font-size: 12px;
+      color: #8696a0;
     }
     .banner-preview img {
       width: 48px;
       height: 48px;
-      border-radius: 6px;
-      object-fit: cover;
-      background: var(--bg);
-      border: 1px solid var(--border);
-    }
-
-    /* ============ LOG CONSOLE ============ */
-    .console {
-      margin-top: 22px;
-      background: #000;
-      border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 12px;
-      height: 120px;
-      overflow-y: auto;
-      font-size: 11px;
-      line-height: 1.6;
-      scrollbar-width: thin;
-    }
-    .console::-webkit-scrollbar { width: 6px; }
-    .console::-webkit-scrollbar-thumb { background: var(--green-dim); border-radius: 3px; }
-    .log-line { color: var(--text-dim); }
-    .log-line::before { content: '› '; color: var(--green-dim); }
-    .log-line.ok   { color: var(--green); }
-    .log-line.warn { color: var(--amber); }
-    .log-line.err  { color: var(--red); }
-
-    /* ============ FOOTER ============ */
-    .footer {
-      text-align: center;
-      margin-top: 24px;
-      font-size: 10px;
-      color: var(--text-dim);
-      letter-spacing: 0.2em;
-    }
-    .footer span { color: var(--green); }
-
-    /* ============ RESPONSIVE ============ */
-    @media (max-width: 480px) {
-      .metrics { grid-template-columns: 1fr 1fr; }
-      .metric-value { font-size: 18px; }
-      .code { font-size: 26px; letter-spacing: 5px; }
-      .ascii { font-size: 7px; }
+      object-fit: cover;
+      background: #0b141a;
     }
   </style>
 </head>
 <body>
-  <div class="terminal">
+  <div class="card">
+    <h1>WhatsApp Bot</h1>
+    <div class="sub">Connect using a phone number (no QR needed)</div>
 
-    <!-- TOP BAR -->
-    <div class="topbar">
-      <span class="dot red"></span>
-      <span class="dot amber"></span>
-      <span class="dot green"></span>
-      <span class="topbar-title">WA-BOT :: CONTROL TERMINAL</span>
-      <span class="topbar-time" id="clock">--:--:--</span>
+    <div id="statusBadge" class="status s-idle">idle</div>
+
+    <div id="connectForm">
+      <input id="phone" type="tel" placeholder="15551234567 (country code, no +)" />
+      <button id="connectBtn">Get Pairing Code</button>
+
+      <div class="banner-preview">
+        <img src="/assets/banner.jpg" onerror="this.style.display='none'" alt="banner" />
+        <span>Bot banner will be attached to help/status replies.</span>
+      </div>
     </div>
 
-    <!-- MAIN CARD -->
-    <div class="card">
+    <div id="codeSection" style="display:none">
+      <div class="code-box">
+        <div class="hint">Enter this code in WhatsApp → Linked Devices → Link with phone number</div>
+        <div class="code" id="code">--------</div>
+        <div class="hint">Code expires in <span id="codeTimer">5:00</span></div>
+      </div>
+    </div>
 
-      <!-- ASCII ART -->
-      <div class="ascii">
- ██╗    ██╗ █████╗       ██████╗  ██████╗ ████████╗
- ██║    ██║██╔══██╗      ██╔══██╗██╔═══██╗╚══██╔══╝
- ██║ █╗ ██║███████║█████╗██████╔╝██║   ██║   ██║   
- ██║███╗██║██╔══██║╚════╝██╔══██╗██║   ██║   ██║   
- ╚███╔███╔╝██║  ██║      ██████╔╝╚██████╔╝   ██║   
-  ╚══╝╚══╝ ╚═╝  ╚═╝      ╚═════╝  ╚═════╝    ╚═╝   
+    <div id="connectedSection" style="display:none">
+      <div class="code-box" style="border-color:#00e08a">
+        <div style="font-size:18px;font-weight:600;color:#00e08a">✅ Bot is connected</div>
+        <div class="hint" style="margin-top:8px">Number: <span id="connNumber"></span></div>
       </div>
 
-      <div class="sub">Secure pairing interface // no QR required</div>
-
-      <!-- STATUS BADGE -->
-      <div id="statusBadge" class="status s-idle">idle</div>
-
-      <!-- METRICS -->
-      <div class="metrics">
-        <div class="metric">
-          <div class="metric-label">Status</div>
-          <div class="metric-value" id="mStatus">—</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">Uptime</div>
-          <div class="metric-value blue" id="mUptime">00:00</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">Session</div>
-          <div class="metric-value amber" id="mSession">--:--</div>
-        </div>
-      </div>
-
-      <!-- CONNECT FORM -->
-      <div id="connectForm">
-        <label class="field-label" for="phone">Target Phone Number</label>
-        <input id="phone" type="tel" placeholder="15551234567 (country code, no +)" autocomplete="off" />
-        <button id="connectBtn">▶ Request Pairing Code</button>
-
-        <div class="banner-preview">
-          <img src="/assets/banner.jpg" onerror="this.style.display='none'" alt="banner" />
-          <span>Banner image will be attached to help / status replies.</span>
-        </div>
-      </div>
-
-      <!-- PAIRING CODE -->
-      <div id="codeSection" style="display:none">
-        <div class="code-box">
-          <div class="hint">Enter this code in WhatsApp → Linked Devices → Link with phone number</div>
-          <div class="code" id="code">--------</div>
-          <div class="hint">Code expires in <span id="codeTimer" style="color:var(--amber);font-weight:700;">5:00</span></div>
-          <div class="progress"><div class="progress-bar amber" id="codeProgress" style="width:100%"></div></div>
-        </div>
-      </div>
-
-      <!-- CONNECTED -->
-      <div id="connectedSection" style="display:none">
-        <div class="code-box connected">
-          <div style="font-size:16px;font-weight:700;color:var(--green);letter-spacing:0.15em;">
-            ✅ CONNECTION ESTABLISHED
-          </div>
-          <div class="hint" style="margin-top:10px;">
-            Number: <span id="connNumber" style="color:var(--green);font-weight:700;"></span>
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
-        <label class="field-label">Session Management</label>
-        <button class="secondary" id="downloadSession">⬇ Download Session JSON</button>
-
-        <div class="timer">Session expires in <span id="sessionTimer">--:--</span></div>
-        <div class="progress"><div class="progress-bar" id="sessionProgress" style="width:100%"></div></div>
-
-        <button class="danger" id="disconnectBtn">✕ Disconnect Bot</button>
-      </div>
-
-      <!-- WIPE (always available) -->
       <div class="divider"></div>
-      <label class="field-label">Emergency Controls</label>
-      <button class="wipe" id="wipeBtn">🗑 Wipe All Session Data</button>
 
-      <!-- LIVE LOG -->
-      <div class="console" id="console"></div>
-
-      <div class="footer">
-        <span>●</span> SYSTEM ONLINE <span>●</span> BAILEYS <span>●</span> WHATSAPP <span>●</span>
+      <div style="font-size:13px;color:#8696a0;margin-bottom:8px;">
+        💾 Save your session so you can reconnect without re-pairing:
       </div>
+      <button class="secondary" id="downloadSession">⬇️ Download Session JSON</button>
+
+      <div class="timer">Session expires in <span id="sessionTimer">--:--</span></div>
+      <button class="danger" id="disconnectBtn">Disconnect</button>
     </div>
   </div>
 
@@ -570,46 +162,14 @@
     const socket = io();
     let state = {};
     let codeExpiresAt = null;
-    const startedAt = Date.now();
 
     const $ = (id) => document.getElementById(id);
 
-    // ===== LIVE CLOCK =====
-    function tickClock() {
-      const d = new Date();
-      $('clock').textContent =
-        String(d.getHours()).padStart(2, '0') + ':' +
-        String(d.getMinutes()).padStart(2, '0') + ':' +
-        String(d.getSeconds()).padStart(2, '0');
-    }
-    setInterval(tickClock, 1000);
-    tickClock();
-
-    // ===== CONSOLE LOGGER =====
-    function log(msg, type = '') {
-      const box = $('console');
-      const line = document.createElement('div');
-      line.className = 'log-line ' + type;
-      line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
-      box.appendChild(line);
-      box.scrollTop = box.scrollHeight;
-      while (box.children.length > 50) box.removeChild(box.firstChild);
-    }
-    log('terminal initialized', 'ok');
-    log('waiting for socket connection...');
-
-    // ===== SOCKET =====
-    socket.on('connect', () => log('socket connected', 'ok'));
-    socket.on('disconnect', () => log('socket disconnected', 'err'));
-
     socket.on('state', (s) => {
-      const prev = state.status;
       state = s;
-      if (prev !== s.status) log('status: ' + prev + ' → ' + s.status, 'ok');
       render();
     });
 
-    // ===== RENDER =====
     function render() {
       const badge = $('statusBadge');
       badge.className = 'status s-' + (state.status || 'idle');
@@ -622,16 +182,6 @@
       $('connectedSection').style.display =
         state.status === 'connected' ? 'block' : 'none';
 
-      // Metrics
-      $('mStatus').textContent =
-        state.status === 'connected' ? 'ONLINE' :
-        state.status === 'awaiting_code' ? 'PAIRING' :
-        state.status === 'expired' ? 'EXPIRED' : 'IDLE';
-      $('mStatus').className = 'metric-value ' +
-        (state.status === 'connected' ? '' :
-         state.status === 'awaiting_code' ? 'amber' :
-         state.status === 'expired' ? 'red' : '');
-
       if (state.pairingCode) $('code').textContent = state.pairingCode;
       if (state.number && state.status === 'connected')
         $('connNumber').textContent = '+' + state.number;
@@ -643,47 +193,26 @@
       }
     }
 
-    // ===== TIMERS & ANIMATIONS =====
     setInterval(() => {
-      // Local uptime clock
-      const up = Math.floor((Date.now() - startedAt) / 1000);
-      const uh = String(Math.floor(up / 3600)).padStart(2, '0');
-      const um = String(Math.floor((up % 3600) / 60)).padStart(2, '0');
-      $('mUptime').textContent = uh + ':' + um;
-
-      // Code countdown
       if (codeExpiresAt) {
-        const total = 5 * 60 * 1000;
         const left = Math.max(0, codeExpiresAt - Date.now());
         const m = Math.floor(left / 60000);
         const s = Math.floor((left % 60000) / 1000);
         $('codeTimer').textContent = `${m}:${s.toString().padStart(2, '0')}`;
-        $('codeProgress').style.width = ((left / total) * 100) + '%';
       }
-
-      // Session countdown
       if (state.status === 'connected' && state.expiresAt) {
-        const total = 60 * 60 * 1000;
         const left = Math.max(0, state.expiresAt - Date.now());
         const h = Math.floor(left / 3600000);
         const m = Math.floor((left % 3600000) / 60000);
         $('sessionTimer').textContent = `${h}h ${m}m`;
-        $('sessionProgress').style.width = ((left / total) * 100) + '%';
-        const sh = String(h).padStart(2, '0');
-        const sm = String(m).padStart(2, '0');
-        $('mSession').textContent = sh + ':' + sm;
-      } else {
-        $('mSession').textContent = '--:--';
       }
     }, 1000);
 
-    // ===== CONNECT =====
     $('connectBtn').onclick = async () => {
       const number = $('phone').value.trim().replace(/\D/g, '');
-      if (!number) { log('error: empty phone number', 'err'); return alert('Enter your phone number with country code'); }
+      if (!number) return alert('Enter your phone number with country code');
       $('connectBtn').disabled = true;
-      $('connectBtn').textContent = '⟳ Requesting...';
-      log('requesting pairing code for +' + number);
+      $('connectBtn').textContent = 'Requesting...';
 
       try {
         const res = await fetch('/api/connect', {
@@ -693,45 +222,21 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed');
-        log('pairing code requested', 'ok');
       } catch (e) {
-        log('error: ' + e.message, 'err');
         alert(e.message);
       } finally {
         $('connectBtn').disabled = false;
-        $('connectBtn').textContent = '▶ Request Pairing Code';
+        $('connectBtn').textContent = 'Get Pairing Code';
       }
     };
 
-    // ===== DOWNLOAD SESSION =====
     $('downloadSession').onclick = () => {
-      log('downloading session json...', 'ok');
       window.location.href = '/api/session';
     };
 
-    // ===== DISCONNECT =====
     $('disconnectBtn').onclick = async () => {
       if (!confirm('Disconnect the bot?')) return;
-      log('disconnecting bot...', 'warn');
       await fetch('/api/disconnect', { method: 'POST' });
-      log('bot disconnected', 'warn');
-    };
-
-    // ===== WIPE =====
-    $('wipeBtn').onclick = async () => {
-      if (!confirm('⚠️ This will delete ALL session data and reset the bot.\n\nAre you absolutely sure?')) return;
-      log('WIPING ALL SESSION DATA...', 'err');
-      try {
-        const res = await fetch('/api/wipe', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Wipe failed');
-        log('session wiped successfully', 'ok');
-        alert(data.message || 'All session data wiped.');
-        location.reload();
-      } catch (e) {
-        log('wipe error: ' + e.message, 'err');
-        alert(e.message);
-      }
     };
   </script>
 </body>
