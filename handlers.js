@@ -1,7 +1,7 @@
 // ============================================================================
 // handlers.js — Feature handlers + command router (extensible version)
 // ============================================================================
-// Fixes applied in this file:
+// Fixes applied in this file (cumulative):
 //   1.  .trivia no longer attaches a rogue listener to sock.ev
 //   2.  .restart awaits stopBot() before startBot()
 //   3.  .pair goes through connection.stopBot() instead of raw sock.end()
@@ -17,6 +17,22 @@
 //   13. helpers.resolveJid converts @lid mentions to @s.whatsapp.net when
 //       the LID is mapped, returns null otherwise so callers can error out.
 //       Used by .getpp, .kick, .promote, .demote, .warn, .ship, .addadmin.
+//
+//   14. 🔧 FIX: preCommandHooks no longer blocks on engine.autoRegister().
+//       New chats ALWAYS flow through to the command router. engine.js
+//       only learns; it never gates.
+//   15. 🔧 FIX: engine.install() is called BEFORE COMMAND_LOOKUP is built,
+//       so the engine's extra commands (!topdf, !format, !add, !remove)
+//       are reachable from the router. buildLookup() is a function.
+//   16. 🔧 FIX: handleCommand uses engine.isCommand / engine.stripPrefix,
+//       so both '.' and '!' prefixes work end-to-end.
+//   17. 🔧 FIX: helpers.reply / replyWithBanner / sendWelcome / sendGoodbye
+//       / tryCaptureViewOnce / postToStatus route through engine.send
+//       (which wraps connection.safeSend) so E2EE retry receipts work.
+//   18. 🔧 FIX: .poststatus reconstructs the quoted message properly and
+//       works for text, image, and video quoted messages.
+//   19. 🔧 FIX: rate limiting is applied per chat/user via engine.checkRate,
+//       but NEVER blocks the very first command in a chat.
 // ============================================================================
 
 const state = require('./state');
@@ -42,6 +58,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const engine = require('./engine');
 const ADMIN_NUMBER = state.ADMIN_NUMBER;
 
 // ============================================================================
@@ -116,18 +133,30 @@ function unwrapMessage(message) {
 }
 
 // ============================================================================
+// SAFE SEND BRIDGE
+// ============================================================================
+// All outgoing sends go through engine.send(), which prefers
+// connection.safeSend (retries transient E2EE errors and caches the outgoing
+// message for retry receipts) and falls back to state.sock.sendMessage.
+async function safeSend(from, content, opts = {}) {
+  try {
+    return await engine.send(from, content, opts);
+  } catch (e) {
+    // Fallback if engine.send throws (e.g. no socket).
+    const sock = state.sock;
+    if (!sock) throw e;
+    return sock.sendMessage(from, content, opts);
+  }
+}
+
+// ============================================================================
 // SHARED HELPERS (used by every command)
 // ============================================================================
 const helpers = {
   async reply(from, text, opts = {}) {
-    const sock = state.sock;
-    if (!sock) {
-      console.error('[reply] no socket — dropped');
-      return;
-    }
     console.log('[reply] →', from, '|', String(text).slice(0, 60).replace(/\n/g, ' '));
     try {
-      const res = await sock.sendMessage(from, { text, ...opts });
+      const res = await safeSend(from, { text, ...opts });
       console.log('[reply] sent, id =', res?.key?.id || '(no id)');
       return res;
     } catch (e) {
@@ -139,9 +168,22 @@ const helpers = {
   async replyWithBanner(from, text) {
     console.log('[replyWithBanner] →', from);
     try {
-      const res = await sendWithBanner(from, text);
-      console.log('[replyWithBanner] sent');
-      return res;
+      const sock = state.sock;
+      if (!sock) {
+        return helpers.reply(from, text);
+      }
+      if (!state.BANNER_BUFFER) {
+        // No banner — send text via safeSend and be done.
+        return await safeSend(from, { text });
+      }
+      // sendWithBanner is defined in state.js and uses state.sock directly.
+      // Wrap it in a try so transient E2EE errors don't break the command.
+      try {
+        return await sendWithBanner(from, text);
+      } catch (e) {
+        console.warn('[replyWithBanner] banner failed, falling back to text:', e.message);
+        return await safeSend(from, { text });
+      }
     } catch (e) {
       console.error('[replyWithBanner] FAILED:', e.message);
       throw e;
@@ -169,11 +211,7 @@ const helpers = {
     if (!from.endsWith('@g.us')) helpers.fail('❌ This command only works in groups.');
   },
 
-  // 🔧 Resolve any user JID to a routable @s.whatsapp.net JID.
-  // Returns:
-  //   - the same JID if it's already @s.whatsapp.net
-  //   - the resolved phone JID if the input is a mapped @lid
-  //   - null if the input is an unmapped @lid (caller should show an error)
+  // Resolve any user JID to a routable @s.whatsapp.net JID.
   resolveJid(jid) {
     if (!jid) return jid;
     if (jid.endsWith('@s.whatsapp.net')) return jid;
@@ -265,11 +303,11 @@ async function tryCaptureViewOnce(msg, from) {
       const senderNum = senderJid.split('@')[0];
       const caption = `📸 View-Once Captured\nFrom: +${senderNum}\nType: ${mediaType}`;
       if (mediaType === 'imageMessage') {
-        await sockInstance.sendMessage(adminJid, { image: buffer, caption });
+        await safeSend(adminJid, { image: buffer, caption });
       } else if (mediaType === 'videoMessage') {
-        await sockInstance.sendMessage(adminJid, { video: buffer, caption });
+        await safeSend(adminJid, { video: buffer, caption });
       } else {
-        await sockInstance.sendMessage(adminJid, {
+        await safeSend(adminJid, {
           audio: buffer,
           mimetype: 'audio/ogg',
           ptt: true
@@ -283,42 +321,77 @@ async function tryCaptureViewOnce(msg, from) {
   }
 }
 
+// ============================================================================
+// POST TO STATUS — fully rebuilt
+// ============================================================================
+// `quotedMsg` here is the *reconstructed* message shape:
+//   { key: { remoteJid, id, fromMe, participant }, message: <quotedMessage> }
+// We extract the correct content type and post to status@broadcast.
+// ============================================================================
 async function postToStatus(quotedMsg) {
+  const sockInstance = state.sock;
+  if (!sockInstance) {
+    console.error('[Status] no socket');
+    return false;
+  }
+
   try {
-    const sockInstance = state.sock;
-    if (!sockInstance) return false;
+    const inner = unwrapMessage(quotedMsg.message) || quotedMsg.message;
+    const type = getContentType(inner);
+    console.log('[Status] posting type =', type);
 
-    const statusJid = 'status@broadcast';
-    const content = quotedMsg.message;
-    const type = getContentType(content);
+    let payload = null;
 
-    let payload = {};
-    if (type === 'conversation' || type === 'extendedTextMessage') {
+    if (type === 'conversation') {
+      const text = inner.conversation || '';
+      if (!text) return false;
       payload = {
-        text: content.conversation || content.extendedTextMessage?.text || '',
+        text,
+        backgroundColor: '#1F2C33',
+        font: 2
+      };
+    } else if (type === 'extendedTextMessage') {
+      const text = inner.extendedTextMessage?.text || '';
+      if (!text) return false;
+      payload = {
+        text,
         backgroundColor: '#1F2C33',
         font: 2
       };
     } else if (type === 'imageMessage') {
-      const buf = await downloadMediaMessage(quotedMsg, 'buffer', {}, {
-        logger: pino({ level: 'silent' }),
-        reuploadRequest: sockInstance.updateMediaMessage
-      });
-      payload = { image: buf, caption: content.imageMessage?.caption || '' };
+      const buf = await downloadMediaMessage(
+        { key: quotedMsg.key, message: { imageMessage: inner.imageMessage } },
+        'buffer',
+        {},
+        {
+          logger: pino({ level: 'silent' }),
+          reuploadRequest: sockInstance.updateMediaMessage
+        }
+      );
+      payload = { image: buf, caption: inner.imageMessage?.caption || '' };
     } else if (type === 'videoMessage') {
-      const buf = await downloadMediaMessage(quotedMsg, 'buffer', {}, {
-        logger: pino({ level: 'silent' }),
-        reuploadRequest: sockInstance.updateMediaMessage
-      });
-      payload = { video: buf, caption: content.videoMessage?.caption || '' };
+      const buf = await downloadMediaMessage(
+        { key: quotedMsg.key, message: { videoMessage: inner.videoMessage } },
+        'buffer',
+        {},
+        {
+          logger: pino({ level: 'silent' }),
+          reuploadRequest: sockInstance.updateMediaMessage
+        }
+      );
+      payload = { video: buf, caption: inner.videoMessage?.caption || '' };
     } else {
+      console.warn('[Status] unsupported type:', type);
       return false;
     }
 
-    await sockInstance.sendMessage(statusJid, payload, {
+    // Send to status@broadcast. Some Baileys versions want statusJidList to
+    // contain the contacts who should see it; an empty list means "all".
+    await safeSend('status@broadcast', payload, {
       broadcast: true,
       statusJidList: []
     });
+    console.log('[Status] posted ✅');
     return true;
   } catch (e) {
     console.error('[Status] Error:', e.message);
@@ -336,7 +409,7 @@ async function sendWelcome(groupJid, participants) {
 
     if (state.BANNER_BUFFER) {
       try {
-        await sockInstance.sendMessage(groupJid, {
+        await safeSend(groupJid, {
           image: state.BANNER_BUFFER,
           caption: `╭━━━━━━━━━━━━━━━━━━━━╮
 ┃   👋  *NEW MEMBER*   ┃
@@ -369,7 +442,7 @@ You've joined the group.
 ━━━━━━━━━━━━━━━━━━━━━━━
   _Type *.help* to see commands_`;
 
-      await sockInstance.sendMessage(groupJid, { text, mentions: [jid] });
+      await safeSend(groupJid, { text, mentions: [jid] });
     }
   } catch (e) {
     console.error('[Welcome] Error:', e.message);
@@ -386,7 +459,7 @@ async function sendGoodbye(groupJid, participants) {
 
     if (state.BANNER_BUFFER) {
       try {
-        await sockInstance.sendMessage(groupJid, {
+        await safeSend(groupJid, {
           image: state.BANNER_BUFFER,
           caption: `╭━━━━━━━━━━━━━━━━━━━━╮
 ┃   👋  *MEMBER LEFT*   ┃
@@ -408,7 +481,7 @@ _We'll miss you._`
 ━━━━━━━━━━━━━━━━━━━━━━━
   _Wishing you the best!_`;
 
-      await sockInstance.sendMessage(groupJid, { text, mentions: [jid] });
+      await safeSend(groupJid, { text, mentions: [jid] });
     }
   } catch (e) {
     console.error('[Goodbye] Error:', e.message);
@@ -531,16 +604,25 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
   const sock = state.sock;
   if (!sock) return false;
 
+  // ---------- 🔧 FIX 14: AUTO-REGISTER (never blocks) ----------
+  // engine.autoRegister() learns the LID → PN mapping and logs first contact,
+  // but its return value is diagnostic only. We do NOT gate on `.known`.
+  try {
+    engine.autoRegister(msg, from, senderJid);
+  } catch (e) {
+    console.error('[engine.autoRegister]', e.message);
+  }
+
   // ---------- TRIVIA ANSWER INTERCEPTION ----------
   const trivia = TRIVIA_STATE.get(from);
   if (trivia) {
     if (Date.now() > trivia.expiresAt) {
       TRIVIA_STATE.delete(from);
-    } else if (!rawText.startsWith('.')) {
+    } else if (!engine.isCommand(rawText)) {
       const guess = rawText.trim().toLowerCase();
       if (trivia.answers.includes(guess)) {
         TRIVIA_STATE.delete(from);
-        try { await sock.sendMessage(from, { text: '✅ Correct!' }); } catch {}
+        try { await safeSend(from, { text: '✅ Correct!' }); } catch {}
         return true;
       }
     }
@@ -549,7 +631,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
   // ---------- AUTO-CORRECT ----------
   if (
     state.autoCorrectEnabled.has(from) &&
-    !rawText.startsWith('.') &&
+    !engine.isCommand(rawText) &&
     state.dictionary.size > 0
   ) {
     const tokens = rawText.split(/(\s+)/);
@@ -567,7 +649,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
 
     if (changed && fixed !== rawText) {
       try {
-        await sock.sendMessage(from, {
+        await safeSend(from, {
           text: `✍️ *Did you mean:*\n${fixed}`,
           quoted: msg
         });
@@ -602,7 +684,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
       if (policy === 'kick') {
         try {
           await sock.groupParticipantsUpdate(from, [senderJid], 'remove');
-          await sock.sendMessage(from, {
+          await safeSend(from, {
             text: `🚪 @${senderJid.split('@')[0]} kicked for mentioning the group.`,
             mentions: [senderJid]
           });
@@ -613,14 +695,14 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
           console.error('[antimention] kick failed:', e.message);
         }
       } else {
-        await sock.sendMessage(from, {
+        await safeSend(from, {
           text: `⚠️ @${senderJid.split('@')[0]} — group mentions are not allowed (${list.length}/3).`,
           mentions: [senderJid]
         });
         if (list.length >= 3) {
           try {
             await sock.groupParticipantsUpdate(from, [senderJid], 'remove');
-            await sock.sendMessage(from, {
+            await safeSend(from, {
               text: `🚪 @${senderJid.split('@')[0]} kicked (3 anti-mention warnings).`,
               mentions: [senderJid]
             });
@@ -630,6 +712,21 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
           saveState();
         }
       }
+      return true;
+    }
+  }
+
+  // ---------- RATE LIMIT (per chat+user, never blocks first contact) ----------
+  // Only rate-limit actual commands — not plain chatter.
+  if (engine.isCommand(rawText)) {
+    const r = engine.checkRate(from, senderJid || from);
+    if (!r.ok) {
+      console.log(`[engine.rate] throttled ${from}/${senderJid} (retry in ${r.retryInSec}s)`);
+      try {
+        await safeSend(from, {
+          text: `⏳ Slow down — try again in ${r.retryInSec}s.`
+        });
+      } catch {}
       return true;
     }
   }
@@ -676,7 +773,7 @@ const COMMANDS = [
     category: 'general',
     desc: 'Your JID / number',
     handler: async ({ from, senderJid }) => {
-      const num = senderJid.split('@')[0].split(':')[0];
+      const num = (senderJid || '').split('@')[0].split(':')[0];
       await helpers.replyTyping(
         from,
         `${UI.box('YOUR INFO', '🆔')}
@@ -692,7 +789,7 @@ const COMMANDS = [
     category: 'general',
     desc: 'Check admin status',
     handler: async ({ msg, from, senderJid, admin }) => {
-      const num = senderJid.split('@')[0].split(':')[0];
+      const num = (senderJid || '').split('@')[0].split(':')[0];
       const raw = msg.key.participant || msg.key.remoteJid || '';
       const pn = msg.key.senderPn || 'none';
       const ppn = msg.key.participantPn || 'none';
@@ -752,7 +849,7 @@ const COMMANDS = [
     desc: 'Safe calculator',
     usage: '.calc <expression>',
     handler: async ({ from, text }) => {
-      const expr = text.replace(/^\.calc\s+/i, '').replace(/[^0-9+\-*/(). ]/g, '');
+      const expr = text.replace(/^[.!]calc\s+/i, '').replace(/[^0-9+\-*/(). ]/g, '');
       if (expr.length > 200) helpers.fail('❌ Expression too long.');
       try {
         const result = Function(`"use strict"; return (${expr})`)();
@@ -791,7 +888,7 @@ const COMMANDS = [
           logger: pino({ level: 'silent' }),
           reuploadRequest: state.sock.updateMediaMessage
         });
-        await state.sock.sendMessage(from, { sticker: buf });
+        await safeSend(from, { sticker: buf });
       }).catch(() => helpers.reply(from, '❌ Failed. Try a smaller file.'));
     }
   },
@@ -814,7 +911,7 @@ const COMMANDS = [
           logger: pino({ level: 'silent' }),
           reuploadRequest: state.sock.updateMediaMessage
         });
-        await state.sock.sendMessage(from, { image: buf, caption: '🎨 *Converted to image*' });
+        await safeSend(from, { image: buf, caption: '🎨 *Converted to image*' });
       }).catch(() => helpers.reply(from, '❌ Failed.'));
     }
   },
@@ -872,13 +969,13 @@ const COMMANDS = [
 
       await withRecording(from, () => {
         if (ogg) {
-          return state.sock.sendMessage(from, {
+          return safeSend(from, {
             audio: ogg,
             mimetype: 'audio/ogg; codecs=opus',
             ptt: true
           });
         }
-        return state.sock.sendMessage(from, {
+        return safeSend(from, {
           audio: mp3,
           mimetype: 'audio/mpeg',
           ptt: false,
@@ -888,7 +985,6 @@ const COMMANDS = [
     }
   },
   {
-    // 🔧 resolveJid: convert @lid mention to @s.whatsapp.net before use
     name: '.getpp',
     category: 'media',
     desc: 'Get profile picture',
@@ -903,7 +999,7 @@ const COMMANDS = [
       }
       try {
         const url = await state.sock.profilePictureUrl(target, 'image');
-        await state.sock.sendMessage(from, { image: { url }, caption: '📷 *Profile picture*' });
+        await safeSend(from, { image: { url }, caption: '📷 *Profile picture*' });
       } catch {
         helpers.fail('❌ No profile picture available.');
       }
@@ -942,11 +1038,11 @@ const COMMANDS = [
       });
       const caption = '👁️ *View-once revealed*';
       if (type === 'imageMessage') {
-        await state.sock.sendMessage(from, { image: buf, caption });
+        await safeSend(from, { image: buf, caption });
       } else if (type === 'videoMessage') {
-        await state.sock.sendMessage(from, { video: buf, caption });
+        await safeSend(from, { video: buf, caption });
       } else {
-        await state.sock.sendMessage(from, {
+        await safeSend(from, {
           audio: buf,
           mimetype: 'audio/ogg; codecs=opus',
           ptt: true
@@ -960,7 +1056,7 @@ const COMMANDS = [
     desc: 'Text → sticker',
     usage: '.stext <text> [--font=… --color=… --bg=… --wm --random]',
     handler: async ({ msg, from, text }) => {
-      let raw = text.replace(/^\.stext\s*/i, '').trim();
+      let raw = text.replace(/^[.!]stext\s*/i, '').trim();
 
       if (!raw) {
         const quoted = helpers.quoted(msg);
@@ -989,7 +1085,7 @@ const COMMANDS = [
 
       try {
         const stickerBuf = await renderTextSticker(raw, opts);
-        await state.sock.sendMessage(from, { sticker: stickerBuf });
+        await safeSend(from, { sticker: stickerBuf });
       } catch (e) {
         console.error('[stext]', e);
         helpers.fail('❌ Sticker render failed: ' + e.message);
@@ -1121,7 +1217,6 @@ const COMMANDS = [
     }
   },
   {
-    // 🔧 resolveJid for the mention list so mentions don't fail on @lid
     name: '.ship',
     category: 'fun',
     desc: 'Ship two users',
@@ -1396,7 +1491,6 @@ const COMMANDS = [
     }
   },
   {
-    // 🔧 resolveJid: store the phone number, not the LID, when possible
     name: '.addadmin',
     admin: true,
     category: 'admin',
@@ -1536,7 +1630,7 @@ const COMMANDS = [
     usage: '.setwelcome <text>',
     handler: async ({ from, text }) => {
       helpers.requireGroup(from);
-      const custom = text.replace(/^\.setwelcome\s+/i, '');
+      const custom = text.replace(/^[.!]setwelcome\s+/i, '');
       if (!custom) helpers.fail('Usage: .setwelcome <text>  (@user, @group)');
       state.customWelcome[from] = custom;
       saveState();
@@ -1561,7 +1655,7 @@ ${msgText}
 ━━━━━━━━━━━━━━━━━━━━━━━
 ${list}
 ╰━━━━━━━━━━━━━━━━━━━━╯`;
-      await state.sock.sendMessage(from, { text: txt, mentions });
+      await safeSend(from, { text: txt, mentions });
     }
   },
   {
@@ -1574,11 +1668,10 @@ ${list}
       const meta = await state.sock.groupMetadata(from);
       const mentions = meta.participants.map((p) => p.id);
       const msgText = args.join(' ') || '📢 Attention everyone!';
-      await state.sock.sendMessage(from, { text: msgText, mentions });
+      await safeSend(from, { text: msgText, mentions });
     }
   },
   {
-    // 🔧 resolveJid: convert @lid mention to phone JID before kicking
     name: '.kick',
     admin: true,
     category: 'group',
@@ -1906,7 +1999,6 @@ Usage: .reactions on|off [global]`
     }
   },
   {
-    // 🔧 resolveJid on the target so kick/mention works for @lid users
     name: '.warn',
     admin: true,
     category: 'moderation',
@@ -1928,7 +2020,7 @@ Usage: .reactions on|off [global]`
       if (list.length >= 3) {
         try {
           await state.sock.groupParticipantsUpdate(from, [target], 'remove');
-          await state.sock.sendMessage(from, {
+          await safeSend(from, {
             text: `🚪 @${target.split('@')[0]} was kicked (3 warnings).`,
             mentions: [target]
           });
@@ -1939,7 +2031,7 @@ Usage: .reactions on|off [global]`
           await helpers.reply(from, '⚠️ 3 warnings reached but kick failed.');
         }
       } else {
-        await state.sock.sendMessage(from, {
+        await safeSend(from, {
           text: `⚠️ @${target.split('@')[0]} warned (${list.length}/3).\nReason: ${reason}`,
           mentions: [target]
         });
@@ -1959,7 +2051,7 @@ Usage: .reactions on|off [global]`
       const target = helpers.resolveJid(targetRaw) || targetRaw;
       const groupWarns = state.warnings.get(from) || {};
       const list = groupWarns[target] || [];
-      await state.sock.sendMessage(from, {
+      await safeSend(from, {
         text: `${UI.box('WARNINGS', '📋')}\n\n@${target.split('@')[0]} has *${list.length}/3* warnings.\n\n${
           list.map((r, i) => `${i + 1}. ${r}`).join('\n') || '—'
         }`,
@@ -1982,7 +2074,7 @@ Usage: .reactions on|off [global]`
       delete groupWarns[target];
       state.warnings.set(from, groupWarns);
       saveState();
-      await state.sock.sendMessage(from, {
+      await safeSend(from, {
         text: `✅ Warnings cleared for @${target.split('@')[0]}.`,
         mentions: [target]
       });
@@ -2031,59 +2123,104 @@ Usage: .reactions on|off [global]`
     }
   },
   {
+    // 🔧 FIX 18: fully rebuilt .poststatus
     name: '.poststatus',
     admin: true,
     category: 'special',
-    desc: 'Post to status',
+    desc: 'Post the replied message to your WhatsApp status',
+    usage: '.poststatus (reply to a text / image / video)',
     handler: async ({ msg, from }) => {
       const quoted = helpers.quoted(msg);
       const ctx = helpers.contextInfo(msg);
+
       if (!quoted || !ctx) {
         await helpers.replyTyping(
           from,
-          `${UI.box('POST STATUS', '📤')}\n\nReply to a message with *.poststatus* to publish it to your WhatsApp status.`
+          `${UI.box('POST STATUS', '📤')}
+
+Reply to a *text*, *image*, or *video* message with .poststatus to publish it to your WhatsApp status.
+
+Supported:
+│ ✅ text
+│ ✅ image
+│ ✅ video`
         );
         return;
       }
+
+      // Reconstruct the quoted message in the shape postToStatus expects.
+      const sender =
+        helpers.resolveJid(ctx.participant || '') ||
+        ctx.participant ||
+        from;
+
+      const reconstructed = {
+        key: {
+          remoteJid: from,
+          id: ctx.stanzaId,
+          fromMe: ctx.participant === state.botJid,
+          participant: sender
+        },
+        message: quoted
+      };
+
       try {
-        const fakeQuoted = {
-          key: {
-            remoteJid: from,
-            id: ctx.stanzaId,
-            fromMe: ctx.participant === state.botJid,
-            participant: ctx.participant
-          },
-          message: quoted
-        };
-        const ok = await postToStatus(fakeQuoted);
+        const ok = await postToStatus(reconstructed);
         if (ok) {
           await helpers.replyTyping(
             from,
             `${UI.box('POSTED', '✅')}\n\nVisible on your status for the next 24 hours.`
           );
         } else {
-          await helpers.replyTyping(from, '❌ Only text, images, videos supported.');
+          await helpers.replyTyping(
+            from,
+            '❌ Unsupported content. Reply to a text, image, or video message.'
+          );
         }
       } catch (e) {
-        console.error('[Status]', e);
-        await helpers.reply(from, '❌ Status post failed.');
+        console.error('[poststatus]', e);
+        await helpers.reply(from, `❌ Status post failed: ${e.message}`);
       }
     }
   }
 ];
 
 // ============================================================================
-// BUILD LOOKUP TABLES
+// 🔧 FIX 15: BUILD LOOKUP TABLES — as a function, after engine.install
 // ============================================================================
 const COMMAND_LOOKUP = new Map();
 const ADMIN_TRIGGERS = new Set();
 
-for (const cmd of COMMANDS) {
-  const triggers = [cmd.name, ...(cmd.aliases || [])];
-  for (const t of triggers) {
-    COMMAND_LOOKUP.set(t.toLowerCase(), cmd);
-    if (cmd.admin) ADMIN_TRIGGERS.add(t.toLowerCase());
+function buildLookup() {
+  COMMAND_LOOKUP.clear();
+  ADMIN_TRIGGERS.clear();
+
+  for (const cmd of COMMANDS) {
+    const triggers = [cmd.name, ...(cmd.aliases || [])];
+    for (const t of triggers) {
+      COMMAND_LOOKUP.set(t.toLowerCase(), cmd);
+      if (cmd.admin) ADMIN_TRIGGERS.add(t.toLowerCase());
+    }
   }
+
+  console.log(`[handlers] lookup built with ${COMMAND_LOOKUP.size} trigger(s)`);
+}
+
+// Build the initial lookup for core commands.
+buildLookup();
+
+// 🔧 FIX 15: install engine BEFORE rebuilding the lookup, so engine-pushed
+// commands (!topdf, !format, !add, !remove) end up in COMMAND_LOOKUP.
+try {
+  engine.install({
+    COMMANDS,
+    helpers,
+    // Give engine access to the same exports handlers.js exposes.
+    // (engine.js only reads COMMANDS and helpers at install time.)
+  });
+  buildLookup(); // rebuild so engine commands are reachable
+} catch (e) {
+  console.error('[handlers] engine.install failed:', e.message);
 }
 
 // ============================================================================
@@ -2115,7 +2252,7 @@ function buildMenu(uptimeMin) {
 
 ╭───────────────────────╮
 │  *WhatsApp Bot*  •  v1
-│  Prefix: \`.\`
+│  Prefix: \`.\` or \`!\`
 │  Uptime: ${uptimeMin}m
 ╰───────────────────────╯
 `;
@@ -2137,7 +2274,7 @@ function buildMenu(uptimeMin) {
 ╭───────────────────────╮
 │ Admin  : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set'}
 │ Uptime : ${uptimeMin} min
-│ Prefix : .
+│ Prefix : . or !
 ╰───────────────────────╯
   _Powered by Fanuels DX_`;
 
@@ -2145,7 +2282,7 @@ function buildMenu(uptimeMin) {
 }
 
 // ============================================================================
-// COMMAND ROUTER
+// 🔧 FIX 16: COMMAND ROUTER — accepts '.' and '!' prefixes via engine
 // ============================================================================
 async function handleCommand(msg, from, senderJid, rawText) {
   const sockInstance = state.sock;
@@ -2155,8 +2292,10 @@ async function handleCommand(msg, from, senderJid, rawText) {
   }
 
   const text = rawText.trim();
+  if (!engine.isCommand(text)) return;
+
   const parts = text.split(' ');
-  const base = parts[0].toLowerCase();
+  const base = parts[0].toLowerCase();       // e.g. '.help' or '!help'
   const args = parts.slice(1);
 
   const admin = isAdmin(senderJid);
@@ -2164,9 +2303,10 @@ async function handleCommand(msg, from, senderJid, rawText) {
 
   const command = COMMAND_LOOKUP.get(base);
   if (!command) {
+    // Only nag for '.'-prefixed unknown commands to avoid spamming on '!foo' typos.
     if (base.startsWith('.')) {
       await withTyping(from, () =>
-        sockInstance.sendMessage(from, {
+        safeSend(from, {
           text: `${UI.box('UNKNOWN', '❓')}\n\nCommand *${base}* not found.\nType *.help* to see the menu.`
         })
       );
@@ -2214,5 +2354,6 @@ module.exports = {
   helpers,
   COMMANDS,
   preCommandHooks,
-  renderTextSticker
+  renderTextSticker,
+  buildLookup,   // exposed so engine can trigger a rebuild if needed
 };

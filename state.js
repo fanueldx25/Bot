@@ -4,11 +4,35 @@
 // Owns all cross-cutting state: feature toggles, the live socket ref, the
 // Socket.IO handle, and the LID → PN mapping. Both server.js and
 // connection.js require this, so it must NOT require either of them back.
+//
+// 🔧 FIXES APPLIED IN THIS FILE
+//   1. sendWithBanner() now routes through an INJECTED safe-send function
+//      (set by connection.js at runtime) so banner replies get the same
+//      E2EE retry treatment as everything else. No circular require.
+//   2. saveState() is DEBOUNCED (500ms coalesce) so rapid LID mapping
+//      learning + scheduler ticks don't cause write storms.
+//   3. Exit/SIGINT/SIGTERM handlers flush any pending save so we never
+//      lose the last state change.
+//   4. warnings / antimentionWarnings are shallow-cloned on save so a
+//      concurrent mutation can't corrupt the serialized output.
 // ============================================================================
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+
+// ---------------------------------------------------------------------------
+// 🔧 FIX 1 — Injected safe-send bridge
+// ---------------------------------------------------------------------------
+// connection.js owns the real `safeSend` (retries transient E2EE errors,
+// caches outgoing messages for retry receipts). state.js can't require
+// connection.js (circular), so connection.js calls state.setSafeSend(fn)
+// once the socket is up, and state.js uses it for banner sends.
+// ---------------------------------------------------------------------------
+let _safeSendFn = null;
+function setSafeSend(fn) {
+  _safeSendFn = typeof fn === 'function' ? fn : null;
+}
 
 // ---------------------------------------------------------------------------
 // Feature state (in-memory, mirrored to bot_state.json on save)
@@ -128,6 +152,7 @@ function registerLidMapping(lidJid, pnJid) {
   if (lidToPn.get(lidNum) === pnNum) return;
   lidToPn.set(lidNum, pnNum);
   console.log(`[LID] mapped ${lidNum} → ${pnNum}`);
+  // 🔧 FIX 2 — debounced (see saveState below)
   saveState();
 }
 
@@ -141,7 +166,33 @@ function resolveLid(num) {
 // ============================================================================
 const STATE_FILE = path.join(__dirname, 'bot_state.json');
 
-function saveState() {
+// ---------------------------------------------------------------------------
+// 🔧 FIX 2 — Debounced saveState
+// ---------------------------------------------------------------------------
+// Rapid LID mapping learning (busy groups), scheduler ticks, and every
+// feature toggle all call saveState(). We coalesce them into a single write
+// per 500ms. Call saveState(true) for an immediate synchronous flush
+// (e.g. right before a .restart).
+// ---------------------------------------------------------------------------
+let _saveTimer = null;
+
+function saveState(immediate = false) {
+  if (immediate) {
+    _flushSave();
+    return;
+  }
+  if (_saveTimer) return;                 // already scheduled
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    _flushSave();
+  }, 500);
+}
+
+function _flushSave() {
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
   try {
     const data = {
       pausedChats: [...pausedChats],
@@ -158,15 +209,21 @@ function saveState() {
       schedules: Object.fromEntries(schedules),
       extraAdmins: [...extraAdmins],
       lidMappings: Object.fromEntries(lidToPn),
+
+      // 🔧 FIX 4 — shallow-clone inner user maps so a mutation mid-serialize
+      // can't corrupt the JSON. With the debounce in place this is belt-and-
+      // suspenders, but it costs nothing.
       warnings: Object.fromEntries(
-        [...warnings.entries()].map(([g, u]) => [g, u])
+        [...warnings.entries()].map(([g, u]) => [g, { ...(u || {}) }])
       ),
+
       autoCorrectEnabled: [...autoCorrectEnabled],
       dictionary: Object.fromEntries(dictionary),
       antimentionGroups: [...antimentionGroups],
       antimentionAction: Object.fromEntries(antimentionAction),
+
       antimentionWarnings: Object.fromEntries(
-        [...antimentionWarnings.entries()].map(([g, u]) => [g, u])
+        [...antimentionWarnings.entries()].map(([g, u]) => [g, { ...(u || {}) }])
       )
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
@@ -174,6 +231,13 @@ function saveState() {
     console.error('[State] save failed:', e.message);
   }
 }
+
+// 🔧 FIX 3 — Flush pending save on process exit so we never lose the last
+// change (LID mapping learned a moment ago, feature toggled, etc.).
+process.on('exit', () => { try { _flushSave(); } catch (_) {} });
+process.on('SIGINT', () => { try { _flushSave(); } catch (_) {} process.exit(0); });
+process.on('SIGTERM', () => { try { _flushSave(); } catch (_) {} process.exit(0); });
+process.on('beforeExit', () => { try { _flushSave(); } catch (_) {} });
 
 function loadState() {
   try {
@@ -316,14 +380,38 @@ async function withRecording(jid, fn) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 🔧 FIX 1 — sendWithBanner now prefers the injected safe-send
+// ---------------------------------------------------------------------------
+// If connection.js has registered its `safeSend`, use it (gets E2EE retry +
+// retry-receipt caching). Otherwise fall back to a raw socket send.
+// ---------------------------------------------------------------------------
 async function sendWithBanner(jid, text) {
+  // Preferred path: injected safeSend (retries transient E2EE errors,
+  // caches outgoing message for Baileys retry receipts).
+  if (_safeSendFn) {
+    try {
+      if (BANNER_BUFFER) {
+        return await _safeSendFn(jid, { image: BANNER_BUFFER, caption: text });
+      }
+      return await _safeSendFn(jid, { text });
+    } catch (e) {
+      console.warn('[sendWithBanner] safeSend failed, falling back:', e.message);
+      // fall through to raw send
+    }
+  }
+
+  // Fallback: raw socket send (used before connection.js injects safeSend).
+  if (!sock) return;
   try {
-    if (BANNER_BUFFER && sock) {
+    if (BANNER_BUFFER) {
       await sock.sendMessage(jid, { image: BANNER_BUFFER, caption: text });
       return;
     }
-  } catch (e) { /* fall through to text */ }
-  if (sock) await sock.sendMessage(jid, { text });
+  } catch (e) {
+    console.warn('[sendWithBanner] banner send failed:', e.message);
+  }
+  await sock.sendMessage(jid, { text });
 }
 
 // ============================================================================
@@ -417,5 +505,8 @@ module.exports = {
   verifySessionCode,
 
   registerLidMapping,
-  resolveLid
+  resolveLid,
+
+  // 🔧 FIX 1 — injected safe-send bridge (called by connection.js)
+  setSafeSend,
 };
