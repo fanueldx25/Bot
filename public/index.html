@@ -2,310 +2,712 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
 <title>WhatsApp Bot · Dashboard</title>
+
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
     theme: {
       extend: {
         colors: {
-          wa: {
-            bg: '#0b141a',
-            panel: '#111b21',
-            panel2: '#202c33',
-            border: '#2a3942',
-            text: '#e9edef',
-            muted: '#8696a0',
-            green: '#00a884',
-            green2: '#06cf9c',
-            red: '#f15c6d',
-            yellow: '#f0b232',
-            blue: '#53bdeb'
-          }
+          ink:    { 950: '#070d11', 900: '#0b141a', 800: '#111b21', 700: '#1a252c', 600: '#202c33', 500: '#2a3942' },
+          edge:   { DEFAULT: '#223038', soft: '#1a252c' },
+          txt:    { DEFAULT: '#e9edef', muted: '#8696a0', faint: '#5c6b73' },
+          accent: { DEFAULT: '#00a884', bright: '#06cf9c', dim: '#017d63' },
+          danger: { DEFAULT: '#f15c6d', soft: 'rgba(241,92,109,0.12)' },
+          warn:   { DEFAULT: '#f0b232' },
+          info:   { DEFAULT: '#53bdeb' }
         },
+        fontFamily: {
+          sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+          mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+        },
+        boxShadow: {
+          panel: '0 1px 0 rgba(255,255,255,0.03) inset, 0 10px 30px -12px rgba(0,0,0,0.6)',
+          focus: '0 0 0 3px rgba(0,168,132,0.18)'
+        },
+        borderRadius: { xl2: '14px', xl3: '18px' },
         keyframes: {
           pulseRing: {
-            '0%': { boxShadow: '0 0 0 0 currentColor' },
-            '70%': { boxShadow: '0 0 0 8px rgba(0,0,0,0)' },
+            '0%':   { boxShadow: '0 0 0 0 currentColor' },
+            '70%':  { boxShadow: '0 0 0 7px rgba(0,0,0,0)' },
             '100%': { boxShadow: '0 0 0 0 rgba(0,0,0,0)' }
           },
-          blink: {
-            '0%,100%': { opacity: '1' },
-            '50%': { opacity: '0.35' }
-          },
+          blink: { '0%,100%': { opacity: '1' }, '50%': { opacity: '0.35' } },
           slidein: {
-            from: { opacity: '0', transform: 'translateY(6px)' },
-            to: { opacity: '1', transform: 'translateY(0)' }
-          },
-          spin: {
-            to: { transform: 'rotate(360deg)' }
+            from: { opacity: '0', transform: 'translateY(4px)' },
+            to:   { opacity: '1', transform: 'translateY(0)' }
           },
           indeterminate: {
-            '0%': { marginLeft: '-30%' },
-            '100%': { marginLeft: '100%' }
+            '0%':   { transform: 'translateX(-100%)' },
+            '100%': { transform: 'translateX(300%)' }
           }
         },
         animation: {
-          pulseRing: 'pulseRing 1.2s infinite',
+          pulseRing: 'pulseRing 1.4s infinite',
           blink: 'blink 1s infinite',
-          slidein: 'slidein 0.25s ease',
-          spin: 'spin 0.7s linear infinite',
-          indeterminate: 'indeterminate 1.4s infinite ease-in-out'
+          slidein: 'slidein 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
+          indeterminate: 'indeterminate 1.6s ease-in-out infinite'
         }
       }
     }
   };
 </script>
+
 <style>
-  html, body {
-    background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, #0b141a 60%);
+  /* ----------------------------------------------------------------
+     Design tokens — the whole UI reads from these.
+     ---------------------------------------------------------------- */
+  :root {
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --panel-pad: 22px;
+    --gutter: 20px;
   }
+
+  html, body { height: 100%; }
+  body {
+    background:
+      radial-gradient(1200px 700px at 20% -10%, rgba(0,168,132,0.10), transparent 60%),
+      radial-gradient(900px 600px at 100% 0%, rgba(83,189,235,0.06), transparent 55%),
+      #070d11;
+    color: #e9edef;
+    font-feature-settings: 'cv02','cv03','cv04','cv11';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Remove number input spinners */
   input[type="tel"]::-webkit-outer-spin-button,
   input[type="tel"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="tel"] { -moz-appearance: textfield; }
+
+  /* Focus rings — consistent everywhere */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0,168,132,0.22);
+    border-color: #00a884 !important;
+  }
+
+  /* Reusable component classes */
+  .panel {
+    background: linear-gradient(180deg, rgba(255,255,255,0.012), rgba(255,255,255,0) 40%), #111b21;
+    border: 1px solid #223038;
+    border-radius: var(--radius-lg);
+    padding: var(--panel-pad);
+  }
+  .panel-tight { padding: 16px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 44px;
+    padding: 0 16px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background-color .15s, border-color .15s, color .15s, transform .06s;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-primary {
+    background: linear-gradient(180deg, #06cf9c, #00a884);
+    color: #04231b;
+  }
+  .btn-primary:hover:not(:disabled) { background: linear-gradient(180deg, #0ee2a8, #00a884); }
+
+  .btn-ghost {
+    background: #1a252c;
+    color: #e9edef;
+    border-color: #223038;
+  }
+  .btn-ghost:hover:not(:disabled) { background: #202c33; border-color: #2a3942; }
+
+  .btn-danger {
+    background: rgba(241,92,109,0.12);
+    color: #ffb9c1;
+    border-color: rgba(241,92,109,0.32);
+  }
+  .btn-danger:hover:not(:disabled) { background: rgba(241,92,109,0.18); }
+
+  .input {
+    width: 100%;
+    height: 44px;
+    padding: 0 14px;
+    background: #0b141a;
+    color: #e9edef;
+    border: 1px solid #223038;
+    border-radius: var(--radius-md);
+    font-size: 14.5px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .input::placeholder { color: #5c6b73; }
+  .input:hover { border-color: #2a3942; }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: #1a252c;
+    border: 1px solid #223038;
+    color: #8696a0;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.1px;
+  }
+
+  .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+
+  .kbd {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: #1a252c;
+    border: 1px solid #2a3942;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: #c3ced3;
+  }
+
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #8696a0;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: color .15s, background-color .15s, border-color .15s;
+    white-space: nowrap;
+  }
+  .tab:hover { color: #c3ced3; background: #141f26; }
+  .tab[aria-selected="true"] {
+    color: #e9edef;
+    background: #1a252c;
+    border-color: #2a3942;
+  }
+  .tab svg { width: 15px; height: 15px; opacity: 0.9; }
+
+  /* Section headings */
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #5c6b73;
+  }
+
+  /* Code display */
+  .code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #06cf9c;
+    word-break: break-all;
+    line-height: 1.2;
+  }
+
+  /* Custom scrollbar on sidebar */
+  .scroll-y { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a3942 transparent; }
+  .scroll-y::-webkit-scrollbar { width: 6px; }
+  .scroll-y::-webkit-scrollbar-thumb { background: #2a3942; border-radius: 3px; }
+
+  /* Hide scrollbars on tab bar when overflowing */
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  /* Fade-in for tab content */
+  .fade-in { animation: slidein .22s cubic-bezier(0.16, 1, 0.3, 1); }
 </style>
 </head>
-<body class="text-wa-text font-sans min-h-screen flex items-center justify-center p-4 text-[15px] leading-relaxed">
 
-<!-- ============================================================ -->
-<!-- LOGIN SCREEN                                                  -->
-<!-- ============================================================ -->
+<body class="font-sans text-txt min-h-screen">
+
+<!-- ==================================================================== -->
+<!-- LOGIN OVERLAY                                                        -->
+<!-- ==================================================================== -->
 <div id="loginScreen" class="fixed inset-0 z-[100] hidden items-center justify-center p-5"
-     style="background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, #0b141a 60%);">
-  <div class="bg-wa-panel border border-wa-border rounded-[22px] p-7 w-full max-w-[380px] shadow-2xl animate-slidein">
+     style="backdrop-filter: blur(8px); background: rgba(7,13,17,0.72);">
+  <div class="w-full max-w-[380px] panel animate-slidein" style="padding: 26px;">
     <div class="flex items-center gap-3 mb-6">
-      <div class="w-12 h-12 rounded-[13px] bg-gradient-to-br from-wa-green to-[#017d63] grid place-items-center text-2xl shadow-lg shrink-0">🔐</div>
+      <div class="w-11 h-11 rounded-[12px] grid place-items-center shrink-0"
+           style="background: linear-gradient(135deg, #06cf9c, #017d63); box-shadow: 0 8px 24px -8px rgba(0,168,132,0.6);">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#04231b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </div>
       <div>
-        <div class="text-[17px] font-semibold tracking-tight">Bot Dashboard</div>
-        <div class="text-[12.5px] text-wa-muted mt-0.5">Enter password to continue</div>
+        <div class="text-[16.5px] font-semibold tracking-tight">Sign in</div>
+        <div class="text-[12.5px] text-txt-muted mt-0.5">Restricted dashboard</div>
       </div>
     </div>
-    <input id="pwInput" type="password" placeholder="Password" autocomplete="current-password"
-      class="w-full px-3.5 py-3 rounded-xl border border-wa-border bg-wa-panel2 text-wa-text text-[15px] outline-none transition focus:border-wa-green focus:ring-[3px] focus:ring-wa-green/15" />
-    <button id="pwBtn"
-      class="w-full mt-3.5 py-3.5 rounded-xl text-[15px] font-semibold cursor-pointer bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] shadow-lg transition active:scale-[0.985] disabled:bg-wa-panel2 disabled:text-wa-muted disabled:cursor-not-allowed disabled:shadow-none">
-      Unlock
+
+    <label for="pwInput" class="eyebrow block mb-2">Password</label>
+    <input id="pwInput" type="password" placeholder="••••••••••••" autocomplete="current-password" class="input" />
+
+    <button id="pwBtn" class="btn btn-primary w-full mt-4">
+      <span class="spinner hidden w-4 h-4 rounded-full border-2 border-[#04231b]/25 border-t-[#04231b] animate-spin"></span>
+      <span class="btn-label">Unlock dashboard</span>
     </button>
-    <div id="pwError" class="text-wa-red text-[13px] mt-2.5 hidden"></div>
+
+    <div id="pwError" class="hidden mt-3 text-[12.5px] text-danger flex items-center gap-2">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span id="pwErrorText"></span>
+    </div>
   </div>
 </div>
 
-<!-- ============================================================ -->
-<!-- MAIN DASHBOARD                                                -->
-<!-- ============================================================ -->
-<div id="app" class="hidden w-full max-w-[440px] bg-wa-panel border border-wa-border rounded-[22px] p-6 pb-5 shadow-2xl relative overflow-hidden">
-  <div class="absolute -inset-0.5 pointer-events-none z-0"
-       style="background: linear-gradient(135deg, rgba(0,168,132,0.15), transparent 40%, transparent 60%, rgba(83,189,235,0.12));"></div>
+<!-- ==================================================================== -->
+<!-- APP SHELL                                                            -->
+<!-- ==================================================================== -->
+<div id="app" class="hidden min-h-screen">
+  <div class="mx-auto max-w-[1180px] px-4 sm:px-6 lg:px-8 py-6 lg:py-10">
 
-  <div class="relative z-10">
-    <div class="flex items-center gap-3">
-      <div class="w-12 h-12 rounded-[13px] bg-gradient-to-br from-wa-green to-[#017d63] grid place-items-center text-2xl shadow-lg shrink-0">🤖</div>
+    <!-- Header -->
+    <header class="flex items-center gap-3 mb-6 lg:mb-8">
+      <div class="w-10 h-10 rounded-[12px] grid place-items-center shrink-0"
+           style="background: linear-gradient(135deg, #06cf9c, #017d63); box-shadow: 0 8px 24px -10px rgba(0,168,132,0.65);">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#04231b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+      </div>
       <div>
-        <h1 class="text-lg font-semibold tracking-tight">WhatsApp Bot</h1>
-        <div class="text-[12.5px] text-wa-muted mt-0.5">Pair with a code — no QR needed</div>
+        <div class="text-[15px] font-semibold tracking-tight">WhatsApp Bot</div>
+        <div class="text-[12px] text-txt-muted mt-0.5">Baileys · Multi-device</div>
       </div>
-      <button id="logoutBtn"
-        class="ml-auto bg-transparent border border-wa-border text-wa-muted px-2.5 py-1.5 rounded-[9px] text-xs cursor-pointer transition hover:bg-wa-panel2 hover:text-wa-text">
-        Logout
-      </button>
-    </div>
 
-    <div class="inline-flex items-center gap-2 mt-4 mb-5 px-3 py-1.5 rounded-full bg-wa-panel2 border border-wa-border text-[12.5px] text-wa-muted">
-      <span id="dot" class="dot w-2 h-2 rounded-full bg-wa-muted"></span>
-      <span id="stateText">Disconnected</span>
-    </div>
-
-    <label for="number" class="block text-[12.5px] text-wa-muted mb-2 tracking-wide">Phone number (with country code)</label>
-    <div class="flex items-center bg-wa-panel2 border border-wa-border rounded-[14px] transition focus-within:border-wa-green focus-within:ring-[3px] focus-within:ring-wa-green/15">
-      <span class="pl-3.5 pr-1 text-wa-muted text-sm select-none">+</span>
-      <input id="number" type="tel" inputmode="numeric" placeholder="237612345678" autocomplete="off"
-        class="flex-1 min-w-0 px-3.5 py-3 bg-transparent border-none outline-none text-wa-text text-[15px] tracking-wide tabular-nums placeholder:text-[#5c6b73] placeholder:tracking-normal" />
-    </div>
-    <div class="text-[11.5px] text-wa-muted mt-2 flex gap-1.5 items-start leading-snug">
-      <span>ℹ️</span>
-      <div>Include country code, <b class="text-[#c3ced3] font-semibold">without</b> the + sign or leading zero.</div>
-    </div>
-
-    <button id="connectBtn"
-      class="w-full mt-4 py-3.5 rounded-[14px] text-[15px] font-semibold tracking-wide cursor-pointer inline-flex items-center justify-center gap-2.5 transition active:scale-[0.985]
-             bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] shadow-lg
-             hover:from-[#0ee2a8] hover:to-wa-green
-             disabled:bg-wa-panel2 disabled:text-wa-muted disabled:cursor-not-allowed disabled:shadow-none disabled:bg-none">
-      <span class="spinner hidden w-4 h-4 rounded-full border-2 border-[#06231c]/25 border-t-[#06231c] animate-spin"></span>
-      <span class="btn-label">Request Pairing Code</span>
-    </button>
-
-    <button id="disconnectBtn"
-      class="hidden w-full mt-2.5 py-3.5 rounded-[14px] text-[15px] font-semibold cursor-pointer bg-wa-panel2 text-wa-text border border-wa-border transition hover:bg-[#2a3942] active:scale-[0.985]">
-      Disconnect
-    </button>
-
-    <div id="progressPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
-      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">⏳ Working…</div>
-      <div id="progressMsg" class="text-[13px] text-wa-muted">Opening channel…</div>
-      <div class="h-1 bg-wa-panel rounded-full overflow-hidden mt-2.5">
-        <div class="h-full w-[30%] rounded-full animate-indeterminate"
-             style="background: linear-gradient(90deg, #00a884, #53bdeb);"></div>
-      </div>
-    </div>
-
-    <div id="codePanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
-      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">🔑 Pairing Code</div>
-      <div class="flex items-center justify-between gap-2.5 bg-wa-bg border-[1.5px] border-dashed border-wa-green rounded-[14px] p-3.5 mb-3">
-        <div id="code" class="font-mono text-2xl font-bold tracking-[4px] text-wa-green select-all break-all">----</div>
-        <button id="copyBtn"
-          class="shrink-0 px-3 py-2 text-xs bg-wa-panel2 text-wa-text border border-wa-border rounded-[9px] cursor-pointer transition hover:bg-[#2a3942]">
-          Copy
+      <div class="ml-auto flex items-center gap-2">
+        <span id="stateChip" class="chip">
+          <span id="dot" class="dot bg-txt-faint"></span>
+          <span id="stateText">Disconnected</span>
+        </span>
+        <button id="logoutBtn" class="btn btn-ghost !h-9 !px-3 !text-[13px]" title="Sign out">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span class="hidden sm:inline">Sign out</span>
         </button>
       </div>
-      <ul class="list-none text-[13px] text-wa-muted leading-[1.9] space-y-0.5">
-        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">1</span><div>Open <b class="text-[#c3ced3] font-semibold">WhatsApp</b> on your phone</div></li>
-        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">2</span><div>Go to <b class="text-[#c3ced3] font-semibold">Settings → Linked Devices</b></div></li>
-        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">3</span><div>Tap <b class="text-[#c3ced3] font-semibold">Link a Device</b></div></li>
-        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">4</span><div>Choose <b class="text-[#c3ced3] font-semibold">Link with phone number</b></div></li>
-        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">5</span><div>Enter the code shown above</div></li>
-      </ul>
-    </div>
+    </header>
 
-    <div id="connectedPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
-      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">✅ Connected</div>
-      <div id="connectedInfo" class="text-[14px] text-wa-text"></div>
-    </div>
+    <!-- Two-column layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-5 lg:gap-6">
 
-    <div id="sessionCodePanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
-      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">🔑 Seasonal Reconnect Code</div>
-      <div class="flex items-center justify-between gap-2.5 bg-wa-bg border-[1.5px] border-dashed border-wa-green rounded-[14px] p-3.5 mb-2.5">
-        <div id="sessionCode" class="font-mono text-2xl font-bold tracking-[4px] text-wa-green select-all break-all">------</div>
-        <button id="sessionCodeRefresh"
-          class="shrink-0 px-3 py-2 text-xs bg-wa-panel2 text-wa-text border border-wa-border rounded-[9px] cursor-pointer transition hover:bg-[#2a3942]">
-          ↻
-        </button>
-      </div>
-      <div class="text-[12px] text-wa-muted text-center">Rotates every 60s. Use this to reconnect without re-pairing.</div>
-    </div>
+      <!-- ============================================================ -->
+      <!-- SIDEBAR                                                      -->
+      <!-- ============================================================ -->
+      <aside class="flex flex-col gap-4">
 
-    <div id="sessionBackupPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
-      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">💾 Session Backup</div>
-      <div class="text-[12.5px] text-wa-muted mb-3 leading-snug">
-        Save this file and upload it after a redeploy to reconnect without pairing again.
-      </div>
-      <div id="sessionStatus" class="text-[12px] text-wa-muted mb-3">Checking session status…</div>
-      <button id="downloadSessionBtn"
-        class="w-full py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] transition hover:from-[#0ee2a8] hover:to-wa-green active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
-        ⬇ Download Session File
-      </button>
-      <input type="file" id="uploadSessionInput" accept="application/json,.json" class="hidden" />
-      <button id="uploadSessionBtn"
-        class="w-full mt-2 py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-wa-panel text-wa-text border border-wa-border transition hover:bg-[#2a3942] active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
-        ⬆ Upload Session File
-      </button>
-      <div id="sessionProgress" class="hidden text-[12px] text-wa-muted mt-2.5 leading-snug"></div>
-    </div>
+        <!-- Status card -->
+        <div class="panel panel-tight">
+          <div class="eyebrow mb-3">Status</div>
+          <div class="flex items-center gap-3 mb-3">
+            <span id="sidebarDot" class="dot bg-txt-faint"></span>
+            <div class="text-[14px] font-medium" id="sidebarStateLabel">Disconnected</div>
+          </div>
+          <div class="text-[12px] text-txt-muted leading-relaxed" id="sidebarStateMsg">
+            Ready to pair a new device.
+          </div>
+        </div>
 
-    <div id="errorPanel" class="panel hidden mt-4 p-4 rounded-[14px] border animate-slidein"
-         style="background: rgba(241,92,109,0.08); border-color: rgba(241,92,109,0.35);">
-      <div class="text-[12.5px] font-bold uppercase tracking-widest mb-2.5 flex items-center gap-2 text-wa-red">⚠️ Problem</div>
-      <div id="errorMsg" class="text-[14px] text-[#ffd7db] leading-snug break-words"></div>
-      <div id="errorHint" class="hidden text-[12px] text-wa-muted mt-2 pt-2 border-t border-dashed border-wa-red/25 leading-snug"></div>
-    </div>
+        <!-- Session card -->
+        <div class="panel panel-tight">
+          <div class="eyebrow mb-3">Session</div>
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between text-[12.5px]">
+              <span class="text-txt-muted">Number</span>
+              <span class="font-mono text-txt" id="sidebarNumber">—</span>
+            </div>
+            <div class="flex items-center justify-between text-[12.5px]">
+              <span class="text-txt-muted">Backup on disk</span>
+              <span id="sidebarHasSession" class="text-txt-muted">—</span>
+            </div>
+            <div class="flex items-center justify-between text-[12.5px]">
+              <span class="text-txt-muted">Uptime</span>
+              <span class="font-mono text-txt" id="sidebarUptime">—</span>
+            </div>
+          </div>
+        </div>
 
-    <div class="text-center text-[11px] text-[#5c6b73] mt-4 tracking-wide">Powered by Baileys · Multi-device</div>
+        <!-- Quick actions -->
+        <div class="panel panel-tight">
+          <div class="eyebrow mb-3">Quick actions</div>
+          <div class="flex flex-col gap-2">
+            <button id="quickDownload" class="btn btn-ghost !h-10 !text-[13px] w-full justify-start">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download session
+            </button>
+            <button id="quickUpload" class="btn btn-ghost !h-10 !text-[13px] w-full justify-start">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload session
+            </button>
+            <button id="quickDisconnect" class="btn btn-danger !h-10 !text-[13px] w-full justify-start">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+              Disconnect bot
+            </button>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-[11px] text-txt-faint px-1">
+          <div>Env · <span id="sidebarEnv" class="kbd">—</span></div>
+        </div>
+      </aside>
+
+      <!-- ============================================================ -->
+      <!-- MAIN                                                          -->
+      <!-- ============================================================ -->
+      <main class="flex flex-col gap-5">
+
+        <!-- Tabs -->
+        <nav role="tablist" class="panel panel-tight !p-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar">
+          <button role="tab" aria-selected="true" data-tab="connect" class="tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            Connect
+          </button>
+          <button role="tab" aria-selected="false" data-tab="backup" class="tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Backup
+          </button>
+          <button role="tab" aria-selected="false" data-tab="reconnect" class="tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>
+            Reconnect code
+          </button>
+        </nav>
+
+        <!-- -------------------------------------------------------- -->
+        <!-- Tab: Connect                                              -->
+        <!-- -------------------------------------------------------- -->
+        <section data-panel="connect" class="fade-in">
+          <div class="panel">
+            <div class="eyebrow mb-2">Pair a device</div>
+            <h2 class="text-[17px] font-semibold tracking-tight mb-1">Request a pairing code</h2>
+            <p class="text-[13px] text-txt-muted leading-relaxed mb-6 max-w-[540px]">
+              Enter your WhatsApp phone number including the country code. We'll request a
+              one-time code you can enter on your phone to link this bot as a device.
+            </p>
+
+            <label for="number" class="block text-[12.5px] text-txt-muted mb-2">Phone number</label>
+            <div class="relative">
+              <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-txt-muted select-none text-[14px]">+</span>
+              <input id="number" type="tel" inputmode="numeric" autocomplete="off"
+                     placeholder="237612345678"
+                     class="input !pl-8 font-mono tracking-wide" />
+            </div>
+            <div class="text-[11.5px] text-txt-faint mt-2 leading-snug">
+              Include the country code, without the <span class="text-txt-muted">+</span> or a leading zero.
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-2.5 mt-5">
+              <button id="connectBtn" class="btn btn-primary flex-1">
+                <span class="spinner hidden w-4 h-4 rounded-full border-2 border-[#04231b]/25 border-t-[#04231b] animate-spin"></span>
+                <span class="btn-label">Request pairing code</span>
+              </button>
+              <button id="disconnectBtn" class="btn btn-ghost hidden sm:w-[140px]">
+                Disconnect
+              </button>
+            </div>
+
+            <!-- Progress -->
+            <div id="progressPanel" class="hidden mt-5 panel panel-tight !bg-ink-800 animate-slidein">
+              <div class="flex items-center gap-2 mb-2">
+                <svg class="animate-spin text-accent-bright" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+                <span class="eyebrow" style="color:#06cf9c;">Working</span>
+              </div>
+              <div id="progressMsg" class="text-[13px] text-txt-muted">Opening channel…</div>
+              <div class="h-[3px] bg-ink-900 rounded-full overflow-hidden mt-3 relative">
+                <div class="absolute inset-y-0 w-[35%] rounded-full animate-indeterminate"
+                     style="background: linear-gradient(90deg, #00a884, #53bdeb);"></div>
+              </div>
+            </div>
+
+            <!-- Pairing code -->
+            <div id="codePanel" class="hidden mt-5 panel panel-tight !bg-ink-800 animate-slidein">
+              <div class="flex items-center justify-between mb-3">
+                <div class="eyebrow" style="color:#06cf9c;">Pairing code</div>
+                <span class="text-[11px] text-txt-faint">Expires in a few minutes</span>
+              </div>
+
+              <div class="flex items-center gap-2 bg-ink-950 rounded-[12px] p-3.5 border border-dashed border-accent/40">
+                <div id="code" class="code flex-1 select-all">----</div>
+                <button id="copyBtn" class="btn btn-ghost !h-9 !px-3 !text-[12px] shrink-0">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span class="copy-label">Copy</span>
+                </button>
+              </div>
+
+              <ol class="mt-4 space-y-2.5">
+                <li class="flex items-start gap-3 text-[13px] text-txt-muted leading-snug">
+                  <span class="shrink-0 w-5 h-5 rounded-full bg-ink-700 border border-edge grid place-items-center text-[11px] text-txt font-semibold mt-0.5">1</span>
+                  <span>Open <b class="text-txt font-medium">WhatsApp</b> on your phone.</span>
+                </li>
+                <li class="flex items-start gap-3 text-[13px] text-txt-muted leading-snug">
+                  <span class="shrink-0 w-5 h-5 rounded-full bg-ink-700 border border-edge grid place-items-center text-[11px] text-txt font-semibold mt-0.5">2</span>
+                  <span>Go to <b class="text-txt font-medium">Settings → Linked devices</b>.</span>
+                </li>
+                <li class="flex items-start gap-3 text-[13px] text-txt-muted leading-snug">
+                  <span class="shrink-0 w-5 h-5 rounded-full bg-ink-700 border border-edge grid place-items-center text-[11px] text-txt font-semibold mt-0.5">3</span>
+                  <span>Tap <b class="text-txt font-medium">Link a device → Link with phone number</b>.</span>
+                </li>
+                <li class="flex items-start gap-3 text-[13px] text-txt-muted leading-snug">
+                  <span class="shrink-0 w-5 h-5 rounded-full bg-ink-700 border border-edge grid place-items-center text-[11px] text-txt font-semibold mt-0.5">4</span>
+                  <span>Enter the code shown above.</span>
+                </li>
+              </ol>
+            </div>
+
+            <!-- Connected -->
+            <div id="connectedPanel" class="hidden mt-5 panel panel-tight !bg-ink-800 animate-slidein">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-full grid place-items-center shrink-0"
+                     style="background: rgba(0,168,132,0.15); border: 1px solid rgba(0,168,132,0.35);">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#06cf9c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <div>
+                  <div class="text-[13.5px] font-semibold">Session active</div>
+                  <div id="connectedInfo" class="text-[12.5px] text-txt-muted mt-0.5 font-mono">—</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Error -->
+            <div id="errorPanel" class="hidden mt-5 panel panel-tight animate-slidein"
+                 style="background: rgba(241,92,109,0.06); border-color: rgba(241,92,109,0.32);">
+              <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-full grid place-items-center shrink-0"
+                     style="background: rgba(241,92,109,0.15); border: 1px solid rgba(241,92,109,0.35);">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f15c6d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13.5px] font-semibold text-danger">Something went wrong</div>
+                  <div id="errorMsg" class="text-[13px] text-[#ffd7db] mt-1 leading-snug break-words">—</div>
+                  <div id="errorHint" class="hidden text-[12px] text-txt-muted mt-2 pt-2 border-t border-dashed border-danger/25 leading-snug"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- -------------------------------------------------------- -->
+        <!-- Tab: Backup                                               -->
+        <!-- -------------------------------------------------------- -->
+        <section data-panel="backup" class="hidden fade-in">
+          <div class="panel">
+            <div class="eyebrow mb-2">Session backup</div>
+            <h2 class="text-[17px] font-semibold tracking-tight mb-1">Save or restore your session</h2>
+            <p class="text-[13px] text-txt-muted leading-relaxed mb-6 max-w-[560px]">
+              Download the current session file and keep it somewhere safe. Upload it after a
+              redeploy to reconnect without having to pair again.
+            </p>
+
+            <div id="sessionStatus" class="panel panel-tight !bg-ink-800 text-[12.5px] text-txt-muted">
+              Checking session status…
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-4">
+              <button id="downloadSessionBtn" class="btn btn-primary">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download session file
+              </button>
+              <button id="uploadSessionBtn" class="btn btn-ghost">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Upload session file
+              </button>
+            </div>
+            <input type="file" id="uploadSessionInput" accept="application/json,.json" class="hidden" />
+
+            <div id="sessionProgress" class="hidden mt-4 text-[12.5px] text-txt-muted leading-relaxed"></div>
+
+            <div class="mt-6 pt-5 border-t border-edge-soft">
+              <div class="eyebrow mb-2">Danger zone</div>
+              <p class="text-[12.5px] text-txt-muted leading-snug mb-3">
+                Delete the current session from disk. You will need to pair again.
+              </p>
+              <button id="deleteSessionBtn" class="btn btn-danger">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                Delete session
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- -------------------------------------------------------- -->
+        <!-- Tab: Reconnect code                                       -->
+        <!-- -------------------------------------------------------- -->
+        <section data-panel="reconnect" class="hidden fade-in">
+          <div class="panel">
+            <div class="eyebrow mb-2">Reconnect code</div>
+            <h2 class="text-[17px] font-semibold tracking-tight mb-1">Rotating session code</h2>
+            <p class="text-[13px] text-txt-muted leading-relaxed mb-6 max-w-[560px]">
+              A short rotating code derived from your server secret. Use it to reconnect
+              without re-pairing. It rotates every 60 seconds.
+            </p>
+
+            <div class="flex items-center gap-2 bg-ink-950 rounded-[12px] p-4 border border-dashed border-accent/40">
+              <div id="sessionCode" class="code flex-1 select-all">------</div>
+              <button id="sessionCodeRefresh" class="btn btn-ghost !h-9 !px-3 !text-[12px]" title="Refresh">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>
+              </button>
+              <button id="sessionCodeCopy" class="btn btn-ghost !h-9 !px-3 !text-[12px]" title="Copy">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </div>
+
+            <div class="mt-3 flex items-center gap-2 text-[11.5px] text-txt-faint">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span>Auto-refreshes every 30 seconds</span>
+            </div>
+
+            <div id="sessionCodeDisabled" class="hidden mt-4 panel panel-tight !bg-ink-800 text-[12.5px] text-txt-muted">
+              Reconnect codes are unavailable while the bot is connecting or already connected.
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
   </div>
 </div>
 
 <!-- Toast -->
 <div id="toast"
   class="fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 translate-y-5 pointer-events-none opacity-0 transition-all duration-200
-         bg-wa-panel2 text-wa-text border border-wa-border px-4 py-2.5 rounded-full text-[13px]"></div>
+         px-4 py-2.5 rounded-full text-[13px] border">
+</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 // ============================================================================
-// ELEMENT REFS
+// refs
 // ============================================================================
 const $ = (id) => document.getElementById(id);
 
-const loginScreen = $('loginScreen');
-const pwInput = $('pwInput');
-const pwBtn = $('pwBtn');
-const pwError = $('pwError');
+const loginScreen   = $('loginScreen');
+const pwInput       = $('pwInput');
+const pwBtn         = $('pwBtn');
+const pwError       = $('pwError');
+const pwErrorText   = $('pwErrorText');
 
-const app = $('app');
-const logoutBtn = $('logoutBtn');
-const numberInput = $('number');
-const connectBtn = $('connectBtn');
+const app           = $('app');
+const logoutBtn     = $('logoutBtn');
+const numberInput   = $('number');
+const connectBtn    = $('connectBtn');
 const disconnectBtn = $('disconnectBtn');
-const dot = $('dot');
-const stateText = $('stateText');
+const dot           = $('dot');
+const stateText     = $('stateText');
+const stateChip     = $('stateChip');
+
 const progressPanel = $('progressPanel');
-const progressMsg = $('progressMsg');
-const codePanel = $('codePanel');
-const codeEl = $('code');
-const copyBtn = $('copyBtn');
-const connectedPanel = $('connectedPanel');
+const progressMsg   = $('progressMsg');
+const codePanel     = $('codePanel');
+const codeEl        = $('code');
+const copyBtn       = $('copyBtn');
+const connectedPanel= $('connectedPanel');
 const connectedInfo = $('connectedInfo');
-const errorPanel = $('errorPanel');
-const errorMsg = $('errorMsg');
-const errorHint = $('errorHint');
-const toastEl = $('toast');
+const errorPanel    = $('errorPanel');
+const errorMsg      = $('errorMsg');
+const errorHint     = $('errorHint');
+const toastEl       = $('toast');
 
-const sessionBackupPanel = $('sessionBackupPanel');
-const sessionStatus = $('sessionStatus');
-const downloadSessionBtn = $('downloadSessionBtn');
-const uploadSessionBtn = $('uploadSessionBtn');
-const uploadSessionInput = $('uploadSessionInput');
-const sessionProgress = $('sessionProgress');
+const sidebarDot          = $('sidebarDot');
+const sidebarStateLabel   = $('sidebarStateLabel');
+const sidebarStateMsg     = $('sidebarStateMsg');
+const sidebarNumber       = $('sidebarNumber');
+const sidebarHasSession   = $('sidebarHasSession');
+const sidebarUptime       = $('sidebarUptime');
+const sidebarEnv          = $('sidebarEnv');
 
+const sessionCodeEl        = $('sessionCode');
+const sessionCodeRefresh   = $('sessionCodeRefresh');
+const sessionCodeCopy      = $('sessionCodeCopy');
+const sessionCodeDisabled  = $('sessionCodeDisabled');
+
+const sessionStatus     = $('sessionStatus');
+const downloadSessionBtn= $('downloadSessionBtn');
+const uploadSessionBtn  = $('uploadSessionBtn');
+const uploadSessionInput= $('uploadSessionInput');
+const sessionProgress   = $('sessionProgress');
+const deleteSessionBtn  = $('deleteSessionBtn');
+
+const quickDownload   = $('quickDownload');
+const quickUpload     = $('quickUpload');
+const quickDisconnect = $('quickDisconnect');
+
+// ============================================================================
+// state
+// ============================================================================
 let socket = null;
 let sessionCodeTimer = null;
 let sessionStatusTimer = null;
+let uptimeTimer = null;
+let bootTime = Date.now();
+let currentState = 'disconnected';
 
-// ============================================================================
-// DYNAMIC STYLES FOR STATE DOT
-// ============================================================================
 const DOT_STYLES = {
-  disconnected: 'bg-wa-red',
-  connecting: 'bg-wa-yellow animate-pulseRing text-wa-yellow',
-  code_ready: 'bg-wa-blue animate-pulseRing text-wa-blue',
-  connected: 'bg-wa-green',
-  error: 'bg-wa-red animate-blink'
+  disconnected: 'bg-danger',
+  connecting:   'bg-warn animate-pulseRing text-warn',
+  code_ready:   'bg-info animate-pulseRing text-info',
+  connected:    'bg-accent-bright',
+  error:        'bg-danger animate-blink'
+};
+
+const STATE_LABELS = {
+  disconnected: 'Disconnected',
+  connecting:   'Connecting…',
+  code_ready:   'Awaiting code',
+  connected:    'Connected',
+  error:        'Error'
+};
+
+const STATE_MESSAGES = {
+  disconnected: 'Ready to pair a new device.',
+  connecting:   'Opening a secure channel with WhatsApp.',
+  code_ready:   'Enter the pairing code on your phone.',
+  connected:    'Session active. Commands are live.',
+  error:        'Last attempt failed. Check the details.'
 };
 
 // ============================================================================
-// TOAST
+// toast
 // ============================================================================
 let toastTimer;
 function toast(msg, kind = '') {
   toastEl.textContent = msg;
-  toastEl.className =
-    'fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 pointer-events-none px-4 py-2.5 rounded-full text-[13px] transition-all duration-200 opacity-100 translate-y-0';
-  toastEl.style.background = '';
-  toastEl.style.borderColor = '';
-  if (kind === 'err') {
-    toastEl.className += ' text-[#ffd7db] border';
-    toastEl.style.background = 'rgba(241,92,109,0.15)';
-    toastEl.style.borderColor = 'rgba(241,92,109,0.4)';
-  } else if (kind === 'ok') {
-    toastEl.className += ' text-[#c6f5e5] border';
-    toastEl.style.background = 'rgba(0,168,132,0.15)';
-    toastEl.style.borderColor = 'rgba(0,168,132,0.4)';
-  } else {
-    toastEl.className += ' bg-wa-panel2 text-wa-text border border-wa-border';
-  }
+  const base = 'fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 pointer-events-none px-4 py-2.5 rounded-full text-[13px] border transition-all duration-200 opacity-100 translate-y-0';
+  let style = ' bg-ink-600 text-txt border-edge';
+  if (kind === 'err') style = ' text-[#ffd7db] border-danger/40';
+  if (kind === 'ok')  style = ' text-[#c6f5e5] border-accent/40';
+  toastEl.className = base + style;
+  toastEl.style.background = kind === 'err' ? 'rgba(241,92,109,0.15)' :
+                             kind === 'ok'  ? 'rgba(0,168,132,0.15)'  : '';
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
-    toastEl.className =
-      'fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 translate-y-5 pointer-events-none opacity-0 transition-all duration-200 bg-wa-panel2 text-wa-text border border-wa-border px-4 py-2.5 rounded-full text-[13px]';
+    toastEl.className = 'fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 translate-y-5 pointer-events-none opacity-0 transition-all duration-200 px-4 py-2.5 rounded-full text-[13px] border bg-ink-600 text-txt border-edge';
   }, 2600);
 }
 
 // ============================================================================
-// PANEL HELPERS
+// panels
 // ============================================================================
 function hideAllPanels() {
-  [progressPanel, codePanel, connectedPanel, errorPanel].forEach((p) =>
-    p.classList.add('hidden')
-  );
+  [progressPanel, codePanel, connectedPanel, errorPanel].forEach((p) => p.classList.add('hidden'));
 }
 
 function showError(msg, hint) {
@@ -326,7 +728,7 @@ function setLoading(loading) {
   spinner.classList.toggle('hidden', !loading);
   connectBtn.querySelector('.btn-label').textContent = loading
     ? 'Requesting…'
-    : 'Request Pairing Code';
+    : 'Request pairing code';
 }
 
 function formatCode(c) {
@@ -335,30 +737,22 @@ function formatCode(c) {
 }
 
 // ============================================================================
-// STATE DOT
+// state rendering
 // ============================================================================
 function setDot(state) {
-  dot.className = 'dot w-2 h-2 rounded-full ' + (DOT_STYLES[state] || 'bg-wa-muted');
+  dot.className = 'dot ' + (DOT_STYLES[state] || 'bg-txt-faint');
+  sidebarDot.className = 'dot ' + (DOT_STYLES[state] || 'bg-txt-faint');
 }
 
-// ============================================================================
-// RENDER STATE
-// ============================================================================
 function renderState(data) {
   const s = data.state || 'disconnected';
+  currentState = s;
+
   setDot(s);
+  stateText.textContent = STATE_LABELS[s] || s;
+  sidebarStateLabel.textContent = STATE_LABELS[s] || s;
+  sidebarStateMsg.textContent = data.message || STATE_MESSAGES[s] || '';
 
-  const labels = {
-    disconnected: 'Disconnected',
-    connecting: 'Connecting…',
-    code_ready: 'Awaiting code entry',
-    connected: 'Connected',
-    error: 'Error'
-  };
-  stateText.textContent = labels[s] || s;
-
-  // 🔧 Always clear loading state on any terminal/non-progress state.
-  // Prevents the button from being stuck on "Requesting…" forever.
   if (['code_ready', 'connected', 'error', 'disconnected'].includes(s)) {
     setLoading(false);
   }
@@ -375,7 +769,7 @@ function renderState(data) {
     disconnectBtn.classList.remove('hidden');
   } else if (s === 'connected') {
     hideAllPanels();
-    const num = data.number ? '+' + data.number : '';
+    const num  = data.number ? '+' + data.number : '';
     const name = data.name ? ' · ' + data.name : '';
     connectedInfo.textContent = (num + name) || 'Session active.';
     connectedPanel.classList.remove('hidden');
@@ -387,35 +781,88 @@ function renderState(data) {
     hideAllPanels();
     disconnectBtn.classList.add('hidden');
   }
+
+  // Sidebar session fields
+  sidebarNumber.textContent = data.number ? '+' + data.number : '—';
+  if (typeof data.hasSession === 'boolean') {
+    sidebarHasSession.textContent = data.hasSession ? 'Available' : 'Not found';
+    sidebarHasSession.className = data.hasSession ? 'text-accent-bright' : 'text-txt-muted';
+  }
+
+  // Reconnect tab gating
+  const busy = s === 'connecting' || s === 'connected';
+  sessionCodeDisabled.classList.toggle('hidden', !busy);
+  document.querySelector('[data-panel="reconnect"] .panel').classList.toggle('opacity-60', busy);
 }
 
 // ============================================================================
-// SESSION CODE
+// uptime ticker
+// ============================================================================
+function startUptime() {
+  if (uptimeTimer) clearInterval(uptimeTimer);
+  const tick = async () => {
+    try {
+      const r = await fetch('/api/state');
+      if (r.status === 401) return;
+      const d = await r.json();
+      const s = d.uptime || 0;
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      sidebarUptime.textContent = h ? `${h}h ${m}m` : `${m}m`;
+    } catch {}
+  };
+  tick();
+  uptimeTimer = setInterval(tick, 30 * 1000);
+}
+
+// ============================================================================
+// tabs
+// ============================================================================
+function selectTab(name) {
+  document.querySelectorAll('[role="tab"]').forEach((t) => {
+    t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-panel]').forEach((p) => {
+    p.classList.toggle('hidden', p.dataset.panel !== name);
+  });
+}
+document.querySelectorAll('[role="tab"]').forEach((t) => {
+  t.addEventListener('click', () => selectTab(t.dataset.tab));
+});
+
+// ============================================================================
+// session code
 // ============================================================================
 async function loadSessionCode() {
   try {
     const r = await fetch('/api/session-code');
     if (r.status === 401) return;
-    const d = await r.json();
-    if (d.ok) {
-      document.getElementById('sessionCode').textContent = d.code;
-      document.getElementById('sessionCodePanel').classList.remove('hidden');
+    if (r.status === 409) {
+      sessionCodeEl.textContent = '------';
+      return;
     }
+    const d = await r.json();
+    if (d.ok) sessionCodeEl.textContent = d.code;
   } catch {}
 }
-
 function startSessionCodePolling() {
   if (sessionCodeTimer) clearInterval(sessionCodeTimer);
   loadSessionCode();
   sessionCodeTimer = setInterval(loadSessionCode, 30 * 1000);
 }
-
 function stopSessionCodePolling() {
   if (sessionCodeTimer) { clearInterval(sessionCodeTimer); sessionCodeTimer = null; }
 }
+sessionCodeRefresh.addEventListener('click', loadSessionCode);
+sessionCodeCopy.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(sessionCodeEl.textContent);
+    toast('Code copied', 'ok');
+  } catch { toast('Copy failed', 'err'); }
+});
 
 // ============================================================================
-// SESSION BACKUP / RESTORE
+// session backup
 // ============================================================================
 async function refreshSessionStatus() {
   try {
@@ -424,18 +871,19 @@ async function refreshSessionStatus() {
     const d = await r.json();
     if (!d.ok) return;
 
-    sessionBackupPanel.classList.remove('hidden');
-
     if (d.hasSession) {
-      sessionStatus.innerHTML = `✅ Session on disk: <b class="text-wa-text">${d.number ? '+' + d.number : 'unknown'}</b> · ${d.state}`;
+      sessionStatus.innerHTML = `✅ Session on disk for <b class="text-txt font-mono">${d.number ? '+' + d.number : 'unknown'}</b> · state: <span class="font-mono text-txt-muted">${d.state}</span>`;
       downloadSessionBtn.disabled = false;
+      sidebarHasSession.textContent = 'Available';
+      sidebarHasSession.className = 'text-accent-bright';
     } else {
-      sessionStatus.innerHTML = `⚠️ No session on disk. Pair first, then download.`;
+      sessionStatus.textContent = '⚠️ No session on disk. Pair first, then download.';
       downloadSessionBtn.disabled = true;
+      sidebarHasSession.textContent = 'Not found';
+      sidebarHasSession.className = 'text-txt-muted';
     }
   } catch {}
 }
-
 function startSessionStatusPolling() {
   if (sessionStatusTimer) clearInterval(sessionStatusTimer);
   refreshSessionStatus();
@@ -443,7 +891,6 @@ function startSessionStatusPolling() {
     if (!app.classList.contains('hidden')) refreshSessionStatus();
   }, 15000);
 }
-
 function stopSessionStatusPolling() {
   if (sessionStatusTimer) { clearInterval(sessionStatusTimer); sessionStatusTimer = null; }
 }
@@ -456,29 +903,21 @@ async function downloadSession() {
   try {
     const r = await fetch('/api/session/download');
     if (r.status === 401) { showLogin(); return; }
-
     if (!r.ok) {
       const err = await r.json().catch(() => ({ error: 'Download failed' }));
       sessionProgress.textContent = '❌ ' + (err.error || 'Download failed');
-      downloadSessionBtn.disabled = false;
       return;
     }
-
     const cd = r.headers.get('Content-Disposition') || '';
-    const match = cd.match(/filename="([^"]+)"/);
-    const filename = match ? match[1] : `wa-session-${Date.now()}.json`;
-
+    const m = cd.match(/filename="([^"]+)"/);
+    const filename = m ? m[1] : `wa-session-${Date.now()}.json`;
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
-
-    sessionProgress.textContent = `✅ Downloaded ${filename} — save this file somewhere safe!`;
+    sessionProgress.textContent = `✅ Downloaded ${filename} — keep it somewhere safe.`;
     toast('Session downloaded', 'ok');
   } catch (e) {
     sessionProgress.textContent = '❌ ' + e.message;
@@ -489,19 +928,8 @@ async function downloadSession() {
 
 async function uploadSession(file) {
   if (!file) return;
-
-  if (!file.name.endsWith('.json')) {
-    toast('Please select a .json session file', 'err');
-    return;
-  }
-
-  // 🔧 Raised from 2MB to match server's 25MB JSON limit.
-  // Real Baileys session files are usually 50–500 KB, but can exceed 2MB
-  // if many pre-keys have accumulated.
-  if (file.size > 20 * 1024 * 1024) {
-    toast('File too large (max 20MB)', 'err');
-    return;
-  }
+  if (!file.name.endsWith('.json')) { toast('Select a .json file', 'err'); return; }
+  if (file.size > 20 * 1024 * 1024) { toast('File too large (max 20MB)', 'err'); return; }
 
   sessionProgress.classList.remove('hidden');
   sessionProgress.textContent = `Reading ${file.name}…`;
@@ -510,29 +938,21 @@ async function uploadSession(file) {
   try {
     const text = await file.text();
     const parsed = JSON.parse(text);
-
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Invalid session file.');
-    }
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid session file.');
 
     sessionProgress.textContent = 'Uploading session…';
-
     const r = await fetch('/api/session/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(parsed)
     });
-
     if (r.status === 401) { showLogin(); return; }
-
     const d = await r.json();
-
     if (!d.ok) {
       sessionProgress.textContent = '❌ ' + (d.error || 'Upload failed');
       toast(d.error || 'Upload failed', 'err');
       return;
     }
-
     sessionProgress.textContent = `✅ Session restored (${d.written} file${d.written === 1 ? '' : 's'}). Bot is restarting…`;
     toast('Session restored — reconnecting…', 'ok');
   } catch (e) {
@@ -544,25 +964,46 @@ async function uploadSession(file) {
   }
 }
 
+async function deleteSession() {
+  if (!confirm('Delete the session from disk? You will need to pair again.')) return;
+  deleteSessionBtn.disabled = true;
+  try {
+    const r = await fetch('/api/session/delete', { method: 'POST' });
+    if (r.status === 401) { showLogin(); return; }
+    const d = await r.json();
+    if (d.ok) {
+      toast('Session deleted', 'ok');
+      refreshSessionStatus();
+    } else {
+      toast(d.error || 'Delete failed', 'err');
+    }
+  } catch (e) {
+    toast('Delete failed', 'err');
+  } finally {
+    deleteSessionBtn.disabled = false;
+  }
+}
+
 downloadSessionBtn.addEventListener('click', downloadSession);
 uploadSessionBtn.addEventListener('click', () => uploadSessionInput.click());
 uploadSessionInput.addEventListener('change', (e) => {
-  const file = e.target.files?.[0];
-  if (file) uploadSession(file);
+  const f = e.target.files?.[0];
+  if (f) uploadSession(f);
 });
+deleteSessionBtn.addEventListener('click', deleteSession);
+quickDownload.addEventListener('click', downloadSession);
+quickUpload.addEventListener('click', () => uploadSessionInput.click());
+quickDisconnect.addEventListener('click', doDisconnect);
 
 // ============================================================================
-// AUTH GATE
+// auth
 // ============================================================================
 async function checkSession() {
   try {
     const r = await fetch('/api/session');
     const d = await r.json();
-    if (d.authed) enterApp();
-    else showLogin();
-  } catch {
-    showLogin();
-  }
+    d.authed ? enterApp() : showLogin();
+  } catch { showLogin(); }
 }
 
 function showLogin() {
@@ -571,6 +1012,7 @@ function showLogin() {
   app.classList.add('hidden');
   stopSessionCodePolling();
   stopSessionStatusPolling();
+  if (uptimeTimer) { clearInterval(uptimeTimer); uptimeTimer = null; }
   setTimeout(() => pwInput.focus(), 100);
 }
 
@@ -578,9 +1020,11 @@ function enterApp() {
   loginScreen.classList.add('hidden');
   loginScreen.classList.remove('flex');
   app.classList.remove('hidden');
+  bootTime = Date.now();
   startSocket();
   startSessionCodePolling();
   startSessionStatusPolling();
+  startUptime();
 }
 
 async function doLogin() {
@@ -589,7 +1033,8 @@ async function doLogin() {
   if (!password) return;
 
   pwBtn.disabled = true;
-  pwBtn.textContent = 'Checking…';
+  pwBtn.querySelector('.btn-label').textContent = 'Checking…';
+  pwBtn.querySelector('.spinner').classList.remove('hidden');
 
   try {
     const r = await fetch('/api/login', {
@@ -598,54 +1043,47 @@ async function doLogin() {
       body: JSON.stringify({ password })
     });
     const d = await r.json();
-
     if (d.ok) {
       pwInput.value = '';
       enterApp();
     } else {
-      pwError.textContent = d.error || 'Login failed';
+      pwErrorText.textContent = d.error || 'Login failed';
       pwError.classList.remove('hidden');
       pwInput.select();
     }
-  } catch (e) {
-    pwError.textContent = 'Network error — is the server up?';
+  } catch {
+    pwErrorText.textContent = 'Network error — is the server up?';
     pwError.classList.remove('hidden');
   } finally {
     pwBtn.disabled = false;
-    pwBtn.textContent = 'Unlock';
+    pwBtn.querySelector('.btn-label').textContent = 'Unlock dashboard';
+    pwBtn.querySelector('.spinner').classList.add('hidden');
   }
 }
 
 pwBtn.addEventListener('click', doLogin);
 pwInput.addEventListener('keydown', (e) => e.key === 'Enter' && doLogin());
 
-// ============================================================================
-// LOGOUT
-// ============================================================================
 logoutBtn.addEventListener('click', async () => {
   try { await fetch('/api/logout', { method: 'POST' }); } catch {}
   if (socket) { socket.disconnect(); socket = null; }
   showLogin();
-  toast('Logged out', 'ok');
+  toast('Signed out', 'ok');
 });
 
 // ============================================================================
-// SOCKET
+// socket
 // ============================================================================
 function startSocket() {
   if (socket) socket.disconnect();
   socket = io();
 
   socket.on('connect', () => socket.emit('request_state'));
-
   socket.on('connect_error', (err) => {
     console.log('[Socket] error:', err.message);
     if (err.message === 'Unauthorized') showLogin();
   });
-
-  socket.on('state', (data) => {
-    renderState(data);
-  });
+  socket.on('state', (data) => renderState(data));
 
   fetch('/api/state')
     .then((r) => {
@@ -657,12 +1095,12 @@ function startSocket() {
 }
 
 // ============================================================================
-// ACTIONS
+// actions
 // ============================================================================
-connectBtn.addEventListener('click', async () => {
+async function doConnect() {
   const number = numberInput.value.trim();
   if (!number) {
-    toast('Please enter your phone number', 'err');
+    toast('Enter your phone number', 'err');
     numberInput.focus();
     return;
   }
@@ -684,10 +1122,8 @@ connectBtn.addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ number })
     });
-    const data = await res.json();
-
     if (res.status === 401) { showLogin(); return; }
-
+    const data = await res.json();
     if (!res.ok || data.error) {
       showError(data.error || 'Request failed', 'Check the number and try again.');
       toast(data.error || 'Request failed', 'err');
@@ -700,37 +1136,42 @@ connectBtn.addEventListener('click', async () => {
     toast('Network error', 'err');
     setLoading(false);
   }
-});
+}
 
-disconnectBtn.addEventListener('click', async () => {
+async function doDisconnect() {
   disconnectBtn.disabled = true;
+  quickDisconnect.disabled = true;
   try {
     await fetch('/api/disconnect', { method: 'POST' });
     toast('Disconnected', 'ok');
-  } catch (e) {
+  } catch {
     toast('Failed to disconnect', 'err');
   } finally {
     disconnectBtn.disabled = false;
+    quickDisconnect.disabled = false;
   }
-});
+}
+
+connectBtn.addEventListener('click', doConnect);
+numberInput.addEventListener('keydown', (e) => e.key === 'Enter' && doConnect());
+disconnectBtn.addEventListener('click', doDisconnect);
 
 copyBtn.addEventListener('click', async () => {
   const raw = codeEl.textContent.replace(/-/g, '');
   try {
     await navigator.clipboard.writeText(raw);
-    copyBtn.textContent = 'Copied!';
+    copyBtn.querySelector('.copy-label').textContent = 'Copied';
     toast('Code copied', 'ok');
-    setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
-  } catch (e) {
+    setTimeout(() => (copyBtn.querySelector('.copy-label').textContent = 'Copy'), 1500);
+  } catch {
     toast('Copy failed — select manually', 'err');
   }
 });
 
-document.getElementById('sessionCodeRefresh').addEventListener('click', loadSessionCode);
-
 // ============================================================================
-// BOOT
+// boot
 // ============================================================================
+sidebarEnv.textContent = location.hostname === 'localhost' ? 'local' : 'production';
 checkSession();
 </script>
 </body>

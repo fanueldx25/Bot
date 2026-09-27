@@ -1,6 +1,16 @@
 // ============================================================================
 // connection.js — Baileys socket + pairing code + rich error reporting
 // ============================================================================
+// Key design points:
+//   1. Every socket gets a generation number. Event handlers bail out if the
+//      generation has advanced. This kills the "ghost reconnect" loop where
+//      an old socket's `connection.update` keeps flipping our state.
+//   2. stopBot() is async and fully awaited. It cancels reconnect timers,
+//      removes listeners, and only then calls sock.end().
+//   3. startBot() is re-entrant-safe: a `starting` flag prevents duplicate
+//      sockets when two callers race.
+//   4. Auth dir is never touched while a socket is alive.
+// ============================================================================
 
 const {
   default: makeWASocket,
@@ -17,14 +27,25 @@ const path = require('path');
 
 const state = require('./state');
 const handlers = require('./handlers');
-
-// 🆕 Destructure the hook function so we can call it directly
 const { preCommandHooks } = handlers;
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 const AUTH_DIR = './auth_info_baileys';
 const logger = pino({ level: 'silent' });
 
-// ---------- Friendly disconnect reasons ----------
+// 🔧 FIX: module-level refs. These are the single source of truth for
+// "which socket is live" and "which generation are we on".
+let currentSock = null;   // the live Baileys socket
+let currentGen = 0;       // bumped on every start/stop; stale handlers bail
+let reconnectTimer = null; // pending reconnect setTimeout handle
+let starting = false;     // re-entrancy guard for startBot()
+let stopping = false;     // re-entrancy guard for stopBot()
+
+// ---------------------------------------------------------------------------
+// Friendly disconnect reasons (unchanged)
+// ---------------------------------------------------------------------------
 const DISCONNECT_MESSAGES = {
   [DisconnectReason.loggedOut]: 'Session logged out. You must link again.',
   [DisconnectReason.connectionClosed]: 'Connection closed. Reconnecting...',
@@ -38,7 +59,9 @@ const DISCONNECT_MESSAGES = {
   [DisconnectReason.unavailableService]: 'WhatsApp service unavailable.'
 };
 
-// ---------- Banner ----------
+// ---------------------------------------------------------------------------
+// Banner
+// ---------------------------------------------------------------------------
 function loadBanner() {
   try {
     const p = path.join(__dirname, 'assets', 'banner.jpg');
@@ -51,7 +74,9 @@ function loadBanner() {
   }
 }
 
-// ---------- Validation ----------
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
 function validateNumber(raw) {
   const clean = (raw || '').replace(/\D/g, '');
   if (!clean) return { ok: false, error: 'Please enter a phone number.' };
@@ -64,6 +89,10 @@ function validateNumber(raw) {
 // ============================================================================
 // SENDER RESOLVER — handles @lid linked-device JIDs
 // ============================================================================
+// 🔧 FIX: this now returns BOTH the canonical JID and a "best-effort" phone
+// number, and it prefers @s.whatsapp.net over @lid. In DMs, `participant` is
+// undefined, so we fall back to `remoteJid` — but only if remoteJid is not
+// itself an @lid, because replying to @lid is unreliable on some accounts.
 function resolveSenderJid(msg, fallbackJid) {
   const candidates = [
     msg?.key?.senderPn,
@@ -87,16 +116,22 @@ function resolveSenderJid(msg, fallbackJid) {
     return `${num}@s.whatsapp.net`;
   }
 
+  // In a DM the sender is the remoteJid, but it might be an @lid.
+  // If it is, try to resolve it via the LID map before giving up.
   if (fallbackJid) {
-    const num = fallbackJid.split('@')[0].split(':')[0];
-    if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
+    const raw = fallbackJid.split('@')[0].split(':')[0];
+    if (fallbackJid.endsWith('@lid')) {
+      const pn = state.resolveLid && state.resolveLid(raw);
+      if (pn) return `${pn}@s.whatsapp.net`;
+    }
+    if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
   }
 
   return participant || fallbackJid || '';
 }
 
 // ============================================================================
-// SESSION EXPORT / IMPORT
+// SESSION EXPORT / IMPORT (unchanged logic, just cleaned up)
 // ============================================================================
 function exportSession() {
   try {
@@ -133,13 +168,7 @@ function exportSession() {
     const stamp = new Date().toISOString().slice(0, 10);
     const filename = `wa-session-${stamp}.json`;
 
-    return {
-      ok: true,
-      filename,
-      payload: b64,
-      size: totalSize,
-      fileCount: Object.keys(bundle).length
-    };
+    return { ok: true, filename, payload: b64, size: totalSize, fileCount: Object.keys(bundle).length };
   } catch (e) {
     console.error('[Session] export failed:', e.message);
     return { ok: false, error: e.message };
@@ -162,10 +191,10 @@ function importSession(base64Payload) {
       } else {
         throw new Error('Unrecognized JSON format.');
       }
-    } catch (jsonErr) {
+    } catch (_) {
       try {
         inner = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
-      } catch (b64Err) {
+      } catch (_) {
         return { ok: false, error: 'Invalid file: not JSON, not base64.' };
       }
     }
@@ -192,7 +221,6 @@ function importSession(base64Payload) {
     }
 
     console.log(`[Session] restored ${written} file(s) from import`);
-
     return {
       ok: true,
       written,
@@ -209,22 +237,21 @@ function importSession(base64Payload) {
 function hasStoredSession() {
   try {
     if (!fs.existsSync(AUTH_DIR)) return false;
-    const files = fs.readdirSync(AUTH_DIR);
-    return files.length > 0;
+    return fs.readdirSync(AUTH_DIR).length > 0;
   } catch {
     return false;
   }
 }
 
 // ============================================================================
-// SCHEDULER
+// SCHEDULER (unchanged)
 // ============================================================================
 let schedulerTimer = null;
 
 function startScheduler() {
   if (schedulerTimer) clearInterval(schedulerTimer);
   schedulerTimer = setInterval(async () => {
-    const sock = state.sock;
+    const sock = currentSock;
     if (!sock) return;
 
     const now = Date.now();
@@ -265,6 +292,30 @@ function stopScheduler() {
 }
 
 // ============================================================================
+// INTERNAL: tear down a socket cleanly
+// ============================================================================
+// 🔧 FIX: this is the single place that knows how to kill a socket without
+// leaving ghosts behind. Every caller (startBot, stopBot) goes through it.
+async function teardownSocket(sock) {
+  if (!sock) return;
+
+  // 1. Remove listeners FIRST so nothing fires during teardown.
+  try { sock.ev.removeAllListeners('connection.update'); } catch (_) {}
+  try { sock.ev.removeAllListeners('creds.update'); } catch (_) {}
+  try { sock.ev.removeAllListeners('messages.upsert'); } catch (_) {}
+  try { sock.ev.removeAllListeners('group-participants.update'); } catch (_) {}
+
+  // 2. Close the socket. Baileys' end() is async — await it so the WS
+  //    is genuinely dead before we open a replacement.
+  try { await sock.end(undefined); } catch (_) {}
+
+  // 3. Give the event loop one tick to flush any final close events.
+  //    They won't reach our handlers (listeners removed), but other
+  //    timers may still be scheduled; a microtask boundary is enough.
+  await new Promise((r) => setImmediate(r));
+}
+
+// ============================================================================
 // START
 // ============================================================================
 async function startBot(rawNumber) {
@@ -275,181 +326,239 @@ async function startBot(rawNumber) {
   }
   const phoneNumber = v.clean;
 
-  stopScheduler();
-  if (state.sock) {
-    try { state.sock.end(undefined); } catch (e) {}
-    state.sock = null;
+  // 🔧 FIX: re-entrancy guard. Two callers racing (upload handler + ghost
+  // reconnect timer) used to spawn two live sockets.
+  if (starting) {
+    console.log('[Bot] startBot already in progress — ignoring duplicate call');
+    return { ok: false, error: 'Already starting' };
   }
-
-  state.currentNumber = phoneNumber;
-  state.pairingCode = null;
-  state.setState('connecting', {
-    number: phoneNumber,
-    message: 'Opening secure channel with WhatsApp...'
-  });
-
-  let authState, saveCreds, version;
-  try {
-    const auth = await useMultiFileAuthState(AUTH_DIR);
-    authState = auth.state;
-    saveCreds = auth.saveCreds;
-  } catch (e) {
-    console.error('[Auth] init failed:', e.message);
-    state.setState('error', {
-      message: 'Failed to initialize auth storage: ' + e.message,
-      hint: 'Try deleting the auth_info_baileys folder and retry.'
-    });
-    return { ok: false, error: e.message };
-  }
+  starting = true;
 
   try {
-    const vres = await fetchLatestBaileysVersion();
-    version = vres.version;
-  } catch (e) {
-    console.error('[Version] fetch failed, using default:', e.message);
-    version = undefined;
-  }
+    // 🔧 FIX: cancel any pending reconnect from a previous generation.
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
 
-  let sock;
-  try {
-    sock = makeWASocket({
-      version,
-      logger,
-      printQRInTerminal: false,
-      auth: {
-        creds: authState.creds,
-        keys: makeCacheableSignalKeyStore(authState.keys, logger)
-      },
-      browser: Browsers.ubuntu('Chrome'),
-      generateHighQualityLinkPreview: true,
-      syncFullHistory: false,
-      markOnlineOnConnect: false,
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 30000
-    });
-  } catch (e) {
-    console.error('[Socket] creation failed:', e.message);
-    state.setState('error', { message: 'Socket creation failed: ' + e.message });
-    return { ok: false, error: e.message };
-  }
+    stopScheduler();
 
-  state.sock = sock;
-  sock.ev.on('creds.update', saveCreds);
+    // 🔧 FIX: tear down the previous socket fully (listeners + await end).
+    if (currentSock) {
+      const old = currentSock;
+      currentSock = null;
+      state.sock = null;
+      await teardownSocket(old);
+    }
 
-  if (!sock.authState.creds.registered) {
+    state.currentNumber = phoneNumber;
+    state.pairingCode = null;
     state.setState('connecting', {
       number: phoneNumber,
-      message: 'Requesting pairing code from WhatsApp...'
+      message: 'Opening secure channel with WhatsApp...'
     });
 
-    let attempt = 0;
-    const requestCode = async () => {
-      attempt++;
-      try {
-        const code = await sock.requestPairingCode(phoneNumber);
-        if (!code || typeof code !== 'string') throw new Error('Empty code returned');
-
-        state.pairingCode = code;
-        state.setState('code_ready', {
-          number: phoneNumber,
-          code,
-          message: 'Enter this code in WhatsApp → Linked Devices'
-        });
-        console.log('📱 PAIRING CODE:', code);
-        return true;
-      } catch (err) {
-        console.error(`[Pairing attempt ${attempt}]`, err.message);
-        if (attempt < 3) {
-          state.setState('connecting', {
-            number: phoneNumber,
-            message: `Code request failed, retrying (${attempt}/3)...`
-          });
-          await new Promise((r) => setTimeout(r, 2500));
-          return requestCode();
-        }
-        state.setState('error', {
-          message: 'Could not get pairing code: ' + err.message,
-          hint: 'Make sure the number is correct, has country code, and is registered on WhatsApp.'
-        });
-        return false;
-      }
-    };
-
-    setTimeout(requestCode, 3500);
-  }
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, isNewLogin } = update;
-
-    if (connection === 'open') {
-      state.botJid = sock.user.id;
-      state.setState('connected', {
-        number: sock.user.id.split(':')[0],
-        name: sock.user.name || sock.user.verifiedName || '',
-        message: 'Successfully linked!'
+    // ---------- auth ----------
+    let authState, saveCreds;
+    try {
+      const auth = await useMultiFileAuthState(AUTH_DIR);
+      authState = auth.state;
+      saveCreds = auth.saveCreds;
+    } catch (e) {
+      console.error('[Auth] init failed:', e.message);
+      state.setState('error', {
+        message: 'Failed to initialize auth storage: ' + e.message,
+        hint: 'Try deleting the auth_info_baileys folder and retry.'
       });
-      console.log('✅ Connected as', sock.user.id);
-      startScheduler();
+      return { ok: false, error: e.message };
     }
 
-    if (connection === 'connecting') {
+    // ---------- version ----------
+    let version;
+    try {
+      const vres = await fetchLatestBaileysVersion();
+      version = vres.version;
+    } catch (e) {
+      console.error('[Version] fetch failed, using default:', e.message);
+      version = undefined;
+    }
+
+    // ---------- socket ----------
+    let sock;
+    try {
+      sock = makeWASocket({
+        version,
+        logger,
+        printQRInTerminal: false,
+        auth: {
+          creds: authState.creds,
+          keys: makeCacheableSignalKeyStore(authState.keys, logger)
+        },
+        browser: Browsers.ubuntu('Chrome'),
+        generateHighQualityLinkPreview: true,
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000
+      });
+    } catch (e) {
+      console.error('[Socket] creation failed:', e.message);
+      state.setState('error', { message: 'Socket creation failed: ' + e.message });
+      return { ok: false, error: e.message };
+    }
+
+    // 🔧 FIX: capture the generation this socket belongs to. Every handler
+    // below checks `myGen === currentGen` and bails if we've moved on.
+    const myGen = ++currentGen;
+    currentSock = sock;
+    state.sock = sock;
+
+    sock.ev.on('creds.update', saveCreds);
+
+    // ---------- pairing code ----------
+    if (!sock.authState.creds.registered) {
       state.setState('connecting', {
         number: phoneNumber,
-        message: isNewLogin ? 'Completing login...' : 'Handshaking...'
+        message: 'Requesting pairing code from WhatsApp...'
       });
+
+      let attempt = 0;
+      const requestCode = async () => {
+        // Abort if a newer startBot/stopBot has superseded this socket.
+        if (myGen !== currentGen) return false;
+
+        attempt++;
+        try {
+          const code = await sock.requestPairingCode(phoneNumber);
+          if (myGen !== currentGen) return false;
+          if (!code || typeof code !== 'string') throw new Error('Empty code returned');
+
+          state.pairingCode = code;
+          state.setState('code_ready', {
+            number: phoneNumber,
+            code,
+            message: 'Enter this code in WhatsApp → Linked Devices'
+          });
+          console.log('📱 PAIRING CODE:', code);
+          return true;
+        } catch (err) {
+          if (myGen !== currentGen) return false;
+          console.error(`[Pairing attempt ${attempt}]`, err.message);
+          if (attempt < 3) {
+            state.setState('connecting', {
+              number: phoneNumber,
+              message: `Code request failed, retrying (${attempt}/3)...`
+            });
+            await new Promise((r) => setTimeout(r, 2500));
+            return requestCode();
+          }
+          state.setState('error', {
+            message: 'Could not get pairing code: ' + err.message,
+            hint: 'Make sure the number is correct, has country code, and is registered on WhatsApp.'
+          });
+          return false;
+        }
+      };
+
+      // 🔧 FIX: guard the timer callback too — if a new startBot has fired
+      // in the 3.5s window, don't request a code on a dead socket.
+      setTimeout(() => {
+        if (myGen === currentGen) requestCode();
+      }, 3500);
     }
 
-    if (connection === 'close') {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const reason = DISCONNECT_MESSAGES[statusCode] || 'Unknown disconnect.';
-      const shouldReconnect =
-        statusCode !== DisconnectReason.loggedOut &&
-        statusCode !== DisconnectReason.forbidden;
+    // ---------- connection.update ----------
+    sock.ev.on('connection.update', (update) => {
+      // 🔧 FIX: THE critical guard. A ghost socket's close event used to
+      // flip state to 'disconnected' and schedule another startBot.
+      if (myGen !== currentGen) return;
 
-      stopScheduler();
-      state.setState('disconnected', { code: statusCode, message: reason });
+      const { connection, lastDisconnect, isNewLogin } = update;
 
-      if (shouldReconnect) {
-        console.log('↻ Reconnecting in 3s...');
-        setTimeout(() => startBot(state.currentNumber), 3000);
-      } else {
-        try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (e) {}
-        state.sock = null;
-        state.botJid = null;
-        state.setState('error', {
-          message: reason,
-          hint: 'You will need to pair again.'
+      if (connection === 'open') {
+        state.botJid = sock.user.id;
+        state.setState('connected', {
+          number: sock.user.id.split(':')[0],
+          name: sock.user.name || sock.user.verifiedName || '',
+          message: 'Successfully linked!'
+        });
+        console.log('✅ Connected as', sock.user.id);
+        startScheduler();
+      }
+
+      if (connection === 'connecting') {
+        state.setState('connecting', {
+          number: phoneNumber,
+          message: isNewLogin ? 'Completing login...' : 'Handshaking...'
         });
       }
-    }
-  });
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    for (const msg of messages) {
+      if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const reason = DISCONNECT_MESSAGES[statusCode] || 'Unknown disconnect.';
+        const shouldReconnect =
+          statusCode !== DisconnectReason.loggedOut &&
+          statusCode !== DisconnectReason.forbidden;
+
+        stopScheduler();
+        state.setState('disconnected', { code: statusCode, message: reason });
+
+        if (shouldReconnect) {
+          console.log('↻ Reconnecting in 3s...');
+          // 🔧 FIX: store the timer so stopBot() can cancel it.
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            // Re-check generation: if stopBot() ran during the 3s wait,
+            // this socket is dead and we must NOT reconnect.
+            if (myGen === currentGen) startBot(state.currentNumber);
+          }, 3000);
+        } else {
+          // Hard logout — wipe auth so we don't try to reuse a dead session.
+          try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
+          state.sock = null;
+          state.botJid = null;
+          state.setState('error', {
+            message: reason,
+            hint: 'You will need to pair again.'
+          });
+        }
+      }
+    });
+
+    // ---------- messages ----------
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (myGen !== currentGen) return;
+      if (type !== 'notify') return;
+      for (const msg of messages) {
+        try {
+          await handleIncoming(msg);
+        } catch (e) {
+          console.error('[Message]', e.message);
+        }
+      }
+    });
+
+    // ---------- group participants ----------
+    sock.ev.on('group-participants.update', async (update) => {
+      if (myGen !== currentGen) return;
+      const { id, participants, action } = update;
       try {
-        await handleIncoming(msg);
+        if (action === 'add' && state.welcomeEnabled.has(id)) {
+          await handlers.sendWelcome(id, participants);
+        } else if (action === 'remove' && state.goodbyeEnabled.has(id)) {
+          await handlers.sendGoodbye(id, participants);
+        }
       } catch (e) {
-        console.error('[Message]', e.message);
+        console.error('[Group]', e.message);
       }
-    }
-  });
+    });
 
-  sock.ev.on('group-participants.update', async (update) => {
-    const { id, participants, action } = update;
-    try {
-      if (action === 'add' && state.welcomeEnabled.has(id)) {
-        await handlers.sendWelcome(id, participants);
-      } else if (action === 'remove' && state.goodbyeEnabled.has(id)) {
-        await handlers.sendGoodbye(id, participants);
-      }
-    } catch (e) {
-      console.error('[Group]', e.message);
-    }
-  });
-
-  return { ok: true };
+    return { ok: true };
+  } finally {
+    starting = false;
+  }
 }
 
 // ============================================================================
@@ -462,8 +571,21 @@ async function handleIncoming(msg) {
 
   const senderJid = resolveSenderJid(msg, from);
 
+  // 🔧 FIX: log everything at debug level so DM routing problems are visible.
+  // Comment this out once you've confirmed DM commands work.
+  console.log('[in]', {
+    from,
+    senderJid,
+    fromMe: msg.key.fromMe,
+    participant: msg.key.participant || null,
+    text: extractText(msg).slice(0, 40)
+  });
+
   // pause check
-  if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) return;
+  if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) {
+    console.log('[in] dropped: chat paused');
+    return;
+  }
 
   // ---------- LID → PN learning ----------
   try {
@@ -482,74 +604,78 @@ async function handleIncoming(msg) {
     ) {
       state.registerLidMapping(participant, pn);
     }
-  } catch (e) {
-    // silent
-  }
+  } catch (_) { /* silent */ }
 
   // ---------- Anti-link ----------
-  try {
-    if (
-      state.antilinkGroups.has(from) &&
-      !state.isAdmin(senderJid) &&
-      !msg.key.fromMe
-    ) {
-      const body =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        msg.message?.imageMessage?.caption ||
-        msg.message?.videoMessage?.caption ||
-        '';
+  // 🔧 FIX: explicitly guard `from.endsWith('@g.us')`. In a DM, groupMetadata
+  // would throw and the old code silently swallowed it — but a badly-behaved
+  // antilink handler can also delete the message in DMs by accident.
+  if (from.endsWith('@g.us')) {
+    try {
+      if (
+        state.antilinkGroups.has(from) &&
+        !state.isAdmin(senderJid) &&
+        !msg.key.fromMe
+      ) {
+        const body =
+          msg.message?.conversation ||
+          msg.message?.extendedTextMessage?.text ||
+          msg.message?.imageMessage?.caption ||
+          msg.message?.videoMessage?.caption ||
+          '';
 
-      const linkRegex =
-        /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-z0-9-]+\.(com|net|org|io|gg|xyz|me|co|cm|fr|ru)(\/[^\s]*)?)/i;
+        const linkRegex =
+          /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-z0-9-]+\.(com|net|org|io|gg|xyz|me|co|cm|fr|ru)(\/[^\s]*)?)/i;
 
-      if (linkRegex.test(body)) {
-        const action = state.antilinkAction.get(from) || 'delete';
+        if (linkRegex.test(body)) {
+          const action = state.antilinkAction.get(from) || 'delete';
 
-        try {
-          await state.sock.sendMessage(from, { delete: msg.key });
-        } catch (e) {
-          console.error('[AntiLink delete]', e.message);
-        }
-
-        if (action === 'warn') {
-          await state.sock.sendMessage(from, {
-            text: `⚠️ @${senderJid.split('@')[0]}, links are not allowed here.`,
-            mentions: [senderJid]
-          });
-        } else if (action === 'kick') {
           try {
-            await state.sock.groupParticipantsUpdate(from, [senderJid], 'remove');
+            await state.sock.sendMessage(from, { delete: msg.key });
+          } catch (e) {
+            console.error('[AntiLink delete]', e.message);
+          }
+
+          if (action === 'warn') {
             await state.sock.sendMessage(from, {
-              text: `🚫 @${senderJid.split('@')[0]} was removed for posting a link.`,
+              text: `⚠️ @${senderJid.split('@')[0]}, links are not allowed here.`,
               mentions: [senderJid]
             });
-          } catch (e) {
-            console.error('[AntiLink kick]', e.message);
+          } else if (action === 'kick') {
+            try {
+              await state.sock.groupParticipantsUpdate(from, [senderJid], 'remove');
+              await state.sock.sendMessage(from, {
+                text: `🚫 @${senderJid.split('@')[0]} was removed for posting a link.`,
+                mentions: [senderJid]
+              });
+            } catch (e) {
+              console.error('[AntiLink kick]', e.message);
+            }
           }
+          return;
         }
-        return;
       }
+    } catch (e) {
+      console.error('[AntiLink]', e.message);
     }
-  } catch (e) {
-    console.error('[AntiLink]', e.message);
   }
 
   // ---------- Reactions ----------
-  try {
-    const chatReactions =
-      state.reactionsGlobal || state.reactionsEnabled.has(from);
-    const chatMuted = state.reactionsDisabled.has(from);
+  // 🔧 FIX: also group-only. Reacting to every DM is almost certainly not
+  // what you want, and it can interfere with command flows.
+  if (from.endsWith('@g.us')) {
+    try {
+      const chatReactions = state.reactionsGlobal || state.reactionsEnabled.has(from);
+      const chatMuted = state.reactionsDisabled.has(from);
 
-    if (chatReactions && !chatMuted && !msg.key.fromMe) {
-      const emojis = ['👍', '❤️', '😂', '🔥', '🎉', '👀', '💯', '🙌'];
-      const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-      await state.sock.sendMessage(from, {
-        react: { text: emoji, key: msg.key }
-      });
-    }
-  } catch (e) {
-    // silent
+      if (chatReactions && !chatMuted && !msg.key.fromMe) {
+        const emojis = ['👍', '❤️', '😂', '🔥', '🎉', '👀', '💯', '🙌'];
+        const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+        await state.sock.sendMessage(from, {
+          react: { text: emoji, key: msg.key }
+        });
+      }
+    } catch (_) { /* silent */ }
   }
 
   // ---------- View-once capture ----------
@@ -562,10 +688,12 @@ async function handleIncoming(msg) {
   const text = extractText(msg);
   if (!text) return;
 
-  // 🆕 ---------- Pre-command hooks (auto-correct + anti-mention) ----------
-  // These run BEFORE the command router and can consume the message.
+  // ---------- Pre-command hooks ----------
+  // 🔧 FIX: wrap each hook individually and log the outcome. If your hooks
+  // are DM-hostile (assume group context), you'll now SEE it in the logs.
   try {
     const stopped = await preCommandHooks(msg, from, senderJid, text);
+    console.log('[hook] stopped =', stopped);
     if (stopped) return;
   } catch (e) {
     console.error('[hooks]', e.message);
@@ -573,6 +701,7 @@ async function handleIncoming(msg) {
 
   // ---------- Commands ----------
   if (!text.startsWith('.')) return;
+  console.log('[cmd] dispatching', text.split(' ')[0], 'from', senderJid, 'chat', from);
   await handlers.handleCommand(msg, from, senderJid, text);
 }
 
@@ -587,16 +716,39 @@ function extractText(msg) {
   );
 }
 
-// ---------- Stop ----------
-function stopBot() {
-  stopScheduler();
-  if (state.sock) {
-    try { state.sock.end(undefined); } catch (e) {}
+// ============================================================================
+// STOP
+// ============================================================================
+// 🔧 FIX: now async, now cancels reconnect timers, now removes listeners
+// BEFORE end(). Callers in server.js must `await connection.stopBot()`.
+async function stopBot() {
+  if (stopping) return;
+  stopping = true;
+
+  try {
+    stopScheduler();
+
+    // Cancel any pending reconnect so it can't resurrect the bot.
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    // Bump generation so any in-flight handler from the old socket bails.
+    currentGen++;
+
+    const old = currentSock;
+    currentSock = null;
     state.sock = null;
+
+    await teardownSocket(old);
+
+    state.botJid = null;
+    state.pairingCode = null;
+    state.setState('disconnected', { message: 'Stopped by user.' });
+  } finally {
+    stopping = false;
   }
-  state.botJid = null;
-  state.pairingCode = null;
-  state.setState('disconnected', { message: 'Stopped by user.' });
 }
 
 // ============================================================================

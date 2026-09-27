@@ -1,17 +1,24 @@
 // ============================================================================
 // state.js — shared mutable state (prevents circular imports)
 // ============================================================================
+// This module owns all cross-cutting state: sets/maps for feature toggles,
+// the live Baileys socket reference, and the Socket.IO handle. Both server.js
+// and connection.js require it, so it must NOT require either of them back.
+// ============================================================================
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// ---------- Existing state ----------
+// ---------------------------------------------------------------------------
+// Feature state (in-memory, mirrored to bot_state.json on save)
+// ---------------------------------------------------------------------------
 const pausedChats = new Set();
 const welcomeEnabled = new Set();
 const goodbyeEnabled = new Set();
 const customWelcome = {};
 
+// Live runtime refs — the single source of truth for "which socket is alive".
 let sock = null;
 let botJid = null;
 let currentNumber = null;
@@ -23,44 +30,48 @@ let BANNER_BUFFER = null;
 let viewOnceEnabled = true;
 let autoDownload = true;
 
-// ---------- Reactions ----------
+// Reactions
 const reactionsEnabled = new Set();
 const reactionsDisabled = new Set();
 let reactionsGlobal = false;
 
-// ---------- Anti-link ----------
+// Anti-link
 const antilinkGroups = new Set();
 const antilinkAction = new Map();
 
-// ---------- Schedules ----------
+// Schedules
 const schedules = new Map();
 
-// ---------- Extra admins ----------
+// Extra admins (JIDs without @server)
 const extraAdmins = new Set();
 
-// ---------- Warnings ----------
+// Warnings
 const warnings = new Map();
 
-// 🆕 ---------- Auto-correct ----------
+// Auto-correct
 const autoCorrectEnabled = new Set();   // chat JIDs with auto-correct ON
 const dictionary = new Map();           // "wrong" → "right"
 
-// 🆕 ---------- Anti-mention ----------
+// Anti-mention
 const antimentionGroups = new Set();    // group JIDs with anti-mention ON
 const antimentionAction = new Map();    // groupJid → 'warn' | 'kick'
 const antimentionWarnings = new Map();  // groupJid → { userJid: [reason, ...] }
 
 // ============================================================================
 // LID → PN MAPPING
-// (WhatsApp sends @lid identifiers; we map them to real phone numbers)
+// ============================================================================
+// WhatsApp now hands out @lid JIDs (linked-device identifiers) for many
+// senders instead of @s.whatsapp.net phone-number JIDs. We keep a map so
+// we can translate an @lid back to a real number when we need to check
+// admin status, mention someone, etc.
+//
+// 🔧 NOTE: remove the hardcoded seed below once you no longer need it.
+//    It was there to work around an old Baileys bug. If it's still here,
+//    it will get persisted into bot_state.json on every save — you'd need
+//    to remove the "lidMappings" entry too, or it comes back on next boot.
 // ============================================================================
 const lidToPn = new Map();
-
-// 🔧 TEMPORARY MANUAL MAPPING
-// Remove this line once Baileys 6.7.18+ auto-resolves LIDs for your account.
-// NOTE: even after removing it here, the mapping will be re-added on boot
-// from bot_state.json → delete its "lidMappings" entry too.
-lidToPn.set('219683986915532', '237678899829');
+lidToPn.set('219683986915532', '237678899829');  // 🔧 TODO: remove when not needed
 
 function registerLidMapping(lidJid, pnJid) {
   if (!lidJid || !pnJid) return;
@@ -80,7 +91,9 @@ function resolveLid(num) {
   return lidToPn.get(clean) || null;
 }
 
-// ---------- Admin number (digits only) ----------
+// ---------------------------------------------------------------------------
+// Admin number (digits only)
+// ---------------------------------------------------------------------------
 const ADMIN_NUMBER = (process.env.ADMIN_NUMBER || '').replace(/\D/g, '');
 
 // ============================================================================
@@ -108,10 +121,8 @@ function saveState() {
       warnings: Object.fromEntries(
         [...warnings.entries()].map(([g, u]) => [g, u])
       ),
-      // 🆕 auto-correct
       autoCorrectEnabled: [...autoCorrectEnabled],
       dictionary: Object.fromEntries(dictionary),
-      // 🆕 anti-mention
       antimentionGroups: [...antimentionGroups],
       antimentionAction: Object.fromEntries(antimentionAction),
       antimentionWarnings: Object.fromEntries(
@@ -142,21 +153,23 @@ function loadState() {
     (data.reactionsEnabled || []).forEach((x) => reactionsEnabled.add(x));
     (data.reactionsDisabled || []).forEach((x) => reactionsDisabled.add(x));
     if (typeof data.reactionsGlobal === 'boolean') reactionsGlobal = data.reactionsGlobal;
+
     (data.antilinkGroups || []).forEach((x) => antilinkGroups.add(x));
     Object.entries(data.antilinkAction || {}).forEach(([k, v]) => antilinkAction.set(k, v));
+
     Object.entries(data.schedules || {}).forEach(([k, v]) => schedules.set(k, v));
+
     (data.extraAdmins || []).forEach((x) => extraAdmins.add(x));
+
     Object.entries(data.lidMappings || {}).forEach(([k, v]) => lidToPn.set(k, v));
 
     Object.entries(data.warnings || {}).forEach(([g, users]) => {
       warnings.set(g, users || {});
     });
 
-    // 🆕 restore auto-correct
     (data.autoCorrectEnabled || []).forEach((x) => autoCorrectEnabled.add(x));
     Object.entries(data.dictionary || {}).forEach(([k, v]) => dictionary.set(k, v));
 
-    // 🆕 restore anti-mention
     (data.antimentionGroups || []).forEach((x) => antimentionGroups.add(x));
     Object.entries(data.antimentionAction || {}).forEach(([k, v]) => antimentionAction.set(k, v));
     Object.entries(data.antimentionWarnings || {}).forEach(([g, users]) => {
@@ -170,19 +183,41 @@ function loadState() {
 }
 
 // ============================================================================
-// SOCKET.IO
+// SOCKET.IO EMIT
 // ============================================================================
 function emit(event, data) {
   if (io) io.emit(event, data);
 }
 
-function setState(state, extra = {}) {
-  connectionState = state;
-  emit('state', { state, ...extra });
+// ---------------------------------------------------------------------------
+// setState — the ONLY way connection state should be changed.
+// ---------------------------------------------------------------------------
+// 🔧 FIX: guard against null/undefined state. In the old code a stray
+// setState(undefined) would set connectionState = undefined and confuse
+// the dashboard.
+//
+// 🔧 FIX: dedupe repeated identical transitions. During reconnect storms
+// you can get 'disconnected' → 'disconnected' → 'disconnected' in quick
+// succession. The dashboard re-renders on each one and looks like a
+// flicker. Emitting only on change (unless there's extra payload data)
+// smooths that out.
+function setState(newState, extra = {}) {
+  if (!newState) return;
+
+  const hasExtra = Object.keys(extra).length > 0;
+  const same = connectionState === newState;
+
+  connectionState = newState;
+
+  // Always emit if there's extra info (e.g. pairing code, error message).
+  // Skip the emit only when it's a no-op transition with no payload.
+  if (!same || hasExtra) {
+    emit('state', { state: newState, ...extra });
+  }
 }
 
 // ============================================================================
-// UI
+// UI HELPERS
 // ============================================================================
 const UI = {
   box: (title, emoji = '📦') =>
@@ -192,6 +227,8 @@ const UI = {
 // ============================================================================
 // ADMIN CHECK
 // ============================================================================
+// Matches on full number OR last-10-digits (handles country-code prefix
+// variations like 237... vs 00237... vs 0...).
 function isAdmin(jid) {
   if (!jid) return false;
   const num = String(jid).split('@')[0].split(':')[0];
@@ -220,6 +257,8 @@ function isAdmin(jid) {
 // ============================================================================
 // PRESENCE WRAPPERS
 // ============================================================================
+// These are safe to call in both groups and DMs. sendPresenceUpdate to a
+// DM JID works fine; if it doesn't, we swallow the error and run fn anyway.
 async function withTyping(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('composing', jid);
@@ -252,13 +291,15 @@ async function sendWithBanner(jid, text) {
       await sock.sendMessage(jid, { image: BANNER_BUFFER, caption: text });
       return;
     }
-  } catch (e) { /* fall through */ }
+  } catch (e) { /* fall through to text */ }
   if (sock) await sock.sendMessage(jid, { text });
 }
 
 // ============================================================================
-// SEASONAL SESSION CODE
+// SESSION CODES (HMAC-based, time-windowed)
 // ============================================================================
+// NOTE: this is a UI-level code. It has nothing to do with WhatsApp pairing.
+// Don't confuse it with `pairingCode`, which comes from Baileys.
 function generateSessionCodeForSlot(slot) {
   const secret = process.env.SESSION_SECRET || 'default-session-secret';
   return crypto
@@ -288,6 +329,7 @@ function verifySessionCode(code, windowSeconds = 60) {
 // EXPORTS
 // ============================================================================
 module.exports = {
+  // collections / maps
   pausedChats,
   welcomeEnabled,
   goodbyeEnabled,
@@ -301,13 +343,14 @@ module.exports = {
   lidToPn,
   warnings,
 
-  // 🆕 new stores
+  // new stores
   autoCorrectEnabled,
   dictionary,
   antimentionGroups,
   antimentionAction,
   antimentionWarnings,
 
+  // getters/setters for primitives (can't export `let` bindings directly)
   get sock() { return sock; },
   set sock(v) { sock = v; },
   get botJid() { return botJid; },
@@ -328,6 +371,7 @@ module.exports = {
   get reactionsGlobal() { return reactionsGlobal; },
   set reactionsGlobal(v) { reactionsGlobal = v; },
 
+  // constants & helpers
   ADMIN_NUMBER,
   UI,
   isAdmin,
