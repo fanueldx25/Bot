@@ -855,41 +855,30 @@ async function handleIncoming(msg) {
   //   treated as commands, so normal chatter is never hijacked.
   const engine = (() => { try { return require('./engine'); } catch { return null; } })();
   
-    // 🔧 TIER 2 — accept prefixed commands AND bare command words.
-  //   Bare words are DM-only so group chatter doesn't trigger commands.
-  const isPrefixed = text.startsWith('.') || text.startsWith('!');
-  const inGroup = from.endsWith('@g.us');
-  
-  if (isPrefixed) {
-    await handlers.handleCommand(msg, from, senderJid, text);
-    return;
-  }
-  
-  if (!inGroup && typeof handlers.isKnownCommand === 'function') {
-    const firstToken = text.trim().split(/\s+/)[0].toLowerCase();
-    if (firstToken && firstToken.length < 20 && handlers.isKnownCommand(firstToken)) {
-      await handlers.handleCommand(msg, from, senderJid, text);
-      return;
-    }
-  }
-  }
-  
-  if (isPrefixed) {
-    await handlers.handleCommand(msg, from, senderJid, text);
-    return;
-  }
-  
-  // Bare-word path — only if the first token is a known command.
+// 🔧 TIER 2 — accept prefixed commands AND bare command words.
+//   ".ping", "!ping", and "ping" all work.
+//   Only bare words that EXACTLY match a known command name/alias are
+//   treated as commands, so normal chatter is never hijacked.
+const engine = (() => { try { return require('./engine'); } catch { return null; } })();
+
+const isPrefixed = text.startsWith('.') || text.startsWith('!');
+const inGroup = from.endsWith('@g.us');
+
+if (isPrefixed) {
+  await handlers.handleCommand(msg, from, senderJid, text);
+  return;
+}
+
+// Bare-word path — DM-only so group chatter doesn't trigger commands.
+// (Remove `!inGroup &&` if you also want bare commands to work in groups.)
+if (!inGroup && typeof handlers.isKnownCommand === 'function') {
   const firstToken = text.trim().split(/\s+/)[0].toLowerCase();
-  const looksLikeCommand = firstToken.length > 0 && firstToken.length < 20;
-  
-  if (looksLikeCommand && typeof handlers.isKnownCommand === 'function') {
-    if (handlers.isKnownCommand(firstToken)) {
-      // Handlers accept both ".x" and "x" forms; pass the raw text.
-      await handlers.handleCommand(msg, from, senderJid, '.' + text);
-      return;
-    }
+  if (firstToken && firstToken.length < 20 && handlers.isKnownCommand(firstToken)) {
+    await handlers.handleCommand(msg, from, senderJid, text);
+    return;
   }
+}
+
 function extractText(msg) {
   const m = msg.message;
   return (
