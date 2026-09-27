@@ -1,14 +1,6 @@
 // ============================================================================
 // connection.js — Baileys socket + pairing code + rich error reporting
 // ============================================================================
-// Design:
-//   1. Generation counter on every socket kills ghost reconnects.
-//   2. stopBot() is async and fully awaited.
-//   3. startBot() is re-entrant-safe.
-//   4. DMs: reply to whatever remoteJid WhatsApp gave us. Try to normalize
-//      @lid → @s.whatsapp.net via senderPn / remoteJidAlt / LID_MAP, but if
-//      none of those resolve, KEEP the @lid and try anyway. Never drop.
-// ============================================================================
 
 const {
   default: makeWASocket,
@@ -27,9 +19,6 @@ const state = require('./state');
 const handlers = require('./handlers');
 const { preCommandHooks } = handlers;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 const AUTH_DIR = './auth_info_baileys';
 const logger = pino({ level: 'silent' });
 
@@ -39,9 +28,6 @@ let reconnectTimer = null;
 let starting = false;
 let stopping = false;
 
-// ---------------------------------------------------------------------------
-// Friendly disconnect reasons
-// ---------------------------------------------------------------------------
 const DISCONNECT_MESSAGES = {
   [DisconnectReason.loggedOut]: 'Session logged out. You must link again.',
   [DisconnectReason.connectionClosed]: 'Connection closed. Reconnecting...',
@@ -55,9 +41,6 @@ const DISCONNECT_MESSAGES = {
   [DisconnectReason.unavailableService]: 'WhatsApp service unavailable.'
 };
 
-// ---------------------------------------------------------------------------
-// Banner
-// ---------------------------------------------------------------------------
 function loadBanner() {
   try {
     const p = path.join(__dirname, 'assets', 'banner.jpg');
@@ -70,9 +53,6 @@ function loadBanner() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
 function validateNumber(raw) {
   const clean = (raw || '').replace(/\D/g, '');
   if (!clean) return { ok: false, error: 'Please enter a phone number.' };
@@ -85,8 +65,6 @@ function validateNumber(raw) {
 // ============================================================================
 // SENDER RESOLVER
 // ============================================================================
-// Best-effort resolution of the sender's phone-number JID. Falls back to the
-// raw input if nothing better is found. Never returns null.
 function resolveSenderJid(msg, fallbackJid) {
   const candidates = [
     msg?.key?.senderPn,
@@ -115,7 +93,6 @@ function resolveSenderJid(msg, fallbackJid) {
     if (fallbackJid.endsWith('@lid')) {
       const pn = state.resolveLid && state.resolveLid(raw);
       if (pn) return `${pn}@s.whatsapp.net`;
-      // Keep the raw @lid as the sender's identity. Do NOT fabricate.
       return fallbackJid;
     }
     if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
@@ -132,11 +109,9 @@ function exportSession() {
     if (!fs.existsSync(AUTH_DIR)) {
       return { ok: false, error: 'No auth folder found. Pair the bot first.' };
     }
-
     const files = fs.readdirSync(AUTH_DIR);
     const bundle = {};
     let totalSize = 0;
-
     for (const f of files) {
       const fullPath = path.join(AUTH_DIR, f);
       const stat = fs.statSync(fullPath);
@@ -145,11 +120,9 @@ function exportSession() {
       bundle[f] = content;
       totalSize += content.length;
     }
-
     if (Object.keys(bundle).length === 0) {
       return { ok: false, error: 'Auth folder is empty.' };
     }
-
     const inner = {
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -157,11 +130,9 @@ function exportSession() {
       jid: state.botJid || null,
       files: bundle
     };
-
     const b64 = Buffer.from(JSON.stringify(inner)).toString('base64');
     const stamp = new Date().toISOString().slice(0, 10);
     const filename = `wa-session-${stamp}.json`;
-
     return { ok: true, filename, payload: b64, size: totalSize, fileCount: Object.keys(bundle).length };
   } catch (e) {
     console.error('[Session] export failed:', e.message);
@@ -174,7 +145,6 @@ function importSession(base64Payload) {
     if (!base64Payload || typeof base64Payload !== 'string') {
       return { ok: false, error: 'No payload provided.' };
     }
-
     let inner;
     try {
       const parsed = JSON.parse(base64Payload);
@@ -192,16 +162,13 @@ function importSession(base64Payload) {
         return { ok: false, error: 'Invalid file: not JSON, not base64.' };
       }
     }
-
     if (!inner || !inner.files || typeof inner.files !== 'object') {
       return { ok: false, error: 'Missing "files" object in session payload.' };
     }
-
     if (fs.existsSync(AUTH_DIR)) {
       fs.rmSync(AUTH_DIR, { recursive: true, force: true });
     }
     fs.mkdirSync(AUTH_DIR, { recursive: true });
-
     let written = 0;
     for (const [name, content] of Object.entries(inner.files)) {
       if (typeof content !== 'string') continue;
@@ -209,11 +176,9 @@ function importSession(base64Payload) {
       fs.writeFileSync(path.join(AUTH_DIR, name), content, 'utf8');
       written++;
     }
-
     if (written === 0) {
       return { ok: false, error: 'No valid session files were found.' };
     }
-
     console.log(`[Session] restored ${written} file(s) from import`);
     return {
       ok: true,
@@ -247,7 +212,6 @@ function startScheduler() {
   schedulerTimer = setInterval(async () => {
     const sock = currentSock;
     if (!sock) return;
-
     const now = Date.now();
     for (const [jid, s] of state.schedules.entries()) {
       if (s.at > now) continue;
@@ -266,7 +230,6 @@ function startScheduler() {
       } catch (e) {
         console.error('[Schedule]', e.message);
       }
-
       if (s.repeat === 'daily') {
         s.at += 24 * 60 * 60 * 1000;
       } else {
@@ -286,18 +249,15 @@ function stopScheduler() {
 }
 
 // ============================================================================
-// INTERNAL: tear down a socket cleanly
+// TEARDOWN
 // ============================================================================
 async function teardownSocket(sock) {
   if (!sock) return;
-
   try { sock.ev.removeAllListeners('connection.update'); } catch (_) {}
   try { sock.ev.removeAllListeners('creds.update'); } catch (_) {}
   try { sock.ev.removeAllListeners('messages.upsert'); } catch (_) {}
   try { sock.ev.removeAllListeners('group-participants.update'); } catch (_) {}
-
   try { await sock.end(undefined); } catch (_) {}
-
   await new Promise((r) => setImmediate(r));
 }
 
@@ -374,12 +334,15 @@ async function startBot(rawNumber) {
           keys: makeCacheableSignalKeyStore(authState.keys, logger)
         },
         browser: Browsers.ubuntu('Chrome'),
-        generateHighQualityLinkPreview: true,
-        syncFullHistory: false,
-        markOnlineOnConnect: false,
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: true,
+        markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000
+        defaultQueryTimeoutMs: 30000,
+        keepAliveIntervalMs: 25000,
+        // Critical for LID support in newer Baileys versions
+        emitOwnEvents: false,
+        retryRequestDelayMs: 250
       });
     } catch (e) {
       console.error('[Socket] creation failed:', e.message);
@@ -393,7 +356,6 @@ async function startBot(rawNumber) {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // ---------- pairing code ----------
     if (!sock.authState.creds.registered) {
       state.setState('connecting', {
         number: phoneNumber,
@@ -403,13 +365,11 @@ async function startBot(rawNumber) {
       let attempt = 0;
       const requestCode = async () => {
         if (myGen !== currentGen) return false;
-
         attempt++;
         try {
           const code = await sock.requestPairingCode(phoneNumber);
           if (myGen !== currentGen) return false;
           if (!code || typeof code !== 'string') throw new Error('Empty code returned');
-
           state.pairingCode = code;
           state.setState('code_ready', {
             number: phoneNumber,
@@ -442,10 +402,8 @@ async function startBot(rawNumber) {
       }, 3500);
     }
 
-    // ---------- connection.update ----------
     sock.ev.on('connection.update', (update) => {
       if (myGen !== currentGen) return;
-
       const { connection, lastDisconnect, isNewLogin } = update;
 
       if (connection === 'open') {
@@ -495,11 +453,8 @@ async function startBot(rawNumber) {
       }
     });
 
-    // ---------- messages ----------
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (myGen !== currentGen) return;
-      // Accept 'append' — that's how Baileys delivers your own DMs to the
-      // bot. Without this, first-time DMs from your own phone silently drop.
       if (type !== 'notify' && type !== 'append') return;
       for (const msg of messages) {
         try {
@@ -510,7 +465,6 @@ async function startBot(rawNumber) {
       }
     });
 
-    // ---------- group participants ----------
     sock.ev.on('group-participants.update', async (update) => {
       if (myGen !== currentGen) return;
       const { id, participants, action } = update;
@@ -537,15 +491,9 @@ async function startBot(rawNumber) {
 async function handleIncoming(msg) {
   if (!msg.message) return;
 
-  // Raw remoteJid as WhatsApp sent it. This is what we will reply to if
-  // nothing better is available. NEVER drop the message just because the
-  // JID looks unusual.
   const rawFrom = msg.key.remoteJid;
   if (!rawFrom || rawFrom === 'status@broadcast') return;
 
-  // Best-effort normalization: try to rewrite @lid → @s.whatsapp.net using
-  // whatever info Baileys gave us. If nothing resolves, keep the raw @lid
-  // and try to reply anyway.
   let from = rawFrom;
   if (rawFrom.endsWith('@lid')) {
     const alt =
@@ -553,26 +501,18 @@ async function handleIncoming(msg) {
       msg.key?.participantPn ||
       msg.key?.remoteJidAlt ||
       msg.key?.participantAlt;
-
     if (alt && alt.endsWith('@s.whatsapp.net')) {
       from = alt;
-      console.log('[LID] resolved via alt →', from);
     } else {
       const num = rawFrom.split('@')[0].split(':')[0];
       const pn = state.resolveLid && state.resolveLid(num);
-      if (pn) {
-        from = `${pn}@s.whatsapp.net`;
-        console.log('[LID] resolved via map →', from);
-      } else {
-        // Learn if we can, but do NOT drop. Try the raw @lid.
-        console.log('[LID] no mapping for', rawFrom, '— sending to raw @lid');
-      }
+      if (pn) from = `${pn}@s.whatsapp.net`;
+      // else: keep raw @lid. Do NOT return.
     }
   }
 
   const senderJid = resolveSenderJid(msg, from);
 
-  // Debug log — remove or leave, it's cheap.
   console.log('[in]', {
     rawFrom,
     from,
@@ -581,14 +521,11 @@ async function handleIncoming(msg) {
     text: extractText(msg).slice(0, 40)
   });
 
-  // pause check
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) {
-    console.log('[in] dropped: chat paused');
     return;
   }
 
-  // ---------- LID → PN learning ----------
-  // Learn from every message where Baileys gave us both JIDs, in DMs too.
+  // LID learning
   try {
     const participant = msg.key?.participant || '';
     const pn =
@@ -605,7 +542,6 @@ async function handleIncoming(msg) {
     ) {
       state.registerLidMapping(rawFrom, pn);
     }
-
     if (
       participant.endsWith('@lid') &&
       pn &&
@@ -614,9 +550,9 @@ async function handleIncoming(msg) {
     ) {
       state.registerLidMapping(participant, pn);
     }
-  } catch (_) { /* silent */ }
+  } catch (_) {}
 
-  // ---------- Anti-link (group only) ----------
+  // Anti-link (group only)
   if (from.endsWith('@g.us')) {
     try {
       if (
@@ -630,19 +566,11 @@ async function handleIncoming(msg) {
           msg.message?.imageMessage?.caption ||
           msg.message?.videoMessage?.caption ||
           '';
-
         const linkRegex =
           /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-z0-9-]+\.(com|net|org|io|gg|xyz|me|co|cm|fr|ru)(\/[^\s]*)?)/i;
-
         if (linkRegex.test(body)) {
           const action = state.antilinkAction.get(from) || 'delete';
-
-          try {
-            await state.sock.sendMessage(from, { delete: msg.key });
-          } catch (e) {
-            console.error('[AntiLink delete]', e.message);
-          }
-
+          try { await state.sock.sendMessage(from, { delete: msg.key }); } catch (e) {}
           if (action === 'warn') {
             await state.sock.sendMessage(from, {
               text: `⚠️ @${senderJid.split('@')[0]}, links are not allowed here.`,
@@ -655,45 +583,35 @@ async function handleIncoming(msg) {
                 text: `🚫 @${senderJid.split('@')[0]} was removed for posting a link.`,
                 mentions: [senderJid]
               });
-            } catch (e) {
-              console.error('[AntiLink kick]', e.message);
-            }
+            } catch (e) {}
           }
           return;
         }
       }
-    } catch (e) {
-      console.error('[AntiLink]', e.message);
-    }
+    } catch (e) {}
   }
 
-  // ---------- Reactions (group only) ----------
+  // Reactions (group only)
   if (from.endsWith('@g.us')) {
     try {
       const chatReactions = state.reactionsGlobal || state.reactionsEnabled.has(from);
       const chatMuted = state.reactionsDisabled.has(from);
-
       if (chatReactions && !chatMuted && !msg.key.fromMe) {
         const emojis = ['👍', '❤️', '😂', '🔥', '🎉', '👀', '💯', '🙌'];
         const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-        await state.sock.sendMessage(from, {
-          react: { text: emoji, key: msg.key }
-        });
+        await state.sock.sendMessage(from, { react: { text: emoji, key: msg.key } });
       }
-    } catch (_) { /* silent */ }
+    } catch (_) {}
   }
 
-  // ---------- View-once capture ----------
   if (state.viewOnceEnabled) {
     const captured = await handlers.tryCaptureViewOnce(msg, from);
     if (captured) return;
   }
 
-  // ---------- Extract text ----------
   const text = extractText(msg);
   if (!text) return;
 
-  // ---------- Pre-command hooks ----------
   try {
     const stopped = await preCommandHooks(msg, from, senderJid, text);
     if (stopped) return;
@@ -701,9 +619,7 @@ async function handleIncoming(msg) {
     console.error('[hooks]', e.message);
   }
 
-  // ---------- Commands ----------
   if (!text.startsWith('.') && !text.startsWith('!')) return;
-  console.log('[cmd] dispatching', text.split(' ')[0], 'from', senderJid, 'chat', from);
   await handlers.handleCommand(msg, from, senderJid, text);
 }
 
@@ -724,23 +640,17 @@ function extractText(msg) {
 async function stopBot() {
   if (stopping) return;
   stopping = true;
-
   try {
     stopScheduler();
-
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-
     currentGen++;
-
     const old = currentSock;
     currentSock = null;
     state.sock = null;
-
     await teardownSocket(old);
-
     state.botJid = null;
     state.pairingCode = null;
     state.setState('disconnected', { message: 'Stopped by user.' });
@@ -749,9 +659,6 @@ async function stopBot() {
   }
 }
 
-// ============================================================================
-// EXPORTS
-// ============================================================================
 module.exports = {
   startBot,
   stopBot,

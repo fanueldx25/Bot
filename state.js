@@ -1,48 +1,19 @@
 // ============================================================================
 // state.js — shared mutable state (prevents circular imports)
 // ============================================================================
-// Owns all cross-cutting state: feature toggles, the live socket ref, the
-// Socket.IO handle, and the LID → PN mapping. Both server.js and
-// connection.js require this, so it must NOT require either of them back.
-//
-// 🔧 FIXES APPLIED IN THIS FILE
-//   1. sendWithBanner() now routes through an INJECTED safe-send function
-//      (set by connection.js at runtime) so banner replies get the same
-//      E2EE retry treatment as everything else. No circular require.
-//   2. saveState() is DEBOUNCED (500ms coalesce) so rapid LID mapping
-//      learning + scheduler ticks don't cause write storms.
-//   3. Exit/SIGINT/SIGTERM handlers flush any pending save so we never
-//      lose the last state change.
-//   4. warnings / antimentionWarnings are shallow-cloned on save so a
-//      concurrent mutation can't corrupt the serialized output.
-// ============================================================================
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
 // ---------------------------------------------------------------------------
-// 🔧 FIX 1 — Injected safe-send bridge
-// ---------------------------------------------------------------------------
-// connection.js owns the real `safeSend` (retries transient E2EE errors,
-// caches outgoing messages for retry receipts). state.js can't require
-// connection.js (circular), so connection.js calls state.setSafeSend(fn)
-// once the socket is up, and state.js uses it for banner sends.
-// ---------------------------------------------------------------------------
-let _safeSendFn = null;
-function setSafeSend(fn) {
-  _safeSendFn = typeof fn === 'function' ? fn : null;
-}
-
-// ---------------------------------------------------------------------------
-// Feature state (in-memory, mirrored to bot_state.json on save)
+// Feature state
 // ---------------------------------------------------------------------------
 const pausedChats = new Set();
 const welcomeEnabled = new Set();
 const goodbyeEnabled = new Set();
 const customWelcome = {};
 
-// Live runtime refs
 let sock = null;
 let botJid = null;
 let currentNumber = null;
@@ -54,50 +25,30 @@ let BANNER_BUFFER = null;
 let viewOnceEnabled = true;
 let autoDownload = true;
 
-// Reactions
 const reactionsEnabled = new Set();
 const reactionsDisabled = new Set();
 let reactionsGlobal = false;
 
-// Anti-link
 const antilinkGroups = new Set();
 const antilinkAction = new Map();
 
-// Schedules
 const schedules = new Map();
 
-// Extra admins (JIDs without @server, digits only)
 const extraAdmins = new Set();
-
-// Warnings
 const warnings = new Map();
 
-// Auto-correct
-const autoCorrectEnabled = new Set();   // chat JIDs with auto-correct ON
-const dictionary = new Map();           // "wrong" → "right"
+const autoCorrectEnabled = new Set();
+const dictionary = new Map();
 
-// Anti-mention
-const antimentionGroups = new Set();    // group JIDs with anti-mention ON
-const antimentionAction = new Map();    // groupJid → 'warn' | 'kick'
-const antimentionWarnings = new Map();  // groupJid → { userJid: [reason, ...] }
+const antimentionGroups = new Set();
+const antimentionAction = new Map();
+const antimentionWarnings = new Map();
 
 // ============================================================================
-// LID → PN MAPPING
-// ============================================================================
-// WhatsApp now hands out @lid (linked-device identifier) JIDs for many
-// senders instead of phone-number JIDs. Replying to an unmapped @lid silently
-// fails (typing shows, message never arrives) and admin checks can't match.
-//
-// We keep a map from LID digits → phone digits, populated from three sources:
-//   1. LID_MAP env var at boot  (authoritative, survives redeploys)
-//   2. EXTRA_ADMINS env var     (admins get mapped to themselves)
-//   3. automatic learning when Baileys shows us both JIDs in one message
-//      (this is the fallback; it only fires in groups)
+// LID → PN MAP
 // ============================================================================
 const lidToPn = new Map();
 
-// 🔧 Parse LID_MAP env var. Format: "lid:phone,lid:phone,..."
-// Example: LID_MAP=232057586356242:237651858408,219683986915532:237678899829
 (function loadLidMapFromEnv() {
   const raw = (process.env.LID_MAP || '').trim();
   if (!raw) {
@@ -118,10 +69,6 @@ const lidToPn = new Map();
 
 // ---------------------------------------------------------------------------
 // Admin numbers
-// ---------------------------------------------------------------------------
-// ADMIN_NUMBER = the primary admin (env: ADMIN_NUMBER)
-// extraAdmins  = additional admins (env: EXTRA_ADMINS + learned at runtime
-//                via .addadmin)
 // ---------------------------------------------------------------------------
 const ADMIN_NUMBER = (process.env.ADMIN_NUMBER || '').replace(/\D/g, '');
 
@@ -152,7 +99,6 @@ function registerLidMapping(lidJid, pnJid) {
   if (lidToPn.get(lidNum) === pnNum) return;
   lidToPn.set(lidNum, pnNum);
   console.log(`[LID] mapped ${lidNum} → ${pnNum}`);
-  // 🔧 FIX 2 — debounced (see saveState below)
   saveState();
 }
 
@@ -166,33 +112,7 @@ function resolveLid(num) {
 // ============================================================================
 const STATE_FILE = path.join(__dirname, 'bot_state.json');
 
-// ---------------------------------------------------------------------------
-// 🔧 FIX 2 — Debounced saveState
-// ---------------------------------------------------------------------------
-// Rapid LID mapping learning (busy groups), scheduler ticks, and every
-// feature toggle all call saveState(). We coalesce them into a single write
-// per 500ms. Call saveState(true) for an immediate synchronous flush
-// (e.g. right before a .restart).
-// ---------------------------------------------------------------------------
-let _saveTimer = null;
-
-function saveState(immediate = false) {
-  if (immediate) {
-    _flushSave();
-    return;
-  }
-  if (_saveTimer) return;                 // already scheduled
-  _saveTimer = setTimeout(() => {
-    _saveTimer = null;
-    _flushSave();
-  }, 500);
-}
-
-function _flushSave() {
-  if (_saveTimer) {
-    clearTimeout(_saveTimer);
-    _saveTimer = null;
-  }
+function saveState() {
   try {
     const data = {
       pausedChats: [...pausedChats],
@@ -209,21 +129,15 @@ function _flushSave() {
       schedules: Object.fromEntries(schedules),
       extraAdmins: [...extraAdmins],
       lidMappings: Object.fromEntries(lidToPn),
-
-      // 🔧 FIX 4 — shallow-clone inner user maps so a mutation mid-serialize
-      // can't corrupt the JSON. With the debounce in place this is belt-and-
-      // suspenders, but it costs nothing.
       warnings: Object.fromEntries(
-        [...warnings.entries()].map(([g, u]) => [g, { ...(u || {}) }])
+        [...warnings.entries()].map(([g, u]) => [g, u])
       ),
-
       autoCorrectEnabled: [...autoCorrectEnabled],
       dictionary: Object.fromEntries(dictionary),
       antimentionGroups: [...antimentionGroups],
       antimentionAction: Object.fromEntries(antimentionAction),
-
       antimentionWarnings: Object.fromEntries(
-        [...antimentionWarnings.entries()].map(([g, u]) => [g, { ...(u || {}) }])
+        [...antimentionWarnings.entries()].map(([g, u]) => [g, u])
       )
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
@@ -231,13 +145,6 @@ function _flushSave() {
     console.error('[State] save failed:', e.message);
   }
 }
-
-// 🔧 FIX 3 — Flush pending save on process exit so we never lose the last
-// change (LID mapping learned a moment ago, feature toggled, etc.).
-process.on('exit', () => { try { _flushSave(); } catch (_) {} });
-process.on('SIGINT', () => { try { _flushSave(); } catch (_) {} process.exit(0); });
-process.on('SIGTERM', () => { try { _flushSave(); } catch (_) {} process.exit(0); });
-process.on('beforeExit', () => { try { _flushSave(); } catch (_) {} });
 
 function loadState() {
   try {
@@ -260,13 +167,9 @@ function loadState() {
 
     (data.antilinkGroups || []).forEach((x) => antilinkGroups.add(x));
     Object.entries(data.antilinkAction || {}).forEach(([k, v]) => antilinkAction.set(k, v));
-
     Object.entries(data.schedules || {}).forEach(([k, v]) => schedules.set(k, v));
-
     (data.extraAdmins || []).forEach((x) => extraAdmins.add(x));
 
-    // Learned LID mappings merge with env-loaded ones.
-    // Env wins if there's a conflict (already set from LID_MAP).
     Object.entries(data.lidMappings || {}).forEach(([k, v]) => {
       if (!lidToPn.has(k)) lidToPn.set(k, v);
     });
@@ -301,13 +204,9 @@ function emit(event, data) {
 
 function setState(newState, extra = {}) {
   if (!newState) return;
-
   const hasExtra = Object.keys(extra).length > 0;
   const same = connectionState === newState;
-
   connectionState = newState;
-
-  // Always emit if there's extra info; skip no-op transitions.
   if (!same || hasExtra) {
     emit('state', { state: newState, ...extra });
   }
@@ -322,31 +221,39 @@ const UI = {
 };
 
 // ============================================================================
-// ADMIN CHECK
+// ADMIN CHECK — accepts phone JIDs AND @lid JIDs by their raw digits
 // ============================================================================
-// Matches on full digits OR last 10 digits (handles country-code variations).
-// Also resolves via the LID map so users whose JID is @lid still work.
 function isAdmin(jid) {
   if (!jid) return false;
   const num = String(jid).split('@')[0].split(':')[0];
   if (!num) return false;
 
+  // Direct match against the raw digits.
   if (ADMIN_NUMBER && num === ADMIN_NUMBER) return true;
+  if (extraAdmins.has(num)) return true;
 
-  if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 && num.length >= 10) {
-    if (num.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
-  }
-
-  const pn = lidToPn.get(num);
-  if (pn) {
-    if (pn === ADMIN_NUMBER) return true;
-    if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 && pn.length >= 10) {
-      if (pn.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
+  // Last-10-digit match for country-code prefix variations.
+  if (num.length >= 10) {
+    if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 &&
+        num.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
+    for (const e of extraAdmins) {
+      if (e.length >= 10 && num.slice(-10) === e.slice(-10)) return true;
     }
   }
 
-  if (extraAdmins.has(num)) return true;
-  if (pn && extraAdmins.has(pn)) return true;
+  // If the JID is @lid, also try the LID→PN map.
+  const pn = lidToPn.get(num);
+  if (pn) {
+    if (ADMIN_NUMBER && pn === ADMIN_NUMBER) return true;
+    if (extraAdmins.has(pn)) return true;
+    if (pn.length >= 10) {
+      if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 &&
+          pn.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
+      for (const e of extraAdmins) {
+        if (e.length >= 10 && pn.slice(-10) === e.slice(-10)) return true;
+      }
+    }
+  }
 
   return false;
 }
@@ -357,68 +264,42 @@ function isAdmin(jid) {
 async function withTyping(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('composing', jid);
-  } catch (_) { /* ignore */ }
+  } catch (_) {}
   try {
     return await fn();
   } finally {
     try {
       if (sock) await sock.sendPresenceUpdate('paused', jid);
-    } catch (_) { /* ignore */ }
+    } catch (_) {}
   }
 }
 
 async function withRecording(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('recording', jid);
-  } catch (_) { /* ignore */ }
+  } catch (_) {}
   try {
     return await fn();
   } finally {
     try {
       if (sock) await sock.sendPresenceUpdate('paused', jid);
-    } catch (_) { /* ignore */ }
+    } catch (_) {}
   }
 }
 
-// ---------------------------------------------------------------------------
-// 🔧 FIX 1 — sendWithBanner now prefers the injected safe-send
-// ---------------------------------------------------------------------------
-// If connection.js has registered its `safeSend`, use it (gets E2EE retry +
-// retry-receipt caching). Otherwise fall back to a raw socket send.
-// ---------------------------------------------------------------------------
 async function sendWithBanner(jid, text) {
-  // Preferred path: injected safeSend (retries transient E2EE errors,
-  // caches outgoing message for Baileys retry receipts).
-  if (_safeSendFn) {
-    try {
-      if (BANNER_BUFFER) {
-        return await _safeSendFn(jid, { image: BANNER_BUFFER, caption: text });
-      }
-      return await _safeSendFn(jid, { text });
-    } catch (e) {
-      console.warn('[sendWithBanner] safeSend failed, falling back:', e.message);
-      // fall through to raw send
-    }
-  }
-
-  // Fallback: raw socket send (used before connection.js injects safeSend).
-  if (!sock) return;
   try {
-    if (BANNER_BUFFER) {
+    if (BANNER_BUFFER && sock) {
       await sock.sendMessage(jid, { image: BANNER_BUFFER, caption: text });
       return;
     }
-  } catch (e) {
-    console.warn('[sendWithBanner] banner send failed:', e.message);
-  }
-  await sock.sendMessage(jid, { text });
+  } catch (e) {}
+  if (sock) await sock.sendMessage(jid, { text });
 }
 
 // ============================================================================
-// SESSION CODES (HMAC-based, time-windowed)
+// SESSION CODES
 // ============================================================================
-// UI-level code, unrelated to WhatsApp pairing. Don't confuse with
-// `pairingCode`, which comes from Baileys.
 function generateSessionCodeForSlot(slot) {
   const secret = process.env.SESSION_SECRET || 'default-session-secret';
   return crypto
@@ -448,7 +329,6 @@ function verifySessionCode(code, windowSeconds = 60) {
 // EXPORTS
 // ============================================================================
 module.exports = {
-  // collections / maps
   pausedChats,
   welcomeEnabled,
   goodbyeEnabled,
@@ -462,14 +342,12 @@ module.exports = {
   lidToPn,
   warnings,
 
-  // new stores
   autoCorrectEnabled,
   dictionary,
   antimentionGroups,
   antimentionAction,
   antimentionWarnings,
 
-  // getters/setters for primitives
   get sock() { return sock; },
   set sock(v) { sock = v; },
   get botJid() { return botJid; },
@@ -490,7 +368,6 @@ module.exports = {
   get reactionsGlobal() { return reactionsGlobal; },
   set reactionsGlobal(v) { reactionsGlobal = v; },
 
-  // constants & helpers
   ADMIN_NUMBER,
   UI,
   isAdmin,
@@ -505,8 +382,5 @@ module.exports = {
   verifySessionCode,
 
   registerLidMapping,
-  resolveLid,
-
-  // 🔧 FIX 1 — injected safe-send bridge (called by connection.js)
-  setSafeSend,
+  resolveLid
 };
