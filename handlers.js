@@ -16,34 +16,20 @@
 //   12. helpers.reply + replyWithBanner log every send for DM debugging
 //   13. helpers.resolveJid converts @lid mentions to @s.whatsapp.net when
 //       the LID is mapped, returns null otherwise so callers can error out.
-//       Used by .getpp, .kick, .promote, .demote, .warn, .ship, .addadmin.
 //
 //   14. 🔧 FIX: preCommandHooks no longer blocks on engine.autoRegister().
-//       New chats ALWAYS flow through to the command router. engine.js
-//       only learns; it never gates.
-//   15. 🔧 FIX: engine.install() is called BEFORE COMMAND_LOOKUP is built,
-//       so the engine's extra commands (!topdf, !format, !add, !remove)
-//       are reachable from the router. buildLookup() is a function.
-//   16. 🔧 FIX: handleCommand uses engine.isCommand / engine.stripPrefix,
-//       so both '.' and '!' prefixes work end-to-end.
+//   15. 🔧 FIX: engine.install() is called BEFORE COMMAND_LOOKUP is built.
+//   16. 🔧 FIX: handleCommand uses isKnownCommand / prefix normalization,
+//       so both '.' and '!' prefixes AND bare words work end-to-end.
 //   17. 🔧 FIX: helpers.reply / replyWithBanner / sendWelcome / sendGoodbye
-//       / tryCaptureViewOnce / postToStatus route through engine.send
-//       (which wraps connection.safeSend) so E2EE retry receipts work.
-//   18. 🔧 FIX: .poststatus reconstructs the quoted message properly and
-//       works for text, image, and video quoted messages.
-//   19. 🔧 FIX: rate limiting is applied per chat/user via engine.checkRate,
-//       but NEVER blocks the very first command in a chat.
+//       / tryCaptureViewOnce / postToStatus route through engine.send.
+//   18. 🔧 FIX: .poststatus reconstructs the quoted message properly.
+//   19. 🔧 FIX: rate limiting is applied per chat/user via engine.checkRate.
+//   20. 🔧 FIX: preCommandHooks is properly closed (was a syntax error).
+//   21. 🔧 FIX: removed duplicate stub status-engagement functions that
+//       were silently overriding the real implementations.
+//   22. 🔧 FIX: renderTextSticker SVG template literal was mangled.
 // ============================================================================
-
-// handlers.js — PANDA WhatsApp Bot (complete)
-// ---------------------------------------------------------------------------
-// Requires:
-//   ./state      → getters, UI, isAdmin, withTyping, withRecording, saveState…
-//   ./engine     → command installer, rate-limit, send() bridge
-//   ./ui         → PANDA block-letter banners + reusable blocks  (NEW)
-//   @whiskeysockets/baileys
-//   pino, fs, path, os
-// ---------------------------------------------------------------------------
 
 const state = require('./state');
 const {
@@ -76,7 +62,7 @@ const ADMIN_NUMBER = state.ADMIN_NUMBER;
 // ============================================================================
 // EPHEMERAL GAME STATE (per-chat, expires)
 // ============================================================================
-const TRIVIA_STATE = new Map(); // chatJid → { answers: string[], expiresAt: number }
+const TRIVIA_STATE = new Map();
 
 setInterval(() => {
   const now = Date.now();
@@ -87,28 +73,22 @@ setInterval(() => {
 
 // ============================================================================
 // AUTO VIEW/LIKE-STATUS TRACKER
-// ---------------------------------------------------------------------------
-// When the bot posts to status@broadcast we schedule 3-min and 5-min
-// "views" (and a like) of the freshly posted status, using the same socket.
-// This mimics WhatsApp's own behaviour where a user opens the status and
-// taps ❤️. It is tracked by status message-id → timers, so multiple posts
-// at once are handled independently.
 // ============================================================================
-const STATUS_TIMERS = new Map(); // msgId → { t3: Timeout, t5: Timeout }
+const STATUS_TIMERS = new Map();
 
 function scheduleStatusEngagement(msgId) {
   if (!msgId) return;
   cancelStatusEngagement(msgId);
-  
+
   const sock = state.sock;
   if (!sock) return;
-  
+
   const t3 = setTimeout(() => {
     viewStatus(msgId).catch((e) =>
       console.error('[status-view 3m]', e.message)
     );
   }, 3 * 60 * 1000);
-  
+
   const t5 = setTimeout(() => {
     viewStatus(msgId).catch((e) =>
       console.error('[status-view 5m]', e.message)
@@ -117,7 +97,7 @@ function scheduleStatusEngagement(msgId) {
       console.error('[status-like 5m]', e.message)
     );
   }, 5 * 60 * 1000);
-  
+
   STATUS_TIMERS.set(msgId, { t3, t5 });
 }
 
@@ -129,31 +109,40 @@ function cancelStatusEngagement(msgId) {
   STATUS_TIMERS.delete(msgId);
 }
 
-// Send a read receipt to status@broadcast for a given message id.
 async function viewStatus(msgId) {
   const sock = state.sock;
   if (!sock) return;
   try {
-    // Baileys accepts an array of { remoteJid, id, participant } keys.
     await sock.readMessages([
-    {
-      remoteJid: 'status@broadcast',
-      id: msgId,
-      participant: state.botJid || undefined
-    }]);
+      {
+        remoteJid: 'status@broadcast',
+        id: msgId,
+        participant: state.botJid || undefined
+      }
+    ]);
     console.log('[status] viewed', msgId);
   } catch (e) {
     console.error('[status] view failed', e.message);
   }
 }
 
-// Send a reaction (❤️) to a status message.
 async function likeStatus(msgId) {
   const sock = state.sock;
   if (!sock) return;
   try {
     await sock.sendMessage(
-      'status@broadcast', { react: { text: '❤️', key: { remoteJid: 'status@broadcast', id: msgId, fromMe: true } } }, { statusJidList: [] }
+      'status@broadcast',
+      {
+        react: {
+          text: '❤️',
+          key: {
+            remoteJid: 'status@broadcast',
+            id: msgId,
+            fromMe: true
+          }
+        }
+      },
+      { statusJidList: [] }
     );
     console.log('[status] liked', msgId);
   } catch (e) {
@@ -170,13 +159,13 @@ function resolveSenderJid(msg, fallbackJid) {
     const num = pn.split('@')[0].split(':')[0];
     if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
-  
+
   const participant = msg?.key?.participant;
   if (participant && participant.endsWith('@s.whatsapp.net')) {
     const num = participant.split('@')[0].split(':')[0];
     if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
-  
+
   if (fallbackJid) {
     const raw = fallbackJid.split('@')[0].split(':')[0];
     if (fallbackJid.endsWith('@lid')) {
@@ -186,7 +175,7 @@ function resolveSenderJid(msg, fallbackJid) {
     }
     if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
   }
-  
+
   return '';
 }
 
@@ -206,7 +195,7 @@ const WRAPPER_KEYS = [
 function unwrapMessage(message) {
   let m = message;
   let guard = 0;
-  while (m && guard++< 6) {
+  while (m && guard++ < 6) {
     let unwrapped = false;
     for (const k of WRAPPER_KEYS) {
       if (m[k]?.message) {
@@ -229,6 +218,7 @@ async function safeSend(from, content, opts = {}) {
   } catch (e) {
     const sock = state.sock;
     if (!sock) throw e;
+    console.warn('[safeSend] engine.send failed, raw fallback:', e.message);
     return sock.sendMessage(from, content, opts);
   }
 }
@@ -238,7 +228,12 @@ async function safeSend(from, content, opts = {}) {
 // ============================================================================
 const helpers = {
   async reply(from, text, opts = {}) {
-    console.log('[reply] →', from, '|', String(text).slice(0, 60).replace(/\n/g, ' '));
+    console.log(
+      '[reply] →',
+      from,
+      '|',
+      String(text).slice(0, 60).replace(/\n/g, ' ')
+    );
     try {
       const res = await safeSend(from, { text, ...opts });
       console.log('[reply] sent, id =', res?.key?.id || '(no id)');
@@ -258,7 +253,10 @@ const helpers = {
       try {
         return await sendWithBanner(from, text);
       } catch (e) {
-        console.warn('[replyWithBanner] banner failed, falling back to text:', e.message);
+        console.warn(
+          '[replyWithBanner] banner failed, falling back to text:',
+          e.message
+        );
         return await safeSend(from, { text });
       }
     } catch (e) {
@@ -345,7 +343,11 @@ const helpers = {
 async function tryCaptureViewOnce(msg, from) {
   try {
     const content = msg.message;
-    const wrappers = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+    const wrappers = [
+      'viewOnceMessage',
+      'viewOnceMessageV2',
+      'viewOnceMessageV2Extension'
+    ];
     let inner = null;
     for (const w of wrappers) {
       if (content?.[w]?.message) {
@@ -367,7 +369,10 @@ async function tryCaptureViewOnce(msg, from) {
     const sockInstance = state.sock;
     if (!sockInstance) return false;
 
-    const fakeMsg = { key: msg.key, message: { [mediaType]: inner[mediaType] } };
+    const fakeMsg = {
+      key: msg.key,
+      message: { [mediaType]: inner[mediaType] }
+    };
     const buffer = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
       logger: pino({ level: 'silent' }),
       reuploadRequest: sockInstance.updateMediaMessage
@@ -424,7 +429,10 @@ async function postToStatus(quotedMsg) {
       payload = { text, backgroundColor: '#1F2C33', font: 2 };
     } else if (type === 'imageMessage') {
       const buf = await downloadMediaMessage(
-        { key: quotedMsg.key, message: { imageMessage: inner.imageMessage } },
+        {
+          key: quotedMsg.key,
+          message: { imageMessage: inner.imageMessage }
+        },
         'buffer',
         {},
         {
@@ -432,10 +440,16 @@ async function postToStatus(quotedMsg) {
           reuploadRequest: sockInstance.updateMediaMessage
         }
       );
-      payload = { image: buf, caption: inner.imageMessage?.caption || '' };
+      payload = {
+        image: buf,
+        caption: inner.imageMessage?.caption || ''
+      };
     } else if (type === 'videoMessage') {
       const buf = await downloadMediaMessage(
-        { key: quotedMsg.key, message: { videoMessage: inner.videoMessage } },
+        {
+          key: quotedMsg.key,
+          message: { videoMessage: inner.videoMessage }
+        },
         'buffer',
         {},
         {
@@ -443,7 +457,10 @@ async function postToStatus(quotedMsg) {
           reuploadRequest: sockInstance.updateMediaMessage
         }
       );
-      payload = { video: buf, caption: inner.videoMessage?.caption || '' };
+      payload = {
+        video: buf,
+        caption: inner.videoMessage?.caption || ''
+      };
     } else {
       console.warn('[Status] unsupported type:', type);
       return false;
@@ -454,7 +471,6 @@ async function postToStatus(quotedMsg) {
       statusJidList: []
     });
 
-    // 🔥 Auto view + like scheduling (3 min, 5 min after posting)
     const id = sent?.key?.id;
     if (id) {
       scheduleStatusEngagement(id);
@@ -569,7 +585,10 @@ async function renderTextSticker(text, opts = {}) {
     Verdana: 'Verdana, Geneva, sans-serif'
   };
 
-  const COLORS = ['white','black','red','green','blue','yellow','pink','orange','purple','cyan'];
+  const COLORS = [
+    'white', 'black', 'red', 'green', 'blue',
+    'yellow', 'pink', 'orange', 'purple', 'cyan'
+  ];
 
   if (random) {
     const fontKeys = Object.keys(FONTS);
@@ -610,125 +629,97 @@ async function renderTextSticker(text, opts = {}) {
   const bgRect =
     bg === 'transparent'
       ? ''
-      : `<rect width="${SIZE}" height="${SIZE}" fill="${esc(bg)}"/>
-    `;
+      : `<rect width="${SIZE}" height="${SIZE}" fill="${esc(bg)}"/>`;
 
   const linesSvg = lines
     .map((l, i) => {
       const y = startY + i * lineHeight;
-      return ` < text x = "${SIZE / 2}"
-    y = "${y}"
-    text - anchor = "middle"
-    font - family = "${esc(fontFamily)}"
-    font - size = "52"
-    font - weight = "900"
-    fill = "${esc(color)}"
-    stroke = "black"
-    stroke - width = "3"
-    paint - order = "stroke"
-    stroke - linejoin = "round" >
-    $ { esc(l) }
-    </text>
-    `;
+      return `<text x="${SIZE / 2}" y="${y}" text-anchor="middle" font-family="${esc(fontFamily)}" font-size="52" font-weight="900" fill="${esc(color)}" stroke="black" stroke-width="3" paint-order="stroke" stroke-linejoin="round">${esc(l)}</text>`;
     })
     .join('');
 
   const wmSvg = wm
-    ? ` < text x = "${SIZE / 2}"
-    y = "${SIZE - 24}"
-    text - anchor = "middle"
-    font - family = "Arial"
-    font - size = "18"
-    fill = "${esc(color)}"
-    opacity = "0.7" >
-    Fanuels DX < /text>`: '';
-    
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+    ? `<text x="${SIZE / 2}" y="${SIZE - 24}" text-anchor="middle" font-family="Arial" font-size="18" fill="${esc(color)}" opacity="0.7">Fanuels DX</text>`
+    : '';
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
     ${bgRect}
     ${linesSvg}
     ${wmSvg}
   </svg>`;
-    
-    const { Resvg } = require('@resvg/resvg-js');
-    const resvg = new Resvg(svg, {
-      fitTo: { mode: 'width', value: SIZE },
-      background: bg === 'transparent' ? undefined : bg
-    });
-    const png = resvg.render().asPng();
-    
-    try {
-      const sharp = require('sharp');
-      return await sharp(png).webp({ quality: 90 }).toBuffer();
-    } catch {
-      return png;
-    }
+
+  const { Resvg } = require('@resvg/resvg-js');
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'width', value: SIZE },
+    background: bg === 'transparent' ? undefined : bg
+  });
+  const png = resvg.render().asPng();
+
+  try {
+    const sharp = require('sharp');
+    return await sharp(png).webp({ quality: 90 }).toBuffer();
+  } catch {
+    return png;
   }
-  
-  // ============================================================================
-  // PRE-COMMAND HOOKS
-  // ============================================================================
-  async function preCommandHooks(msg, from, senderJid, rawText) {
-    if (!rawText || !rawText.trim()) return false;
-    const sock = state.sock;
-    if (!sock) return false;
-    
-    // ==========================================================================
-    // 🔧 TIER 1 — AUTO-LEARN LID MAPPINGS FROM ANY MESSAGE
-    // ==========================================================================
-    // No matter what the message is (a command, chatter, a sticker, a DM),
-    // try to capture a LID → PN pair from the message key and persist it.
-    // This maximizes the chance a user's DM will resolve on their next message.
-    try {
-      const pnCandidate =
-        msg.key?.senderPn ||
-        msg.key?.participantPn ||
-        msg.key?.participantAlt ||
-        msg.key?.remoteJidAlt;
-      
-      const lidCandidates = [
-        msg.key?.participant, // groups
-        msg.key?.remoteJid, // DMs
-      ];
-      
-      for (const lid of lidCandidates) {
-        if (
-          lid &&
-          typeof lid === 'string' &&
-          lid.endsWith('@lid') &&
-          pnCandidate &&
-          typeof pnCandidate === 'string' &&
-          pnCandidate.endsWith('@s.whatsapp.net')
-        ) {
-          const lidUser = lid.split('@')[0].split(':')[0];
-          const pnUser = pnCandidate.split('@')[0].split(':')[0];
-          // registerLidMapping is a no-op if already mapped.
-          state.registerLidMapping(lidUser, pnUser);
-        }
+}
+
+// ============================================================================
+// PRE-COMMAND HOOKS
+// ============================================================================
+async function preCommandHooks(msg, from, senderJid, rawText) {
+  if (!rawText || !rawText.trim()) return false;
+  const sock = state.sock;
+  if (!sock) return false;
+
+  // ==========================================================================
+  // 🔧 TIER 1 — AUTO-LEARN LID MAPPINGS FROM ANY MESSAGE
+  // ==========================================================================
+  try {
+    const pnCandidate =
+      msg.key?.senderPn ||
+      msg.key?.participantPn ||
+      msg.key?.participantAlt ||
+      msg.key?.remoteJidAlt;
+
+    const lidCandidates = [msg.key?.participant, msg.key?.remoteJid];
+
+    for (const lid of lidCandidates) {
+      if (
+        lid &&
+        typeof lid === 'string' &&
+        lid.endsWith('@lid') &&
+        pnCandidate &&
+        typeof pnCandidate === 'string' &&
+        pnCandidate.endsWith('@s.whatsapp.net')
+      ) {
+        const lidUser = lid.split('@')[0].split(':')[0];
+        const pnUser = pnCandidate.split('@')[0].split(':')[0];
+        state.registerLidMapping(lidUser, pnUser);
       }
-    } catch (_) {}
-    
-    // ... rest of preCommandHooks (trivia, auto-correct, anti-mention, rate-limit)
-  }
-  
+    }
+  } catch (_) {}
+
   // ---------- TRIVIA ----------
   const trivia = TRIVIA_STATE.get(from);
   if (trivia) {
     if (Date.now() > trivia.expiresAt) {
       TRIVIA_STATE.delete(from);
-    } else if (!engine.isCommand(rawText)) {
+    } else if (!isKnownCommand(rawText.trim().split(/\s+/)[0].toLowerCase())) {
       const guess = rawText.trim().toLowerCase();
       if (trivia.answers.includes(guess)) {
         TRIVIA_STATE.delete(from);
-        try { await safeSend(from, { text: '✅ Correct!' }); } catch {}
+        try {
+          await safeSend(from, { text: '✅ Correct!' });
+        } catch {}
         return true;
       }
     }
   }
-  
+
   // ---------- AUTO-CORRECT ----------
   if (
     state.autoCorrectEnabled.has(from) &&
-    !engine.isCommand(rawText) &&
+    !isKnownCommand(rawText.trim().split(/\s+/)[0].toLowerCase()) &&
     state.dictionary.size > 0
   ) {
     const tokens = rawText.split(/(\s+)/);
@@ -743,7 +734,7 @@ async function renderTextSticker(text, opts = {}) {
         return w;
       })
       .join('');
-    
+
     if (changed && fixed !== rawText) {
       try {
         await safeSend(from, {
@@ -755,13 +746,13 @@ async function renderTextSticker(text, opts = {}) {
       }
     }
   }
-  
+
   // ---------- ANTI-MENTION ----------
   if (from.endsWith('@g.us') && state.antimentionGroups.has(from)) {
     const mentioned = helpers.mentions(msg);
     const mentionsGroupJid = mentioned.includes(from);
     const massMention = mentioned.length >= 5;
-    
+
     if (mentionsGroupJid || massMention) {
       const policy = state.antimentionAction.get(from) || 'warn';
       const groupWarns = state.antimentionWarnings.get(from) || {};
@@ -770,11 +761,13 @@ async function renderTextSticker(text, opts = {}) {
       groupWarns[senderJid] = list;
       state.antimentionWarnings.set(from, groupWarns);
       saveState();
-      
-      try { await sock.sendMessage(from, { delete: msg.key }); } catch (e) {
+
+      try {
+        await sock.sendMessage(from, { delete: msg.key });
+      } catch (e) {
         console.error('[antimention] delete failed:', e.message);
       }
-      
+
       if (policy === 'kick') {
         try {
           await sock.groupParticipantsUpdate(from, [senderJid], 'remove');
@@ -809,12 +802,14 @@ async function renderTextSticker(text, opts = {}) {
       return true;
     }
   }
-  
+
   // ---------- RATE LIMIT ----------
-  if (engine.isCommand(rawText)) {
+  if (isKnownCommand(rawText.trim().split(/\s+/)[0].toLowerCase())) {
     const r = engine.checkRate(from, senderJid || from);
     if (!r.ok) {
-      console.log(`[engine.rate] throttled ${from}/${senderJid} (retry in ${r.retryInSec}s)`);
+      console.log(
+        `[engine.rate] throttled ${from}/${senderJid} (retry in ${r.retryInSec}s)`
+      );
       try {
         await safeSend(from, {
           text: `⏳ Slow down — try again in ${r.retryInSec}s.`
@@ -823,7 +818,7 @@ async function renderTextSticker(text, opts = {}) {
       return true;
     }
   }
-  
+
   return false;
 }
 
@@ -831,7 +826,6 @@ async function renderTextSticker(text, opts = {}) {
 // COMMAND REGISTRY
 // ============================================================================
 const COMMANDS = [
-  
   // ========================================================================
   // GENERAL
   // ========================================================================
@@ -949,7 +943,9 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
     desc: 'Safe calculator',
     usage: '.calc <expression>',
     handler: async ({ from, text }) => {
-      const expr = text.replace(/^[.!]calc\s+/i, '').replace(/[^0-9+\-*/(). ]/g, '');
+      const expr = text
+        .replace(/^[.!]calc\s+/i, '')
+        .replace(/[^0-9+\-*/(). ]/g, '');
       if (expr.length > 200) helpers.fail('❌ Expression too long.');
       try {
         const result = Function(`"use strict"; return (${expr})`)();
@@ -960,7 +956,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       }
     }
   },
-  
+
   // ========================================================================
   // MEDIA
   // ========================================================================
@@ -975,15 +971,14 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       const img = quoted.imageMessage;
       const vid = quoted.videoMessage;
       if (!img && !vid) helpers.fail('❌ Must be image or video.');
-      
+
       await withTyping(from, async () => {
         const mType = img ? 'imageMessage' : 'videoMessage';
         const mContent = img || vid;
         const ctx = helpers.contextInfo(msg);
         const fakeMsg = {
           key: { remoteJid: from, id: ctx.stanzaId, fromMe: false },
-          message: {
-            [mType]: mContent }
+          message: { [mType]: mContent }
         };
         const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
           logger: pino({ level: 'silent' }),
@@ -1001,7 +996,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       const quoted = helpers.quoted(msg);
       const stickerMsg = quoted?.stickerMessage;
       if (!stickerMsg) helpers.fail('❌ Reply to a sticker.');
-      
+
       await withTyping(from, async () => {
         const ctx = helpers.contextInfo(msg);
         const fakeMsg = {
@@ -1012,7 +1007,10 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
           logger: pino({ level: 'silent' }),
           reuploadRequest: state.sock.updateMediaMessage
         });
-        await safeSend(from, { image: buf, caption: '🎨 *Converted to image*' });
+        await safeSend(from, {
+          image: buf,
+          caption: '🎨 *Converted to image*'
+        });
       }).catch(() => helpers.reply(from, '❌ Failed.'));
     }
   },
@@ -1026,18 +1024,20 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       let targetText = args.join(' ');
       if (!targetText) {
         const quoted = helpers.quoted(msg);
-        targetText = quoted?.conversation || quoted?.extendedTextMessage?.text || '';
+        targetText =
+          quoted?.conversation || quoted?.extendedTextMessage?.text || '';
       }
       if (!targetText) helpers.fail('❌ Provide text or reply to a message.');
-      
+
       const url =
         'https://translate.google.com/translate_tts?ie=UTF-8' +
         `&q=${encodeURIComponent(targetText.slice(0, 200))}` +
         '&tl=en&client=tw-ob';
-      
+
       const res = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
             '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           Referer: 'https://translate.google.com/'
         }
@@ -1045,7 +1045,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       if (!res.ok) helpers.fail(`❌ TTS HTTP ${res.status}`);
       const mp3 = Buffer.from(await res.arrayBuffer());
       if (!mp3 || mp3.length < 100) helpers.fail('❌ Empty audio');
-      
+
       let ogg = null;
       try {
         const ffmpeg = require('fluent-ffmpeg');
@@ -1066,7 +1066,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       } catch (convErr) {
         console.log('[TTS] ffmpeg unavailable, sending mp3:', convErr.message);
       }
-      
+
       await withRecording(from, () => {
         if (ogg) {
           return safeSend(from, {
@@ -1093,11 +1093,15 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       const mentioned = helpers.mentions(msg);
       if (mentioned.length) {
         target = helpers.resolveJid(mentioned[0]);
-        if (!target) helpers.fail('❌ Cannot resolve this user — their LID is not in LID_MAP.');
+        if (!target)
+          helpers.fail('❌ Cannot resolve this user — their LID is not in LID_MAP.');
       }
       try {
         const url = await state.sock.profilePictureUrl(target, 'image');
-        await safeSend(from, { image: { url }, caption: '📷 *Profile picture*' });
+        await safeSend(from, {
+          image: { url },
+          caption: '📷 *Profile picture*'
+        });
       } catch {
         helpers.fail('❌ No profile picture available.');
       }
@@ -1110,26 +1114,32 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
     handler: async ({ msg, from }) => {
       const quoted = helpers.quoted(msg);
       if (!quoted) helpers.fail('❌ Reply to a view-once message with *.vv*.');
-      
-      const wrappers = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+
+      const wrappers = [
+        'viewOnceMessage',
+        'viewOnceMessageV2',
+        'viewOnceMessageV2Extension'
+      ];
       let inner = quoted;
       for (const w of wrappers) {
-        if (quoted[w]?.message) { inner = quoted[w].message; break; }
+        if (quoted[w]?.message) {
+          inner = quoted[w].message;
+          break;
+        }
       }
-      const type = inner.imageMessage ?
-        'imageMessage' :
-        inner.videoMessage ?
-        'videoMessage' :
-        inner.audioMessage ?
-        'audioMessage' :
-        null;
+      const type = inner.imageMessage
+        ? 'imageMessage'
+        : inner.videoMessage
+        ? 'videoMessage'
+        : inner.audioMessage
+        ? 'audioMessage'
+        : null;
       if (!type) helpers.fail('❌ Not a view-once media message.');
-      
+
       const ctx = helpers.contextInfo(msg);
       const fakeMsg = {
         key: { remoteJid: from, id: ctx.stanzaId, fromMe: false },
-        message: {
-          [type]: inner[type] }
+        message: { [type]: inner[type] }
       };
       const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
         logger: pino({ level: 'silent' }),
@@ -1156,13 +1166,14 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
     usage: '.stext <text> [--font=… --color=… --bg=… --wm --random]',
     handler: async ({ msg, from, text }) => {
       let raw = text.replace(/^[.!]stext\s*/i, '').trim();
-      
+
       if (!raw) {
         const quoted = helpers.quoted(msg);
         raw = quoted?.conversation || quoted?.extendedTextMessage?.text || '';
-        if (!raw) helpers.fail('❌ Usage: .stext <text> (or reply to a text message)');
+        if (!raw)
+          helpers.fail('❌ Usage: .stext <text> (or reply to a text message)');
       }
-      
+
       const flags = {};
       raw = raw
         .replace(/--(\w+)(?:=(\S+))?/g, (_, key, val) => {
@@ -1170,10 +1181,11 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
           return '';
         })
         .trim();
-      
+
       if (!raw) helpers.fail('❌ No text after flags.');
-      if (raw.length > 80) helpers.fail(`❌ Max 80 chars (you sent ${raw.length}).`);
-      
+      if (raw.length > 80)
+        helpers.fail(`❌ Max 80 chars (you sent ${raw.length}).`);
+
       const opts = {
         font: typeof flags.font === 'string' ? flags.font : 'Arial',
         color: typeof flags.color === 'string' ? flags.color : 'white',
@@ -1181,7 +1193,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
         wm: !!flags.wm,
         random: !!flags.random
       };
-      
+
       try {
         const stickerBuf = await renderTextSticker(raw, opts);
         await safeSend(from, { sticker: stickerBuf });
@@ -1191,9 +1203,9 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       }
     }
   },
-  
+
   // ========================================================================
-  // 🆕 DOWNLOADER — TikTok / YT / IG / FB / Spotify / X
+  // DOWNLOADER
   // ========================================================================
   {
     name: '.dl',
@@ -1203,19 +1215,18 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
     usage: '.dl <url>  |  .dl help',
     handler: async ({ from, args }) => {
       const raw = args.join(' ').trim();
-      
-      // ---------- HELP ----------
+
       if (!raw || raw === 'help') {
         await helpers.replyWithBanner(
           from,
           `${UIkit.pandaBanner('MEDIA DOWNLOADER')}
 
 ${UIkit.section('SUPPORTED', '🌐')}
-${UIkit.row('TikTok',    '🎵  videos / no-watermark')}
-${UIkit.row('YouTube',   '▶️  video / audio / shorts')}
+${UIkit.row('TikTok', '🎵  videos / no-watermark')}
+${UIkit.row('YouTube', '▶️  video / audio / shorts')}
 ${UIkit.row('Instagram', '📸  reels / posts / stories')}
-${UIkit.row('Facebook',  '📘  videos / reels')}
-${UIkit.row('Spotify',   '🎧  track / album / playlist')}
+${UIkit.row('Facebook', '📘  videos / reels')}
+${UIkit.row('Spotify', '🎧  track / album / playlist')}
 ${UIkit.row('Twitter/X', '🐦  videos / GIFs')}
 
 ${UIkit.section('HOW TO USE', '📖')}
@@ -1234,22 +1245,26 @@ ${UIkit.section('NOTES', '💡')}
         );
         return;
       }
-      
-      // ---------- PARSE ----------
-      const KNOWN = ['tiktok', 'tt', 'yt', 'youtube', 'ig', 'instagram', 'fb', 'facebook', 'spotify', 'sp', 'x', 'twitter'];
+
+      const KNOWN = [
+        'tiktok', 'tt', 'yt', 'youtube', 'ig', 'instagram',
+        'fb', 'facebook', 'spotify', 'sp', 'x', 'twitter'
+      ];
       let platform = null;
       let url = raw;
-      
+
       const first = raw.split(/\s+/)[0].toLowerCase();
       if (KNOWN.includes(first)) {
         platform = first;
         url = raw.split(/\s+/).slice(1).join(' ').trim();
       }
-      
+
       if (!/^https?:\/\//i.test(url)) {
-        helpers.fail('❌ Provide a valid URL, e.g. `.dl https://vt.tiktok.com/xxxx`');
+        helpers.fail(
+          '❌ Provide a valid URL, e.g. `.dl https://vt.tiktok.com/xxxx`'
+        );
       }
-      
+
       if (!platform) {
         if (/tiktok\.com/i.test(url)) platform = 'tiktok';
         else if (/(youtube\.com|youtu\.be)/i.test(url)) platform = 'yt';
@@ -1259,7 +1274,7 @@ ${UIkit.section('NOTES', '💡')}
         else if (/(twitter\.com|x\.com)/i.test(url)) platform = 'x';
         else platform = 'unknown';
       }
-      
+
       const PRETTY = {
         tiktok: '🎵 TikTok',
         tt: '🎵 TikTok',
@@ -1274,20 +1289,22 @@ ${UIkit.section('NOTES', '💡')}
         x: '🐦 Twitter/X',
         twitter: '🐦 Twitter/X',
         unknown: '🌐 Unknown'
-      } [platform];
-      
+      }[platform];
+
       await helpers.reply(
         from,
         `${UIkit.box('DOWNLOAD REQUEST', '⏳')}
 
 ${UIkit.section('JOB', '📥')}
 ${UIkit.row('Platform', PRETTY)}
-${UIkit.row('URL', url.slice(0, 42) + (url.length > 42 ? '…' : ''))}
+${UIkit.row(
+  'URL',
+  url.slice(0, 42) + (url.length > 42 ? '…' : '')
+)}
 ${UIkit.row('Status', 'fetching…')}`
       );
-      
+
       try {
-        // Prefer the transformer-based downloader if available
         const transformer = require('./transformer');
         const handled = await transformer.handleDownload({
           platform,
@@ -1298,10 +1315,10 @@ ${UIkit.row('Status', 'fetching…')}`
           safeSend
         });
         if (handled) return;
-        
+
         helpers.fail(
           `❌ No handler found for platform *${PRETTY}*.\n` +
-          `📌 The transformer module must export handleDownload().`
+            `📌 The transformer module must export handleDownload().`
         );
       } catch (e) {
         console.error('[.dl]', e);
@@ -1309,7 +1326,7 @@ ${UIkit.row('Status', 'fetching…')}`
       }
     }
   },
-  
+
   // ========================================================================
   // FUN
   // ========================================================================
@@ -1323,12 +1340,16 @@ ${UIkit.row('Status', 'fetching…')}`
       const m = spec.match(/^(\d+)d(\d+)$/i);
       if (!m) helpers.fail('❌ Usage: .roll 1d6');
       const [, n, faces] = m;
-      const rolls = Array.from({ length: Math.min(+n, 20) }, () =>
-        1 + Math.floor(Math.random() * +faces)
+      const rolls = Array.from(
+        { length: Math.min(+n, 20) },
+        () => 1 + Math.floor(Math.random() * +faces)
       );
       await helpers.reply(
         from,
-        `🎲 *${spec}* → ${rolls.join(' + ')} = *${rolls.reduce((a, b) => a + b, 0)}*`
+        `🎲 *${spec}* → ${rolls.join(' + ')} = *${rolls.reduce(
+          (a, b) => a + b,
+          0
+        )}*`
       );
     }
   },
@@ -1337,7 +1358,10 @@ ${UIkit.row('Status', 'fetching…')}`
     category: 'fun',
     desc: 'Flip a coin',
     handler: async ({ from }) => {
-      await helpers.reply(from, Math.random() < 0.5 ? '🪙 Heads' : '🪙 Tails');
+      await helpers.reply(
+        from,
+        Math.random() < 0.5 ? '🪙 Heads' : '🪙 Tails'
+      );
     }
   },
   {
@@ -1350,7 +1374,10 @@ ${UIkit.row('Status', 'fetching…')}`
         'Yes.', 'No.', 'Maybe.', 'Ask again later.', 'Definitely.',
         'Absolutely not.', "I wouldn't bet on it.", 'Signs point to yes.'
       ];
-      await helpers.reply(from, '🎱 ' + answers[Math.floor(Math.random() * answers.length)]);
+      await helpers.reply(
+        from,
+        '🎱 ' + answers[Math.floor(Math.random() * answers.length)]
+      );
     }
   },
   {
@@ -1361,9 +1388,12 @@ ${UIkit.row('Status', 'fetching…')}`
       const jokes = [
         "Why don't scientists trust atoms? They make up everything.",
         "I told my Wi-Fi we needed space. Now it won't connect.",
-        "Why did the developer go broke? He used up all his cache."
+        'Why did the developer go broke? He used up all his cache.'
       ];
-      await helpers.reply(from, '😂 ' + jokes[Math.floor(Math.random() * jokes.length)]);
+      await helpers.reply(
+        from,
+        '😂 ' + jokes[Math.floor(Math.random() * jokes.length)]
+      );
     }
   },
   {
@@ -1389,8 +1419,14 @@ ${UIkit.row('Status', 'fetching…')}`
         { q: 'What is the capital of Australia?', a: ['canberra'] },
         { q: 'How many continents are there?', a: ['7', 'seven'] },
         { q: 'What planet is known as the Red Planet?', a: ['mars'] },
-        { q: 'What is the largest ocean on Earth?', a: ['pacific', 'pacific ocean'] },
-        { q: 'Who wrote "Romeo and Juliet"?', a: ['shakespeare', 'william shakespeare'] }
+        {
+          q: 'What is the largest ocean on Earth?',
+          a: ['pacific', 'pacific ocean']
+        },
+        {
+          q: 'Who wrote "Romeo and Juliet"?',
+          a: ['shakespeare', 'william shakespeare']
+        }
       ];
       const pick = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
       TRIVIA_STATE.set(from, {
@@ -1444,10 +1480,11 @@ ${UIkit.row('Status', 'fetching…')}`
       const [a, b] = mentioned;
       const aRes = helpers.resolveJid(a) || a;
       const bRes = helpers.resolveJid(b) || b;
-      
+
       const seed = [a, b].slice().sort().join('|');
       let h = 0;
-      for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+      for (let i = 0; i < seed.length; i++)
+        h = (h * 31 + seed.charCodeAt(i)) | 0;
       const pct = Math.abs(h) % 101;
       const bar = UIkit.bar(pct, 10);
       await helpers.reply(
@@ -1457,11 +1494,12 @@ ${UIkit.row('Status', 'fetching…')}`
 ${UIkit.section('LOVE METER', '💞')}
 ${UIkit.row('A', `@${a.split('@')[0]}`)}
 ${UIkit.row('B', `@${b.split('@')[0]}`)}
-${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
+${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
+        { mentions: [aRes, bRes] }
       );
     }
   },
-  
+
   // ========================================================================
   // TOOLS
   // ========================================================================
@@ -1472,9 +1510,12 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
     usage: '.shorten <url>',
     handler: async ({ from, args }) => {
       const url = args[0];
-      if (!url || !/^https?:\/\//.test(url)) helpers.fail('❌ Usage: .shorten https://...');
+      if (!url || !/^https?:\/\//.test(url))
+        helpers.fail('❌ Usage: .shorten https://...');
       try {
-        const r = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`);
+        const r = await fetch(
+          `https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`
+        );
         const short = await r.text();
         await helpers.reply(from, `🔗 ${short}`);
       } catch {
@@ -1491,7 +1532,9 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
       const city = args.join(' ');
       if (!city) helpers.fail('❌ Usage: .weather <city>');
       try {
-        const r = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=3`);
+        const r = await fetch(
+          `https://wttr.in/${encodeURIComponent(city)}?format=3`
+        );
         const txt = await r.text();
         await helpers.reply(from, `🌤️ ${txt}`);
       } catch {
@@ -1513,10 +1556,14 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
           quoted?.conversation || quoted?.extendedTextMessage?.text || '';
       }
       if (!lang || !textToTranslate) {
-        helpers.fail('❌ Usage: .translate <lang> <text>\nExample: .translate es Hello world');
+        helpers.fail(
+          '❌ Usage: .translate <lang> <text>\nExample: .translate es Hello world'
+        );
       }
       try {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(lang)}&dt=t&q=${encodeURIComponent(textToTranslate)}`;
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(
+          lang
+        )}&dt=t&q=${encodeURIComponent(textToTranslate)}`;
         const r = await fetch(url);
         const j = await r.json();
         const out = (j[0] || []).map((x) => x[0]).join('');
@@ -1534,10 +1581,12 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
     handler: async ({ from, args }) => {
       const query = args.join(' ');
       if (!query) helpers.fail('❌ Usage: .lyrics <song or artist>');
-      
+
       await withTyping(from, async () => {
         try {
-          const r = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
+          const r = await fetch(
+            `https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`
+          );
           const j = await r.json();
           const hit = j?.data?.[0];
           if (!hit) {
@@ -1545,7 +1594,9 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
             return;
           }
           const r2 = await fetch(
-            `https://api.lyrics.ovh/v1/${encodeURIComponent(hit.artist.name)}/${encodeURIComponent(hit.title)}`
+            `https://api.lyrics.ovh/v1/${encodeURIComponent(
+              hit.artist.name
+            )}/${encodeURIComponent(hit.title)}`
           );
           const j2 = await r2.json();
           const lyrics = (j2.lyrics || '').trim().slice(0, 3500);
@@ -1555,7 +1606,9 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
           }
           await helpers.reply(
             from,
-            `${UIkit.pandaBanner('LYRICS')}\n\n*${hit.title}* — ${hit.artist.name}\n\n${lyrics}`
+            `${UIkit.pandaBanner('LYRICS')}\n\n*${hit.title}* — ${
+              hit.artist.name
+            }\n\n${lyrics}`
           );
         } catch (e) {
           console.error('[lyrics]', e.message);
@@ -1578,7 +1631,10 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
         if (!wrong || !right) helpers.fail('Usage: .dict add <wrong> <right>');
         state.dictionary.set(wrong, right);
         saveState();
-        await helpers.reply(from, `${UIkit.box('DICT ADDED', '📖')}\n\n│ ${wrong} → ${right}`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('DICT ADDED', '📖')}\n\n│ ${wrong} → ${right}`
+        );
       } else if (sub === 'del' || sub === 'remove') {
         const wrong = (args[1] || '').toLowerCase();
         if (!wrong) helpers.fail('Usage: .dict del <wrong>');
@@ -1586,7 +1642,9 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
         saveState();
         await helpers.reply(
           from,
-          existed ? `${UIkit.box('DICT REMOVED', '🗑️')}` : '❌ Not in dictionary.'
+          existed
+            ? `${UIkit.box('DICT REMOVED', '🗑️')}`
+            : '❌ Not in dictionary.'
         );
       } else if (sub === 'list') {
         const entries = [...state.dictionary.entries()];
@@ -1594,11 +1652,19 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
           await helpers.reply(from, '📖 Dictionary is empty.');
           return;
         }
-        const body = entries.slice(0, 100).map(([w, r]) => `│ ${w} → ${r}`).join('\n');
-        const more = entries.length > 100 ? `\n… and ${entries.length - 100} more.` : '';
+        const body = entries
+          .slice(0, 100)
+          .map(([w, r]) => `│ ${w} → ${r}`)
+          .join('\n');
+        const more =
+          entries.length > 100
+            ? `\n… and ${entries.length - 100} more.`
+            : '';
         await helpers.reply(
           from,
-          `${UIkit.pandaBanner('DICTIONARY')}\n\n${body}${more}\n\n_${entries.length} entries_`
+          `${UIkit.pandaBanner('DICTIONARY')}\n\n${body}${more}\n\n_${
+            entries.length
+          } entries_`
         );
       } else {
         helpers.fail('Usage: .dict add|del|list');
@@ -1612,10 +1678,11 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
     usage: '.edit <new text>',
     handler: async ({ msg, from, args }) => {
       const quoted = helpers.quoted(msg);
-      if (!quoted) helpers.fail('❌ Reply to a message with *.edit <new text>*');
+      if (!quoted)
+        helpers.fail('❌ Reply to a message with *.edit <new text>*');
       const newText = args.join(' ');
       if (!newText) helpers.fail('❌ Usage: .edit <new text>');
-      
+
       const ci = helpers.contextInfo(msg);
       const senderRaw = ci?.participant || '';
       const sender = helpers.resolveJid(senderRaw) || senderRaw;
@@ -1627,7 +1694,7 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
       );
     }
   },
-  
+
   // ========================================================================
   // ADMIN
   // ========================================================================
@@ -1656,7 +1723,12 @@ ${UIkit.row('Anti-link', state.antilinkGroups.size + ' group(s)')}
 ${UIkit.row('Auto-corr.', state.autoCorrectEnabled.size + ' chat(s)')}
 ${UIkit.row('Anti-ment.', state.antimentionGroups.size + ' group(s)')}
 ${UIkit.row('Dict words', state.dictionary.size)}
-${UIkit.row('Reactions', state.reactionsGlobal ? '✅ global' : state.reactionsEnabled.size + ' chat(s)')}
+${UIkit.row(
+  'Reactions',
+  state.reactionsGlobal
+    ? '✅ global'
+    : state.reactionsEnabled.size + ' chat(s)'
+)}
 ${UIkit.row('Schedules', state.schedules.size)}
 ${UIkit.row('Status auto', `${STATUS_TIMERS.size} pending`)}
 
@@ -1672,7 +1744,9 @@ ${UIkit.section('REPORT', '🕐')}
     desc: 'Disconnect session',
     handler: async ({ from }) => {
       await helpers.reply(from, '🚪 *Logging out…*');
-      try { await state.sock.logout(); } catch (e) {}
+      try {
+        await state.sock.logout();
+      } catch (e) {}
     }
   },
   {
@@ -1700,7 +1774,10 @@ ${UIkit.section('REPORT', '🕐')}
       const conn = require('./connection');
       await conn.stopBot();
       await conn.startBot(num);
-      await helpers.reply(from, '📱 New pairing code sent to the dashboard.');
+      await helpers.reply(
+        from,
+        '📱 New pairing code sent to the dashboard.'
+      );
     }
   },
   {
@@ -1718,7 +1795,10 @@ ${UIkit.section('REPORT', '🕐')}
         added.push(num);
       }
       saveState();
-      await helpers.reply(from, `${UIkit.box('ADMIN ADDED', '✅')}\n\n${added.join('\n')}`);
+      await helpers.reply(
+        from,
+        `${UIkit.box('ADMIN ADDED', '✅')}\n\n${added.join('\n')}`
+      );
     }
   },
   {
@@ -1737,7 +1817,7 @@ ${UIkit.section('REPORT', '🕐')}
       await helpers.reply(from, `${UIkit.box('ADMIN REMOVED', '✅')}`);
     }
   },
-  
+
   // ========================================================================
   // PAUSE
   // ========================================================================
@@ -1751,12 +1831,18 @@ ${UIkit.section('REPORT', '🕐')}
       if (args[0] === 'all') {
         pausedChats.add('ALL');
         saveState();
-        await helpers.reply(from, `${UIkit.box('GLOBAL PAUSE', '⏸️')}\n\nBot is now silent everywhere.`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('GLOBAL PAUSE', '⏸️')}\n\nBot is now silent everywhere.`
+        );
         return;
       }
       pausedChats.add(from);
       saveState();
-      await helpers.reply(from, `${UIkit.box('PAUSED', '⏸️')}\n\nBot is silent in this chat.`);
+      await helpers.reply(
+        from,
+        `${UIkit.box('PAUSED', '⏸️')}\n\nBot is silent in this chat.`
+      );
     }
   },
   {
@@ -1769,12 +1855,18 @@ ${UIkit.section('REPORT', '🕐')}
       if (args[0] === 'all') {
         pausedChats.delete('ALL');
         saveState();
-        await helpers.reply(from, `${UIkit.box('RESUMED', '▶️')}\n\nBot is active everywhere.`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('RESUMED', '▶️')}\n\nBot is active everywhere.`
+        );
         return;
       }
       pausedChats.delete(from);
       saveState();
-      await helpers.reply(from, `${UIkit.box('RESUMED', '▶️')}\n\nBot is active in this chat.`);
+      await helpers.reply(
+        from,
+        `${UIkit.box('RESUMED', '▶️')}\n\nBot is active in this chat.`
+      );
     }
   },
   {
@@ -1785,11 +1877,18 @@ ${UIkit.section('REPORT', '🕐')}
     handler: async ({ from }) => {
       const g = pausedChats.has('ALL');
       const l = pausedChats.has(from);
-      const status = g ? '🌍 Global pause ON' : l ? '⏸️ This chat paused' : '▶️ Active';
-      await helpers.reply(from, `${UIkit.box('PAUSE STATUS', '📋')}\n\n│ ${status}`);
+      const status = g
+        ? '🌍 Global pause ON'
+        : l
+        ? '⏸️ This chat paused'
+        : '▶️ Active';
+      await helpers.reply(
+        from,
+        `${UIkit.box('PAUSE STATUS', '📋')}\n\n│ ${status}`
+      );
     }
   },
-  
+
   // ========================================================================
   // GROUP
   // ========================================================================
@@ -1844,10 +1943,14 @@ ${UIkit.section('REPORT', '🕐')}
     handler: async ({ from, text }) => {
       helpers.requireGroup(from);
       const custom = text.replace(/^[.!]setwelcome\s+/i, '');
-      if (!custom) helpers.fail('Usage: .setwelcome <text>  (@user, @group)');
+      if (!custom)
+        helpers.fail('Usage: .setwelcome <text>  (@user, @group)');
       state.customWelcome[from] = custom;
       saveState();
-      await helpers.reply(from, `${UIkit.box('SAVED', '✅')}\n\nCustom welcome message set.`);
+      await helpers.reply(
+        from,
+        `${UIkit.box('SAVED', '✅')}\n\nCustom welcome message set.`
+      );
     }
   },
   {
@@ -1893,9 +1996,13 @@ ${UIkit.divider}`;
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.kick @user');
-      const resolved = mentioned.map((j) => helpers.resolveJid(j)).filter(Boolean);
+      const resolved = mentioned
+        .map((j) => helpers.resolveJid(j))
+        .filter(Boolean);
       if (!resolved.length) {
-        helpers.fail('❌ Cannot resolve any mentioned user — their LIDs are not in LID_MAP.');
+        helpers.fail(
+          '❌ Cannot resolve any mentioned user — their LIDs are not in LID_MAP.'
+        );
       }
       await state.sock.groupParticipantsUpdate(from, resolved, 'remove');
       await helpers.reply(from, `${UIkit.box('KICKED', '✅')}`);
@@ -1910,9 +2017,13 @@ ${UIkit.divider}`;
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.promote @user');
-      const resolved = mentioned.map((j) => helpers.resolveJid(j)).filter(Boolean);
+      const resolved = mentioned
+        .map((j) => helpers.resolveJid(j))
+        .filter(Boolean);
       if (!resolved.length) {
-        helpers.fail('❌ Cannot resolve mentioned user — add their LID to LID_MAP.');
+        helpers.fail(
+          '❌ Cannot resolve mentioned user — add their LID to LID_MAP.'
+        );
       }
       await state.sock.groupParticipantsUpdate(from, resolved, 'promote');
       await helpers.reply(from, `${UIkit.box('PROMOTED', '✅')}`);
@@ -1927,9 +2038,13 @@ ${UIkit.divider}`;
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.demote @user');
-      const resolved = mentioned.map((j) => helpers.resolveJid(j)).filter(Boolean);
+      const resolved = mentioned
+        .map((j) => helpers.resolveJid(j))
+        .filter(Boolean);
       if (!resolved.length) {
-        helpers.fail('❌ Cannot resolve mentioned user — add their LID to LID_MAP.');
+        helpers.fail(
+          '❌ Cannot resolve mentioned user — add their LID to LID_MAP.'
+        );
       }
       await state.sock.groupParticipantsUpdate(from, resolved, 'demote');
       await helpers.reply(from, `${UIkit.box('DEMOTED', '✅')}`);
@@ -1976,16 +2091,19 @@ ${UIkit.row('Name', meta.subject)}
 ${UIkit.row('ID', meta.id)}
 ${UIkit.row('Members', meta.participants.length)}
 ${UIkit.row('Admins', meta.participants.filter((p) => p.admin).length)}
-${UIkit.row('Created', new Date(meta.creation * 1000).toUTCString().split(',')[0])}
+${UIkit.row(
+  'Created',
+  new Date(meta.creation * 1000).toUTCString().split(',')[0]
+)}
 
 ${UIkit.section('ADMINS', '👑')}
 ${admins}`;
       await helpers.reply(from, txt);
     }
   },
-  
+
   // ========================================================================
-  // 🆕 GROUP BRANDING — .setgroup
+  // GROUP BRANDING — .setgroup
   // ========================================================================
   {
     name: '.setgroup',
@@ -1993,14 +2111,14 @@ ${admins}`;
     admin: true,
     category: 'group',
     desc: 'Update group name / description / picture',
-    usage: '.setgroup name <text> | desc <text> | pic (reply to image) | info',
+    usage:
+      '.setgroup name <text> | desc <text> | pic (reply to image) | info',
     handler: async ({ msg, from, args }) => {
       helpers.requireGroup(from);
-      
+
       const sub = (args[0] || '').toLowerCase();
       const sock = state.sock;
-      
-      // ---------- INFO ----------
+
       if (!sub || sub === 'info') {
         const meta = await sock.groupMetadata(from);
         await helpers.replyWithBanner(
@@ -2021,13 +2139,13 @@ ${UIkit.row('.setgroup info', 'show this panel')}`
         );
         return;
       }
-      
-      // ---------- NAME ----------
+
       if (sub === 'name') {
         const newName = args.slice(1).join(' ').trim();
         if (!newName) helpers.fail('❌ Usage: .setgroup name <new name>');
-        if (newName.length > 100) helpers.fail('❌ Name too long (max 100).');
-        
+        if (newName.length > 100)
+          helpers.fail('❌ Name too long (max 100).');
+
         await withTyping(from, async () => {
           await sock.groupUpdateSubject(from, newName);
           await helpers.reply(
@@ -2040,13 +2158,13 @@ ${UIkit.row('Name', newName)}`
         });
         return;
       }
-      
-      // ---------- DESCRIPTION ----------
+
       if (sub === 'desc' || sub === 'description') {
         const newDesc = args.slice(1).join(' ').trim();
         if (!newDesc) helpers.fail('❌ Usage: .setgroup desc <new description>');
-        if (newDesc.length > 512) helpers.fail('❌ Description too long (max 512).');
-        
+        if (newDesc.length > 512)
+          helpers.fail('❌ Description too long (max 512).');
+
         await withTyping(from, async () => {
           await sock.groupUpdateDescription(from, newDesc);
           await helpers.reply(
@@ -2059,18 +2177,17 @@ ${UIkit.section('NEW DESCRIPTION', '✅')}
         });
         return;
       }
-      
-      // ---------- PICTURE ----------
+
       if (sub === 'pic' || sub === 'icon' || sub === 'photo') {
         const quoted = helpers.quoted(msg);
         const img = quoted?.imageMessage;
         if (!img) {
           helpers.fail(
             '❌ Reply to an *image* with `.setgroup pic` to change the group icon.\n' +
-            '📌 Tip: square images look best (min 192×192).'
+              '📌 Tip: square images look best (min 192×192).'
           );
         }
-        
+
         await withTyping(from, async () => {
           const ctx = helpers.contextInfo(msg);
           const fakeMsg = {
@@ -2093,14 +2210,14 @@ ${UIkit.row('Size', `${(buf.length / 1024).toFixed(1)} KB`)}`
         });
         return;
       }
-      
+
       helpers.fail(
         `❌ Unknown sub-command *${sub}*.\n` +
-        `📖 Try: .setgroup name | desc | pic | info`
+          `📖 Try: .setgroup name | desc | pic | info`
       );
     }
   },
-  
+
   // ========================================================================
   // MODERATION
   // ========================================================================
@@ -2117,7 +2234,9 @@ ${UIkit.row('Size', `${(buf.length / 1024).toFixed(1)} KB`)}`
         saveState();
         await helpers.reply(
           from,
-          `${UIkit.box('ANTILINK ON', '🛡️')}\n\n│ Action : ${state.antilinkAction.get(from) || 'delete'}`
+          `${UIkit.box('ANTILINK ON', '🛡️')}\n\n│ Action : ${
+            state.antilinkAction.get(from) || 'delete'
+          }`
         );
       } else if (sub === 'off') {
         state.antilinkGroups.delete(from);
@@ -2130,7 +2249,10 @@ ${UIkit.row('Size', `${(buf.length / 1024).toFixed(1)} KB`)}`
         }
         state.antilinkAction.set(from, a);
         saveState();
-        await helpers.reply(from, `${UIkit.box('ANTILINK ACTION', '⚙️')}\n\n│ ${a}`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('ANTILINK ACTION', '⚙️')}\n\n│ ${a}`
+        );
       } else {
         const enabled = state.antilinkGroups.has(from);
         await helpers.reply(
@@ -2185,7 +2307,9 @@ ${UIkit.section('USAGE', '📖')}
         saveState();
         await helpers.reply(
           from,
-          `${UIkit.box('ANTI-MENTION ON', '🛡️')}\n\nAction: ${state.antimentionAction.get(from) || 'warn'}`
+          `${UIkit.box('ANTI-MENTION ON', '🛡️')}\n\nAction: ${
+            state.antimentionAction.get(from) || 'warn'
+          }`
         );
       } else if (sub === 'off') {
         state.antimentionGroups.delete(from);
@@ -2193,10 +2317,14 @@ ${UIkit.section('USAGE', '📖')}
         await helpers.reply(from, `${UIkit.box('ANTI-MENTION OFF', '🚫')}`);
       } else if (sub === 'action') {
         const a = args[1];
-        if (!['warn', 'kick'].includes(a)) helpers.fail('Usage: .antimention action warn|kick');
+        if (!['warn', 'kick'].includes(a))
+          helpers.fail('Usage: .antimention action warn|kick');
         state.antimentionAction.set(from, a);
         saveState();
-        await helpers.reply(from, `${UIkit.box('ANTI-MENTION ACTION', '⚙️')}\n\n${a}`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('ANTI-MENTION ACTION', '⚙️')}\n\n${a}`
+        );
       } else {
         const enabled = state.antimentionGroups.has(from);
         await helpers.reply(
@@ -2226,30 +2354,42 @@ ${UIkit.section('USAGE', '📖')}
         if (mode === 'global') {
           state.reactionsGlobal = true;
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS GLOBAL ON', '😄')}`);
+          await helpers.reply(
+            from,
+            `${UIkit.box('REACTIONS GLOBAL ON', '😄')}`
+          );
         } else {
           state.reactionsEnabled.add(from);
           state.reactionsDisabled.delete(from);
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS ON HERE', '😄')}`);
+          await helpers.reply(
+            from,
+            `${UIkit.box('REACTIONS ON HERE', '😄')}`
+          );
         }
       } else if (scope === 'off') {
         if (mode === 'global') {
           state.reactionsGlobal = false;
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS GLOBAL OFF', '🚫')}`);
+          await helpers.reply(
+            from,
+            `${UIkit.box('REACTIONS GLOBAL OFF', '🚫')}`
+          );
         } else {
           state.reactionsDisabled.add(from);
           state.reactionsEnabled.delete(from);
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS OFF HERE', '🚫')}`);
+          await helpers.reply(
+            from,
+            `${UIkit.box('REACTIONS OFF HERE', '🚫')}`
+          );
         }
       } else {
-        const local = state.reactionsEnabled.has(from) ?
-          'ON' :
-          state.reactionsDisabled.has(from) ?
-          'OFF' :
-          'inherit';
+        const local = state.reactionsEnabled.has(from)
+          ? 'ON'
+          : state.reactionsDisabled.has(from)
+          ? 'OFF'
+          : 'inherit';
         await helpers.reply(
           from,
           `${UIkit.pandaBanner('REACTIONS')}
@@ -2273,34 +2413,44 @@ Usage: .reactions on|off [global]`
       const action = args[0];
       const timeArg = args[1];
       const repeat = args[2];
-      
+
       if (action === 'list') {
-        const entries = [...state.schedules.entries()].filter(([j]) => j === from);
+        const entries = [...state.schedules.entries()].filter(
+          ([j]) => j === from
+        );
         if (!entries.length) {
           await helpers.reply(from, '📋 No schedules for this group.');
           return;
         }
         const txt = entries
           .map(([, s]) => {
-            const t = new Date(s.at).toISOString().replace('T', ' ').slice(0, 16);
-            return `│ ${s.action.toUpperCase()} @ ${t} UTC (${s.repeat || 'once'})`;
+            const t = new Date(s.at)
+              .toISOString()
+              .replace('T', ' ')
+              .slice(0, 16);
+            return `│ ${s.action.toUpperCase()} @ ${t} UTC (${
+              s.repeat || 'once'
+            })`;
           })
           .join('\n');
-        await helpers.reply(from, `${UIkit.pandaBanner('SCHEDULES')}\n\n${txt}`);
+        await helpers.reply(
+          from,
+          `${UIkit.pandaBanner('SCHEDULES')}\n\n${txt}`
+        );
         return;
       }
-      
+
       if (action === 'cancel') {
         state.schedules.delete(from);
         saveState();
         await helpers.reply(from, `${UIkit.box('SCHEDULE CLEARED', '🗑️')}`);
         return;
       }
-      
+
       if (action !== 'open' && action !== 'close') {
         helpers.fail('Usage: .schedule open|close <HH:MM|30m|2h> [daily]');
       }
-      
+
       let at;
       if (/^\d+m$/.test(timeArg)) {
         at = Date.now() + parseInt(timeArg) * 60 * 1000;
@@ -2315,15 +2465,16 @@ Usage: .reactions on|off [global]`
       } else {
         helpers.fail('❌ Invalid time. Use HH:MM (UTC) or 30m / 2h.');
       }
-      
+
       state.schedules.set(from, {
         action,
         at,
         repeat: repeat === 'daily' ? 'daily' : 'once'
       });
       saveState();
-      
-      const when = new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+
+      const when =
+        new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
       await helpers.reply(
         from,
         `${UIkit.box('SCHEDULED', '🕒')}
@@ -2343,7 +2494,10 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
     usage: '.warn @user [reason]',
     handler: async ({ msg, from, args }) => {
       helpers.requireGroup(from);
-      const mentioned = helpers.requireMention(msg, '.warn @user [reason]');
+      const mentioned = helpers.requireMention(
+        msg,
+        '.warn @user [reason]'
+      );
       const targetRaw = mentioned[0];
       const target = helpers.resolveJid(targetRaw) || targetRaw;
       const groupWarns = state.warnings.get(from) || {};
@@ -2353,7 +2507,7 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       groupWarns[target] = list;
       state.warnings.set(from, groupWarns);
       saveState();
-      
+
       if (list.length >= 3) {
         try {
           await state.sock.groupParticipantsUpdate(from, [target], 'remove');
@@ -2389,7 +2543,9 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       const groupWarns = state.warnings.get(from) || {};
       const list = groupWarns[target] || [];
       await safeSend(from, {
-        text: `${UIkit.box('WARNINGS', '📋')}\n\n@${target.split('@')[0]} has *${list.length}/3* warnings.\n\n${
+        text: `${UIkit.box('WARNINGS', '📋')}\n\n@${
+          target.split('@')[0]
+        } has *${list.length}/3* warnings.\n\n${
           list.map((r, i) => `${i + 1}. ${r}`).join('\n') || '—'
         }`,
         mentions: [target]
@@ -2417,7 +2573,7 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       });
     }
   },
-  
+
   // ========================================================================
   // SPECIAL
   // ========================================================================
@@ -2430,15 +2586,23 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       if (args[0] === 'on') {
         state.viewOnceEnabled = true;
         saveState();
-        await helpers.reply(from, `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ✅ ON`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ✅ ON`
+        );
       } else if (args[0] === 'off') {
         state.viewOnceEnabled = false;
         saveState();
-        await helpers.reply(from, `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ❌ OFF`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ❌ OFF`
+        );
       } else {
         await helpers.reply(
           from,
-          `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ${state.viewOnceEnabled ? '✅ ON' : '❌ OFF'}\n\nUsage: .vo on|off`
+          `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ${
+            state.viewOnceEnabled ? '✅ ON' : '❌ OFF'
+          }\n\nUsage: .vo on|off`
         );
       }
     }
@@ -2452,15 +2616,23 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       if (args[0] === 'on') {
         state.autoDownload = true;
         saveState();
-        await helpers.reply(from, `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ✅ ON`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ✅ ON`
+        );
       } else if (args[0] === 'off') {
         state.autoDownload = false;
         saveState();
-        await helpers.reply(from, `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ❌ OFF`);
+        await helpers.reply(
+          from,
+          `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ❌ OFF`
+        );
       } else {
         await helpers.reply(
           from,
-          `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ${state.autoDownload ? '✅ ON' : '❌ OFF'}\n\nUsage: .autodl on|off`
+          `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ${
+            state.autoDownload ? '✅ ON' : '❌ OFF'
+          }\n\nUsage: .autodl on|off`
         );
       }
     }
@@ -2474,7 +2646,7 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
     handler: async ({ msg, from }) => {
       const quoted = helpers.quoted(msg);
       const ctx = helpers.contextInfo(msg);
-      
+
       if (!quoted || !ctx) {
         await helpers.replyTyping(
           from,
@@ -2494,12 +2666,12 @@ ${UIkit.section('AUTO-ENGAGE', '❤️')}
         );
         return;
       }
-      
+
       const sender =
         helpers.resolveJid(ctx.participant || '') ||
         ctx.participant ||
         from;
-      
+
       const reconstructed = {
         key: {
           remoteJid: from,
@@ -2509,7 +2681,7 @@ ${UIkit.section('AUTO-ENGAGE', '❤️')}
         },
         message: quoted
       };
-      
+
       try {
         const ok = await postToStatus(reconstructed);
         if (ok) {
@@ -2546,7 +2718,7 @@ const ADMIN_TRIGGERS = new Set();
 function buildLookup() {
   COMMAND_LOOKUP.clear();
   ADMIN_TRIGGERS.clear();
-  
+
   for (const cmd of COMMANDS) {
     const triggers = [cmd.name, ...(cmd.aliases || [])];
     for (const t of triggers) {
@@ -2554,19 +2726,18 @@ function buildLookup() {
       if (cmd.admin) ADMIN_TRIGGERS.add(t.toLowerCase());
     }
   }
-  
-  console.log(`[handlers] lookup built with ${COMMAND_LOOKUP.size} trigger(s)`);
+
+  console.log(
+    `[handlers] lookup built with ${COMMAND_LOOKUP.size} trigger(s)`
+  );
 }
 
 // ----------------------------------------------------------------------------
 // 🔧 TIER 2 — isKnownCommand(token)
 // ----------------------------------------------------------------------------
-// Returns true if `token` (lowercase, no prefix) matches any registered
-// command name or alias. Used to enable bare-word command invocation.
 function isKnownCommand(token) {
   if (!token || typeof token !== 'string') return false;
   const t = token.toLowerCase();
-  // Try both '.x' and '!x' forms against the lookup.
   return COMMAND_LOOKUP.has('.' + t) || COMMAND_LOOKUP.has('!' + t);
 }
 
@@ -2600,97 +2771,48 @@ function buildMenu(uptimeMin) {
     moderation: { emoji: '🛡️', title: 'MODERATION' },
     special: { emoji: '📸', title: 'SPECIAL' }
   };
-  
-  const ORDER = ['general', 'media', 'fun', 'tools', 'admin', 'pause', 'group', 'moderation', 'special'];
-  
+
+  const ORDER = [
+    'general', 'media', 'fun', 'tools',
+    'admin', 'pause', 'group', 'moderation', 'special'
+  ];
+
   const byCat = {};
   for (const cmd of COMMANDS) {
     if (!cmd.category) continue;
     (byCat[cmd.category] ||= []).push(cmd);
   }
-  
-  const UIkit = state.UIkit || {
+
+  const banner = UIkit || {
     pandaBanner: (t) => `╭━━━━━━━━━━━━━━━━━━━━╮\n┃  🐼  *${t}*\n╰━━━━━━━━━━━━━━━━━━━━╯`,
     section: (t, e) => `┌─ ${e || '•'} *${t}* ─────────`,
     row: (k, v) => `│ ${String(k).padEnd(10)}: ${v}`,
     box: (t, e) => `╭━━━━━━━━━━━━━━━━━━━━╮\n┃  ${e || '📦'}  *${t}*\n╰━━━━━━━━━━━━━━━━━━━━╯`,
     divider: '━━━━━━━━━━━━━━━━━━━━━━━'
   };
-  
-  let menu = `${UIkit.pandaBanner('COMMAND CENTER')}
 
-${UIkit.section('BOT INFO', 'ℹ️')}
-${UIkit.row('Version', 'v1.0.0')}
-${UIkit.row('Prefix',  '.  or  !')}
-${UIkit.row('Uptime',  `${uptimeMin} min`)}
-${UIkit.row('Admin',   ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set')}
+  let menu = `${banner.pandaBanner('COMMAND CENTER')}
+
+${banner.section('BOT INFO', 'ℹ️')}
+${banner.row('Version', 'v1.0.0')}
+${banner.row('Prefix', '.  or  !')}
+${banner.row('Uptime', `${uptimeMin} min`)}
+${banner.row('Admin', ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set')}
 `;
-  
+
   for (const cat of ORDER) {
     const meta = CATEGORY_META[cat];
     const cmds = byCat[cat];
     if (!meta || !cmds?.length) continue;
-    
-    menu += `\n${UIkit.section(meta.title, meta.emoji)}\n`;
+
+    menu += `\n${banner.section(meta.title, meta.emoji)}\n`;
     for (const c of cmds) {
       menu += `│ ${c.name.padEnd(16, ' ')} ${c.desc || ''}\n`;
     }
   }
-  
-  menu += `\n${UIkit.divider}\n  🐼  _PANDA • powered by Fanuels DX_`;
+
+  menu += `\n${banner.divider}\n  🐼  _PANDA • powered by Fanuels DX_`;
   return menu;
-}
-
-// ============================================================================
-// 🔧 safeSend BRIDGE
-// ============================================================================
-// Routes every outgoing send from handlers through engine.send(), which
-// uses connection.safeSend() — that's what enables E2EE retry receipts and
-// the "Waiting for this message" fix.
-// ----------------------------------------------------------------------------
-async function safeSend(from, content, opts = {}) {
-  try {
-    return await engine.send(from, content, opts);
-  } catch (e) {
-    const sock = state.sock;
-    if (!sock) throw e;
-    console.warn('[safeSend] engine.send failed, raw fallback:', e.message);
-    return sock.sendMessage(from, content, opts);
-  }
-}
-
-// ============================================================================
-// STATUS ENGAGEMENT (stubs — wire these if you want auto-like / auto-view)
-// ============================================================================
-// These are referenced by the exports and called by connection.js if you
-// have a status broadcast listener. They're safe no-ops by default so the
-// bot doesn't crash if status features are disabled.
-// ----------------------------------------------------------------------------
-function scheduleStatusEngagement(statusKey, delayMs = 1500) {
-  if (!statusKey) return;
-  setTimeout(() => {
-    likeStatus(statusKey).catch(() => {});
-    viewStatus(statusKey).catch(() => {});
-  }, delayMs);
-}
-
-function cancelStatusEngagement(statusKey) {
-  // No-op placeholder. Real implementation would clear a timer stored in a Map.
-  void statusKey;
-}
-
-async function viewStatus(statusKey) {
-  // Default: do nothing. Enable by implementing readMessages on the socket:
-  //   await state.sock.readMessages([{ remoteJid: 'status@broadcast', id: statusKey.id, participant: statusKey.participant }]);
-  void statusKey;
-  return true;
-}
-
-async function likeStatus(statusKey) {
-  // Default: do nothing. Enable by sending a reaction to status@broadcast:
-  //   await state.sock.sendMessage('status@broadcast', { react: { text: '❤️', key: statusKey } }, { statusJidList: [statusKey.participant] });
-  void statusKey;
-  return true;
 }
 
 // ============================================================================
@@ -2702,46 +2824,46 @@ async function handleCommand(msg, from, senderJid, rawText) {
     console.log('[cmd] dropped — no socket');
     return;
   }
-  
+
   const text = rawText.trim();
-  
+
   // 🔧 TIER 2 — accept prefixed AND bare-word invocations.
-  // Prefixed: ".ping" / "!ping".
-  // Bare-word: "ping" (only if it maps to a real command).
   const isPrefixed = text.startsWith('.') || text.startsWith('!');
   let normalized = text;
-  
+
   if (!isPrefixed) {
     const firstToken = text.split(/\s+/)[0].toLowerCase();
     if (!isKnownCommand(firstToken)) return; // unknown bare word → ignore
     normalized = '.' + text; // normalize for lookup
   }
-  
+
   const parts = normalized.split(' ');
   const base = parts[0].toLowerCase();
   const args = parts.slice(1);
-  
+
   const admin = isAdmin(senderJid);
   const isGroup = from.endsWith('@g.us');
-  
+
   const command = COMMAND_LOOKUP.get(base);
   if (!command) {
-    // Only nag for '.'-prefixed unknowns; silent on '!x' and bare words.
     if (base.startsWith('.')) {
       await withTyping(from, () =>
         safeSend(from, {
-          text: `${(state.UIkit?.box || ((t, e) => `*${t}*`))('UNKNOWN', '❓')}\n\nCommand *${base}* not found.\nType *.help* to see the menu.`
+          text: `${(state.UIkit?.box || ((t, e) => `*${t}*`))(
+            'UNKNOWN',
+            '❓'
+          )}\n\nCommand *${base}* not found.\nType *.help* to see the menu.`
         })
       );
     }
     return;
   }
-  
+
   if (command.admin && !admin) {
     await helpers.denied(from);
     return;
   }
-  
+
   const ctx = {
     msg,
     from,
@@ -2754,7 +2876,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
     sock: sockInstance,
     state
   };
-  
+
   try {
     await command.handler(ctx);
   } catch (err) {
@@ -2762,7 +2884,10 @@ async function handleCommand(msg, from, senderJid, rawText) {
       await helpers.reply(from, err.message);
     } else {
       console.error(`[cmd ${base}]`, err);
-      await helpers.reply(from, `❌ Command *${base}* failed: ${err.message}`);
+      await helpers.reply(
+        from,
+        `❌ Command *${base}* failed: ${err.message}`
+      );
     }
   }
 }
@@ -2782,9 +2907,9 @@ module.exports = {
   preCommandHooks,
   renderTextSticker,
   buildLookup,
-  isKnownCommand, // 🔧 TIER 2
-  
-  // 🔥 status-engagement internals for testing / external triggers
+  isKnownCommand,
+
+  // status-engagement internals for testing / external triggers
   scheduleStatusEngagement,
   cancelStatusEngagement,
   viewStatus,
