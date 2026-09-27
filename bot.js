@@ -3,9 +3,6 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  MessageStore,
-  createMessageStoreHandler,
-  createAntiDeleteHandler,
   downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -18,24 +15,51 @@ import { handleMessage } from './command.js';
 export const state = {
   sock: null,
   connected: false,
-  mode: 'private', // 'private' | 'public'
+  mode: 'private',
   ownerJid: null,
   pairingCode: null,
   startedAt: Date.now(),
   lastDisconnect: null,
 };
 
-// ---- Message store (anti-delete / anti-edit) ----
-export const messageStore = new MessageStore({
-  maxMessagesPerChat: 100,
-  ttl: 60 * 60 * 1000, // 1 hour
-});
-
-// ---- Helpers ----
-const DATA_DIR = path.resolve('./data');
-const AUTH_DIR = path.resolve('./auth');
+// ---- Render-aware paths ----
+const IS_RENDER = !!process.env.RENDER;
+const DATA_ROOT = IS_RENDER && process.env.PERSISTENT_DISK ? '/data' : '.';
+const AUTH_DIR = path.join(DATA_ROOT, 'auth');
+const DATA_DIR = path.join(DATA_ROOT, 'data');
 const OWNER_FILE = path.join(DATA_DIR, 'owner.json');
 
+// ---- Custom in-memory message store (replaces missing MessageStore) ----
+export const messageStore = new Map();
+
+export function createMessageStoreHandler(store) {
+  return (payload) => {
+    for (const msg of payload.messages || []) {
+      if (msg.key.id && msg.key.remoteJid) {
+        store.set(`${msg.key.remoteJid}:${msg.key.id}`, msg);
+      }
+    }
+  };
+}
+
+export function createAntiDeleteHandler(store) {
+  return (updates) => {
+    const deleted = [];
+    for (const { key, update } of updates) {
+      const protocolMsg = update?.message?.protocolMessage;
+      if (protocolMsg?.type === 'REVOKE') {
+        const originalKey = protocolMsg.key;
+        if (originalKey) {
+          const original = store.get(`${originalKey.remoteJid}:${originalKey.id}`);
+          if (original) deleted.push({ key, originalMessage: original });
+        }
+      }
+    }
+    return deleted;
+  };
+}
+
+// ---- Helpers ----
 function ensureDirs() {
   for (const d of [DATA_DIR, AUTH_DIR]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
@@ -99,12 +123,29 @@ export async function startBot() {
   
   // ---- Reactions (🐼 view-once capture) ----
   sock.ev.on('messages.reaction', async (reactions) => {
-    // stub — implement later in command.js
+    for (const { key, reaction } of reactions) {
+      if (reaction.text !== '🐼' || !state.ownerJid) continue;
+      const original = messageStore.get(`${key.remoteJid}:${key.id}`);
+      if (original?.message?.viewOnceMessageV2) {
+        try {
+          const buffer = await downloadMediaMessage(original, 'buffer', {}, {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: sock.updateMediaMessage,
+          });
+          await sock.sendMessage(state.ownerJid, {
+            image: buffer,
+            caption: '📥 Downloaded from view-once',
+          });
+        } catch (e) {
+          console.error('view-once download failed', e.message);
+        }
+      }
+    }
   });
   
   // ---- Group participants ----
   sock.ev.on('group-participants.update', async (update) => {
-    // stub — welcome/goodbye later
+    // Stub — welcome/goodbye later
   });
   
   // ---- Connection lifecycle ----
