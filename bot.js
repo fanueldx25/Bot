@@ -11,6 +11,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { handleMessage, handleReaction, handleGroupParticipants } from './command.js';
 
 export const state = {
@@ -19,10 +20,10 @@ export const state = {
   mode: 'private',
   ownerJid: null,
   pairingCode: null,
+  sessionToken: null,
   startedAt: Date.now(),
   lastDisconnect: null,
   isInitialConnection: true,
-  // Command toggles
   antidelete: true,
   antiedit: true,
   welcome: true,
@@ -30,7 +31,7 @@ export const state = {
   welcomeText: 'Welcome to *{group}*, @{user}! 👋',
   goodbyeText: 'Goodbye @{user}! 👋',
   prefix: '!',
-  bannerUrl: null,
+  bannerUrl: 'https://i.imgur.com/8Q9Z4Qp.jpeg', // hardcoded banner
   botName: 'WA Bot',
 };
 
@@ -41,8 +42,8 @@ const AUTH_DIR = path.join(DATA_ROOT, 'auth');
 const DATA_DIR = path.join(DATA_ROOT, 'data');
 const OWNER_FILE = path.join(DATA_DIR, 'owner.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const TOKEN_FILE = path.join(DATA_DIR, 'token.json');
 
-// In-memory message store
 export const messageStore = new Map();
 const MAX_STORE = 500;
 
@@ -71,6 +72,10 @@ function loadConfig() {
     const { jid } = JSON.parse(fs.readFileSync(OWNER_FILE, 'utf-8'));
     state.ownerJid = jid;
   }
+  if (fs.existsSync(TOKEN_FILE)) {
+    const { token } = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf-8'));
+    state.sessionToken = token;
+  }
 }
 
 function saveConfig() {
@@ -83,6 +88,13 @@ function saveConfig() {
 function saveOwner(jid) {
   fs.writeFileSync(OWNER_FILE, JSON.stringify({ jid }, null, 2));
   state.ownerJid = jid;
+}
+
+function generateToken() {
+  const token = crypto.randomBytes(24).toString('hex');
+  fs.writeFileSync(TOKEN_FILE, JSON.stringify({ token }, null, 2));
+  state.sessionToken = token;
+  return token;
 }
 
 export async function startBot() {
@@ -108,7 +120,6 @@ export async function startBot() {
 
   state.sock = sock;
 
-  // Store every message
   sock.ev.on('messages.upsert', ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
@@ -116,10 +127,9 @@ export async function startBot() {
     }
   });
 
-  // Command handler
   sock.ev.on('messages.upsert', (payload) => handleMessage(payload, sock, state));
 
-  // Anti-delete + anti-edit (both via messages.upsert protocolMessage)
+  // Anti-delete + anti-edit
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
@@ -156,12 +166,8 @@ export async function startBot() {
     }
   });
 
-  // Reaction handler (🐼 view-once)
   sock.ev.on('messages.reaction', (reactions) => handleReaction(reactions, sock, state));
-
-  // Group participants
   sock.ev.on('group-participants.update', (update) => handleGroupParticipants(update, sock, state));
-
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', async (update) => {
@@ -186,7 +192,9 @@ export async function startBot() {
       state.pairingCode = null;
       const jid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
       if (!state.ownerJid) saveOwner(jid);
+      if (!state.sessionToken) generateToken();
       console.log('✅ Connected as', jid);
+      console.log('🔑 Session token:', state.sessionToken);
     }
 
     if (connection === 'close') {
@@ -215,3 +223,5 @@ export async function requestPairing(phoneNumber) {
 }
 
 export function persistConfig() { saveConfig(); }
+export function getToken() { return state.sessionToken; }
+export function regenerateToken() { return generateToken(); }

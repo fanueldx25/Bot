@@ -1,5 +1,5 @@
 import express from 'express';
-import { startBot, requestPairing, state, persistConfig } from './bot.js';
+import { startBot, requestPairing, state, persistConfig, getToken, regenerateToken } from './bot.js';
 
 const app = express();
 app.use(express.json());
@@ -12,6 +12,7 @@ app.get('/api/status', (req, res) => {
     mode: state.mode,
     ownerJid: state.ownerJid,
     pairingCode: state.pairingCode,
+    sessionToken: state.sessionToken,
     uptime: Math.floor((Date.now() - state.startedAt) / 1000),
     antidelete: state.antidelete,
     antiedit: state.antiedit,
@@ -26,6 +27,20 @@ app.post('/api/pair', async (req, res) => {
     const code = await requestPairing(phone);
     res.json({ code });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/token/import', async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'Token required' });
+  if (token === state.sessionToken) {
+    return res.json({ ok: true, message: 'Token valid, bot already connected' });
+  }
+  res.status(400).json({ error: 'Invalid token' });
+});
+
+app.post('/api/token/regenerate', (req, res) => {
+  const token = regenerateToken();
+  res.json({ token });
 });
 
 app.post('/api/mode', (req, res) => {
@@ -63,6 +78,10 @@ const UI_HTML = /* html */ `
       theme: { extend: { colors: { wa: { green: '#25D366', dark: '#128C7E', light: '#DCF8C6', gray: '#F0F0F0', darkgray: '#667781' } } } }
     }
   </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+  </style>
 </head>
 <body class="bg-neutral-950 text-neutral-100 min-h-screen flex items-center justify-center p-4">
   <main class="w-full max-w-md space-y-4">
@@ -72,7 +91,18 @@ const UI_HTML = /* html */ `
       <div id="statusBadge" class="ml-auto px-3 py-1 rounded-full text-xs font-medium bg-neutral-800 text-neutral-400">Checking…</div>
     </div>
 
-    <div id="pairingCard" class="rounded-2xl bg-neutral-900 border border-neutral-800 p-5 space-y-4">
+    <!-- Token Import Card -->
+    <div id="tokenCard" class="rounded-2xl bg-neutral-900 border border-neutral-800 p-5 space-y-4">
+      <div><h2 class="text-sm font-medium text-neutral-300">Session Token</h2><p class="text-xs text-neutral-500 mt-1">Enter your saved token to auto-connect.</p></div>
+      <div class="flex gap-2">
+        <input id="tokenInput" type="text" placeholder="Paste session token" class="flex-1 px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-xs font-mono focus:outline-none focus:border-wa-green transition-colors" />
+        <button id="tokenBtn" class="px-4 py-2 rounded-lg bg-wa-green hover:bg-wa-dark text-neutral-900 text-sm font-medium transition-colors disabled:opacity-50">Connect</button>
+      </div>
+      <p id="tokenError" class="hidden text-xs text-red-400"></p>
+    </div>
+
+    <!-- Pairing Card -->
+    <div id="pairingCard" class="hidden rounded-2xl bg-neutral-900 border border-neutral-800 p-5 space-y-4">
       <div><h2 class="text-sm font-medium text-neutral-300">Pair Device</h2><p class="text-xs text-neutral-500 mt-1">Enter phone with country code (no +).</p></div>
       <div class="flex gap-2">
         <input id="phone" type="tel" placeholder="2376XXXXXXXX" class="flex-1 px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-sm focus:outline-none focus:border-wa-green transition-colors" />
@@ -87,14 +117,24 @@ const UI_HTML = /* html */ `
           </button>
         </div>
       </div>
-      <p id="pairError" class="hidden text-xs text-red-400"></p>
     </div>
 
+    <!-- Status Card -->
     <div id="statusCard" class="hidden rounded-2xl bg-neutral-900 border border-neutral-800 p-5 space-y-4">
-      <div><h2 class="text-sm font-medium text-neutral-300">Bot Status</h2><p class="text-xs text-neutral-500 mt-1">Connected and running</p></div>
+      <div class="flex items-center justify-between">
+        <div><h2 class="text-sm font-medium text-neutral-300">Bot Status</h2><p class="text-xs text-neutral-500 mt-1">Connected and running</p></div>
+        <button id="regenTokenBtn" class="text-[10px] text-neutral-500 hover:text-neutral-300 transition-colors">Regenerate Token</button>
+      </div>
       <div class="grid grid-cols-2 gap-3">
         <div class="rounded-lg bg-neutral-800 p-3"><p class="text-[10px] uppercase tracking-wide text-neutral-500">Owner</p><p id="ownerJid" class="text-xs font-mono mt-1 truncate">—</p></div>
         <div class="rounded-lg bg-neutral-800 p-3"><p class="text-[10px] uppercase tracking-wide text-neutral-500">Uptime</p><p id="uptime" class="text-xs font-mono mt-1">—</p></div>
+      </div>
+      <div class="rounded-lg bg-neutral-800 p-3">
+        <p class="text-[10px] uppercase tracking-wide text-neutral-500 mb-1">Session Token</p>
+        <div class="flex items-center gap-2">
+          <code id="sessionToken" class="flex-1 text-[10px] font-mono truncate text-wa-green">—</code>
+          <button id="copyTokenBtn" class="text-[10px] text-neutral-500 hover:text-neutral-300">Copy</button>
+        </div>
       </div>
       <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
         <span class="text-sm text-neutral-400">Mode</span>
@@ -149,10 +189,12 @@ const UI_HTML = /* html */ `
         if (r.connected) {
           badge.textContent = 'Online';
           badge.className = 'ml-auto px-3 py-1 rounded-full text-xs font-medium bg-wa-green/20 text-wa-green';
+          $('tokenCard').classList.add('hidden');
           $('pairingCard').classList.add('hidden');
           $('statusCard').classList.remove('hidden');
           $('ownerJid').textContent = r.ownerJid || '—';
           $('uptime').textContent = fmtUptime(r.uptime);
+          $('sessionToken').textContent = r.sessionToken || 'not generated';
           setModeUI(r.mode);
           setToggleUI('antidelete', r.antidelete);
           setToggleUI('antiedit', r.antiedit);
@@ -160,23 +202,42 @@ const UI_HTML = /* html */ `
         } else {
           badge.textContent = 'Offline';
           badge.className = 'ml-auto px-3 py-1 rounded-full text-xs font-medium bg-red-500/20 text-red-400';
-          $('pairingCard').classList.remove('hidden');
           $('statusCard').classList.add('hidden');
+          if (r.sessionToken) {
+            $('tokenCard').classList.remove('hidden');
+            $('pairingCard').classList.add('hidden');
+          } else {
+            $('tokenCard').classList.add('hidden');
+            $('pairingCard').classList.remove('hidden');
+          }
           if (r.pairingCode) { $('codeBox').classList.remove('hidden'); $('codeValue').textContent = r.pairingCode; }
         }
       } catch (e) { console.error(e); }
     }
 
+    $('tokenBtn').addEventListener('click', async () => {
+      const token = $('tokenInput').value.trim();
+      if (!token) return;
+      $('tokenError').classList.add('hidden');
+      try {
+        const r = await fetch('/api/token/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        }).then(r => r.json());
+        if (r.ok) { $('tokenInput').value = ''; refresh(); }
+        else { $('tokenError').textContent = r.error; $('tokenError').classList.remove('hidden'); }
+      } catch (e) { $('tokenError').textContent = 'Network error'; $('tokenError').classList.remove('hidden'); }
+    });
+
     $('pairBtn').addEventListener('click', async () => {
       const phone = $('phone').value.trim();
       if (!phone) return;
-      $('pairError').classList.add('hidden');
       $('pairBtn').disabled = true; $('pairBtn').textContent = 'Requesting…';
       try {
         const r = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) }).then(r => r.json());
         if (r.code) { $('codeBox').classList.remove('hidden'); $('codeValue').textContent = r.code; }
-        else { $('pairError').textContent = r.error || 'Failed'; $('pairError').classList.remove('hidden'); }
-      } catch (e) { $('pairError').textContent = 'Network error'; $('pairError').classList.remove('hidden'); }
+      } catch (e) { console.error(e); }
       finally { $('pairBtn').disabled = false; $('pairBtn').textContent = 'Pair'; }
     });
 
@@ -184,8 +245,19 @@ const UI_HTML = /* html */ `
       const code = $('codeValue').textContent;
       if (!code) return;
       await navigator.clipboard.writeText(code.replace(/-/g, ''));
-      $('copyBtn').title = 'Copied!';
-      setTimeout(() => $('copyBtn').title = 'Copy', 1500);
+    });
+
+    $('copyTokenBtn').addEventListener('click', async () => {
+      const token = $('sessionToken').textContent;
+      if (!token || token === '—') return;
+      await navigator.clipboard.writeText(token);
+      $('copyTokenBtn').textContent = 'Copied!';
+      setTimeout(() => $('copyTokenBtn').textContent = 'Copy', 1500);
+    });
+
+    $('regenTokenBtn').addEventListener('click', async () => {
+      await fetch('/api/token/regenerate', { method: 'POST' });
+      refresh();
     });
 
     document.querySelectorAll('.modeBtn').forEach(btn => btn.addEventListener('click', async () => {
