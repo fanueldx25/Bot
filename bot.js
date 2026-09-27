@@ -4,6 +4,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
+  Browsers,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -20,16 +21,20 @@ export const state = {
   pairingCode: null,
   startedAt: Date.now(),
   lastDisconnect: null,
+  isInitialConnection: true, // FIX: prevents premature reconnect loop
 };
 
 // ---- Render-aware paths ----
 const IS_RENDER = !!process.env.RENDER;
-const DATA_ROOT = IS_RENDER && process.env.PERSISTENT_DISK ? '/data' : '.';
+const PERSISTENT = process.env.PERSISTENT_DISK === 'true';
+
+// On Render, if PERSISTENT_DISK is not set, we still try /data but warn
+const DATA_ROOT = IS_RENDER ? (PERSISTENT ? '/data' : '/tmp') : '.';
 const AUTH_DIR = path.join(DATA_ROOT, 'auth');
 const DATA_DIR = path.join(DATA_ROOT, 'data');
 const OWNER_FILE = path.join(DATA_DIR, 'owner.json');
 
-// ---- Custom in-memory message store (replaces missing MessageStore) ----
+// ---- Custom in-memory message store ----
 export const messageStore = new Map();
 
 export function createMessageStoreHandler(store) {
@@ -94,8 +99,9 @@ export async function startBot() {
     },
     printQRInTerminal: false,
     logger: pino({ level: 'silent' }),
-    browser: ['WA Bot', 'Chrome', '1.0.0'],
+    browser: Browsers.macOS('Chrome'), // FIX: pairing code needs proper browser format
     markOnlineOnConnect: false,
+    syncFullHistory: false,
   });
   
   state.sock = sock;
@@ -144,18 +150,39 @@ export async function startBot() {
   });
   
   // ---- Group participants ----
-  sock.ev.on('group-participants.update', async (update) => {
-    // Stub — welcome/goodbye later
+  sock.ev.on('group-participants.update', async () => {
+    // Stub
   });
   
   // ---- Connection lifecycle ----
   sock.ev.on('creds.update', saveCreds);
   
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    
+    // FIX: Request pairing code only when connection is 'connecting' and QR is available
+    if (qr && !authState.creds.registered && !state.pairingCode) {
+      // Wait a tick to ensure socket is ready
+      setTimeout(async () => {
+        try {
+          const phone = process.env.PAIRING_PHONE || '';
+          if (!phone) {
+            console.log('⚠️  Set PAIRING_PHONE env var to auto-request pairing code');
+            return;
+          }
+          const cleaned = phone.replace(/\D/g, '');
+          const code = await sock.requestPairingCode(cleaned);
+          state.pairingCode = code;
+          console.log('🔑 Pairing code:', code);
+        } catch (e) {
+          console.error('Pairing code request failed:', e.message);
+        }
+      }, 3000); // 3s delay to let WhatsApp connect
+    }
     
     if (connection === 'open') {
       state.connected = true;
+      state.isInitialConnection = false; // FIX: now reconnects are safe
       state.pairingCode = null;
       const jid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
       if (!state.ownerJid) saveOwner(jid);
@@ -166,11 +193,19 @@ export async function startBot() {
       state.connected = false;
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
       state.lastDisconnect = code;
+      
+      // FIX: Do NOT reconnect if this was the initial connection and we're not registered yet
+      if (state.isInitialConnection && !authState.creds.registered) {
+        console.log('⏸️  Initial connection closed — waiting for pairing, not reconnecting');
+        return;
+      }
+      
       if (code !== DisconnectReason.loggedOut) {
         console.log('🔁 Reconnecting...');
+        state.isInitialConnection = false;
         startBot();
       } else {
-        console.log('🚪 Logged out. Delete ./auth and restart.');
+        console.log('🚪 Logged out. Delete auth dir and restart.');
       }
     }
   });
@@ -178,11 +213,14 @@ export async function startBot() {
   return sock;
 }
 
-// ---- Pairing code request ----
+// ---- Manual pairing request (from UI) ----
 export async function requestPairing(phoneNumber) {
   if (!state.sock) throw new Error('Socket not initialized');
   if (state.sock.authState.creds.registered) {
     throw new Error('Already registered');
+  }
+  if (state.pairingCode) {
+    return state.pairingCode; // Return existing code
   }
   const cleaned = phoneNumber.replace(/\D/g, '');
   const code = await state.sock.requestPairingCode(cleaned);
