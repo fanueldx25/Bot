@@ -61,6 +61,7 @@
   html, body {
     background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, #0b141a 60%);
   }
+  /* hide browser default spinner on tel inputs */
   input[type="tel"]::-webkit-outer-spin-button,
   input[type="tel"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 </style>
@@ -98,6 +99,7 @@
        style="background: linear-gradient(135deg, rgba(0,168,132,0.15), transparent 40%, transparent 60%, rgba(83,189,235,0.12));"></div>
 
   <div class="relative z-10">
+    <!-- Header -->
     <div class="flex items-center gap-3">
       <div class="w-12 h-12 rounded-[13px] bg-gradient-to-br from-wa-green to-[#017d63] grid place-items-center text-2xl shadow-lg shrink-0">🤖</div>
       <div>
@@ -110,11 +112,13 @@
       </button>
     </div>
 
+    <!-- Status pill -->
     <div class="inline-flex items-center gap-2 mt-4 mb-5 px-3 py-1.5 rounded-full bg-wa-panel2 border border-wa-border text-[12.5px] text-wa-muted">
       <span id="dot" class="dot w-2 h-2 rounded-full bg-wa-muted"></span>
       <span id="stateText">Disconnected</span>
     </div>
 
+    <!-- Phone input -->
     <label for="number" class="block text-[12.5px] text-wa-muted mb-2 tracking-wide">Phone number (with country code)</label>
     <div class="flex items-center bg-wa-panel2 border border-wa-border rounded-[14px] transition focus-within:border-wa-green focus-within:ring-[3px] focus-within:ring-wa-green/15">
       <span class="pl-3.5 pr-1 text-wa-muted text-sm select-none">+</span>
@@ -126,6 +130,7 @@
       <div>Include country code, <b class="text-[#c3ced3] font-semibold">without</b> the + sign or leading zero.</div>
     </div>
 
+    <!-- Connect button -->
     <button id="connectBtn"
       class="w-full mt-4 py-3.5 rounded-[14px] text-[15px] font-semibold tracking-wide cursor-pointer inline-flex items-center justify-center gap-2.5 transition active:scale-[0.985]
              bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] shadow-lg
@@ -135,11 +140,13 @@
       <span class="btn-label">Request Pairing Code</span>
     </button>
 
+    <!-- Disconnect -->
     <button id="disconnectBtn"
       class="hidden w-full mt-2.5 py-3.5 rounded-[14px] text-[15px] font-semibold cursor-pointer bg-wa-panel2 text-wa-text border border-wa-border transition hover:bg-[#2a3942] active:scale-[0.985]">
       Disconnect
     </button>
 
+    <!-- Connecting panel -->
     <div id="progressPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
       <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">⏳ Working…</div>
       <div id="progressMsg" class="text-[13px] text-wa-muted">Opening channel…</div>
@@ -149,6 +156,7 @@
       </div>
     </div>
 
+    <!-- Pairing code panel -->
     <div id="codePanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
       <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">🔑 Pairing Code</div>
       <div class="flex items-center justify-between gap-2.5 bg-wa-bg border-[1.5px] border-dashed border-wa-green rounded-[14px] p-3.5 mb-3">
@@ -167,11 +175,13 @@
       </ul>
     </div>
 
+    <!-- Connected panel -->
     <div id="connectedPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
       <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">✅ Connected</div>
       <div id="connectedInfo" class="text-[14px] text-wa-text"></div>
     </div>
 
+    <!-- Session code panel -->
     <div id="sessionCodePanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
       <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">🔑 Seasonal Reconnect Code</div>
       <div class="flex items-center justify-between gap-2.5 bg-wa-bg border-[1.5px] border-dashed border-wa-green rounded-[14px] p-3.5 mb-2.5">
@@ -183,25 +193,37 @@
       </div>
       <div class="text-[12px] text-wa-muted text-center">Rotates every 60s. Use this to reconnect without re-pairing.</div>
     </div>
+    <!-- Session backup panel -->
+<div id="sessionBackupPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
+  <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">💾 Session Backup</div>
 
-    <div id="sessionBackupPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
-      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">💾 Session Backup</div>
-      <div class="text-[12.5px] text-wa-muted mb-3 leading-snug">
-        Save this file and upload it after a redeploy to reconnect without pairing again.
-      </div>
-      <div id="sessionStatus" class="text-[12px] text-wa-muted mb-3">Checking session status…</div>
-      <button id="downloadSessionBtn"
-        class="w-full py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] transition hover:from-[#0ee2a8] hover:to-wa-green active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
-        ⬇ Download Session File
-      </button>
-      <input type="file" id="uploadSessionInput" accept="application/json,.json" class="hidden" />
-      <button id="uploadSessionBtn"
-        class="w-full mt-2 py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-wa-panel text-wa-text border border-wa-border transition hover:bg-[#2a3942] active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
-        ⬆ Upload Session File
-      </button>
-      <div id="sessionProgress" class="hidden text-[12px] text-wa-muted mt-2.5 leading-snug"></div>
-    </div>
+  <div class="text-[12.5px] text-wa-muted mb-3 leading-snug">
+    Save this file and upload it after a redeploy to reconnect without pairing again.
+  </div>
 
+  <!-- Status line -->
+  <div id="sessionStatus" class="text-[12px] text-wa-muted mb-3">
+    Checking session status…
+  </div>
+
+  <!-- Download button -->
+  <button id="downloadSessionBtn"
+    class="w-full py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] transition hover:from-[#0ee2a8] hover:to-wa-green active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
+    ⬇ Download Session File
+  </button>
+
+  <!-- Upload form -->
+  <input type="file" id="uploadSessionInput" accept="application/json,.json" class="hidden" />
+  <button id="uploadSessionBtn"
+    class="w-full mt-2 py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-wa-panel text-wa-text border border-wa-border transition hover:bg-[#2a3942] active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
+    ⬆ Upload Session File
+  </button>
+
+  <!-- Progress / result -->
+  <div id="sessionProgress" class="hidden text-[12px] text-wa-muted mt-2.5 leading-snug"></div>
+</div>
+
+    <!-- Error panel -->
     <div id="errorPanel" class="panel hidden mt-4 p-4 rounded-[14px] border animate-slidein"
          style="background: rgba(241,92,109,0.08); border-color: rgba(241,92,109,0.35);">
       <div class="text-[12.5px] font-bold uppercase tracking-widest mb-2.5 flex items-center gap-2 text-wa-red">⚠️ Problem</div>
@@ -220,6 +242,34 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
+// ============================================================================
+// DYNAMIC STYLES FOR STATE DOT (uses JS classes, easiest way)
+// ============================================================================
+const DOT_STYLES = {
+  disconnected: 'bg-wa-red',
+  connecting: 'bg-wa-yellow animate-pulseRing text-wa-yellow',
+  code_ready: 'bg-wa-blue animate-pulseRing text-wa-blue',
+  connected: 'bg-wa-green',
+  error: 'bg-wa-red animate-blink'
+};
+
+// ============================================================================
+// SESSION CODE LOADER
+// ============================================================================
+async function loadSessionCode() {
+  try {
+    const r = await fetch('/api/session-code');
+    if (r.status === 401) return;
+    const d = await r.json();
+    if (d.ok) {
+      document.getElementById('sessionCode').textContent = d.code;
+      document.getElementById('sessionCodePanel').classList.remove('hidden');
+    }
+  } catch {}
+}
+setInterval(loadSessionCode, 30 * 1000);
+loadSessionCode();
+
 // ============================================================================
 // ELEMENT REFS
 // ============================================================================
@@ -249,27 +299,7 @@ const errorMsg = $('errorMsg');
 const errorHint = $('errorHint');
 const toastEl = $('toast');
 
-const sessionBackupPanel = $('sessionBackupPanel');
-const sessionStatus = $('sessionStatus');
-const downloadSessionBtn = $('downloadSessionBtn');
-const uploadSessionBtn = $('uploadSessionBtn');
-const uploadSessionInput = $('uploadSessionInput');
-const sessionProgress = $('sessionProgress');
-
 let socket = null;
-let sessionCodeTimer = null;
-let sessionStatusTimer = null;
-
-// ============================================================================
-// DYNAMIC STYLES FOR STATE DOT
-// ============================================================================
-const DOT_STYLES = {
-  disconnected: 'bg-wa-red',
-  connecting: 'bg-wa-yellow animate-pulseRing text-wa-yellow',
-  code_ready: 'bg-wa-blue animate-pulseRing text-wa-blue',
-  connected: 'bg-wa-green',
-  error: 'bg-wa-red animate-blink'
-};
 
 // ============================================================================
 // TOAST
@@ -279,8 +309,6 @@ function toast(msg, kind = '') {
   toastEl.textContent = msg;
   toastEl.className =
     'fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 pointer-events-none px-4 py-2.5 rounded-full text-[13px] transition-all duration-200 opacity-100 translate-y-0';
-  toastEl.style.background = '';
-  toastEl.style.borderColor = '';
   if (kind === 'err') {
     toastEl.className += ' text-[#ffd7db] border';
     toastEl.style.background = 'rgba(241,92,109,0.15)';
@@ -291,6 +319,8 @@ function toast(msg, kind = '') {
     toastEl.style.borderColor = 'rgba(0,168,132,0.4)';
   } else {
     toastEl.className += ' bg-wa-panel2 text-wa-text border border-wa-border';
+    toastEl.style.background = '';
+    toastEl.style.borderColor = '';
   }
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
@@ -357,12 +387,6 @@ function renderState(data) {
   };
   stateText.textContent = labels[s] || s;
 
-  // 🔧 Always clear loading state on any terminal/non-progress state.
-  // Prevents the button from being stuck on "Requesting…" forever.
-  if (['code_ready', 'connected', 'error', 'disconnected'].includes(s)) {
-    setLoading(false);
-  }
-
   if (s === 'connecting') {
     hideAllPanels();
     progressMsg.textContent = data.message || 'Working…';
@@ -388,168 +412,141 @@ function renderState(data) {
     disconnectBtn.classList.add('hidden');
   }
 }
-
-// ============================================================================
-// SESSION CODE
-// ============================================================================
-async function loadSessionCode() {
-  try {
-    const r = await fetch('/api/session-code');
-    if (r.status === 401) return;
-    const d = await r.json();
-    if (d.ok) {
-      document.getElementById('sessionCode').textContent = d.code;
-      document.getElementById('sessionCodePanel').classList.remove('hidden');
-    }
-  } catch {}
-}
-
-function startSessionCodePolling() {
-  if (sessionCodeTimer) clearInterval(sessionCodeTimer);
-  loadSessionCode();
-  sessionCodeTimer = setInterval(loadSessionCode, 30 * 1000);
-}
-
-function stopSessionCodePolling() {
-  if (sessionCodeTimer) { clearInterval(sessionCodeTimer); sessionCodeTimer = null; }
-}
-
 // ============================================================================
 // SESSION BACKUP / RESTORE
 // ============================================================================
+const sessionBackupPanel = $('sessionBackupPanel');
+const sessionStatus = $('sessionStatus');
+const downloadSessionBtn = $('downloadSessionBtn');
+const uploadSessionBtn = $('uploadSessionBtn');
+const uploadSessionInput = $('uploadSessionInput');
+const sessionProgress = $('sessionProgress');
+
 async function refreshSessionStatus() {
-  try {
-    const r = await fetch('/api/session/status');
-    if (r.status === 401) return;
-    const d = await r.json();
-    if (!d.ok) return;
+try {
+const r = await fetch('/api/session/status');
+if (r.status === 401) return;
+const d = await r.json();
+if (!d.ok) return;
 
-    sessionBackupPanel.classList.remove('hidden');
+// Show panel always
+sessionBackupPanel.classList.remove('hidden');
 
-    if (d.hasSession) {
-      sessionStatus.innerHTML = `✅ Session on disk: <b class="text-wa-text">${d.number ? '+' + d.number : 'unknown'}</b> · ${d.state}`;
-      downloadSessionBtn.disabled = false;
-    } else {
-      sessionStatus.innerHTML = `⚠️ No session on disk. Pair first, then download.`;
-      downloadSessionBtn.disabled = true;
-    }
-  } catch {}
+if (d.hasSession) {
+sessionStatus.innerHTML = `✅ Session on disk: <b class="text-wa-text">${d.number ? '+' + d.number : 'unknown'}</b> · ${d.state}`;
+downloadSessionBtn.disabled = false;
+} else {
+sessionStatus.innerHTML = `⚠️ No session on disk. Pair first, then download.`;
+downloadSessionBtn.disabled = true;
 }
-
-function startSessionStatusPolling() {
-  if (sessionStatusTimer) clearInterval(sessionStatusTimer);
-  refreshSessionStatus();
-  sessionStatusTimer = setInterval(() => {
-    if (!app.classList.contains('hidden')) refreshSessionStatus();
-  }, 15000);
-}
-
-function stopSessionStatusPolling() {
-  if (sessionStatusTimer) { clearInterval(sessionStatusTimer); sessionStatusTimer = null; }
+} catch {}
 }
 
 async function downloadSession() {
-  downloadSessionBtn.disabled = true;
-  sessionProgress.classList.remove('hidden');
-  sessionProgress.textContent = 'Preparing download…';
+downloadSessionBtn.disabled = true;
+sessionProgress.classList.remove('hidden');
+sessionProgress.textContent = 'Preparing download…';
 
-  try {
-    const r = await fetch('/api/session/download');
-    if (r.status === 401) { showLogin(); return; }
+try {
+const r = await fetch('/api/session/download');
+if (r.status === 401) { showLogin(); return; }
 
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({ error: 'Download failed' }));
-      sessionProgress.textContent = '❌ ' + (err.error || 'Download failed');
-      downloadSessionBtn.disabled = false;
-      return;
-    }
+if (!r.ok) {
+const err = await r.json().catch(() => ({ error: 'Download failed' }));
+sessionProgress.textContent = '❌ ' + (err.error || 'Download failed');
+downloadSessionBtn.disabled = false;
+return;
+}
 
-    const cd = r.headers.get('Content-Disposition') || '';
-    const match = cd.match(/filename="([^"]+)"/);
-    const filename = match ? match[1] : `wa-session-${Date.now()}.json`;
+// Get filename from Content-Disposition header
+const cd = r.headers.get('Content-Disposition') || '';
+const match = cd.match(/filename="([^"]+)"/);
+const filename = match ? match[1] : `wa-session-${Date.now()}.json`;
 
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+const blob = await r.blob();
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = filename;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
 
-    sessionProgress.textContent = `✅ Downloaded ${filename} — save this file somewhere safe!`;
-    toast('Session downloaded', 'ok');
-  } catch (e) {
-    sessionProgress.textContent = '❌ ' + e.message;
-  } finally {
-    downloadSessionBtn.disabled = false;
-  }
+sessionProgress.textContent = `✅ Downloaded ${filename} — save this file somewhere safe!`;
+toast('Session downloaded', 'ok');
+} catch (e) {
+sessionProgress.textContent = '❌ ' + e.message;
+} finally {
+downloadSessionBtn.disabled = false;
+}
 }
 
 async function uploadSession(file) {
-  if (!file) return;
+if (!file) return;
 
-  if (!file.name.endsWith('.json')) {
-    toast('Please select a .json session file', 'err');
-    return;
-  }
-
-  // 🔧 Raised from 2MB to match server's 25MB JSON limit.
-  // Real Baileys session files are usually 50–500 KB, but can exceed 2MB
-  // if many pre-keys have accumulated.
-  if (file.size > 20 * 1024 * 1024) {
-    toast('File too large (max 20MB)', 'err');
-    return;
-  }
-
-  sessionProgress.classList.remove('hidden');
-  sessionProgress.textContent = `Reading ${file.name}…`;
-  uploadSessionBtn.disabled = true;
-
-  try {
-    const text = await file.text();
-    const parsed = JSON.parse(text);
-
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Invalid session file.');
-    }
-
-    sessionProgress.textContent = 'Uploading session…';
-
-    const r = await fetch('/api/session/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(parsed)
-    });
-
-    if (r.status === 401) { showLogin(); return; }
-
-    const d = await r.json();
-
-    if (!d.ok) {
-      sessionProgress.textContent = '❌ ' + (d.error || 'Upload failed');
-      toast(d.error || 'Upload failed', 'err');
-      return;
-    }
-
-    sessionProgress.textContent = `✅ Session restored (${d.written} file${d.written === 1 ? '' : 's'}). Bot is restarting…`;
-    toast('Session restored — reconnecting…', 'ok');
-  } catch (e) {
-    sessionProgress.textContent = '❌ ' + e.message;
-    toast('Upload failed: ' + e.message, 'err');
-  } finally {
-    uploadSessionBtn.disabled = false;
-    uploadSessionInput.value = '';
-  }
+if (!file.name.endsWith('.json')) {
+toast('Please select a .json session file', 'err');
+return;
 }
 
-downloadSessionBtn.addEventListener('click', downloadSession);
-uploadSessionBtn.addEventListener('click', () => uploadSessionInput.click());
-uploadSessionInput.addEventListener('change', (e) => {
-  const file = e.target.files?.[0];
-  if (file) uploadSession(file);
+if (file.size > 2 * 1024 * 1024) {
+toast('File too large (max 2MB)', 'err');
+return;
+}
+
+sessionProgress.classList.remove('hidden');
+sessionProgress.textContent = `Reading ${file.name}…`;
+uploadSessionBtn.disabled = true;
+
+try {
+const text = await file.text();
+const parsed = JSON.parse(text);
+
+if (!parsed || typeof parsed !== 'object') {
+throw new Error('Invalid session file.');
+}
+
+sessionProgress.textContent = 'Uploading session…';
+
+const r = await fetch('/api/session/upload', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify(parsed)
 });
+
+if (r.status === 401) { showLogin(); return; }
+
+const d = await r.json();
+
+if (!d.ok) {
+sessionProgress.textContent = '❌ ' + (d.error || 'Upload failed');
+toast(d.error || 'Upload failed', 'err');
+return;
+}
+
+sessionProgress.textContent = `✅ Session restored (${d.written} file${d.written === 1 ? '' : 's'}). Bot is restarting…`;
+toast('Session restored — reconnecting…', 'ok');
+} catch (e) {
+sessionProgress.textContent = '❌ ' + e.message;
+toast('Upload failed: ' + e.message, 'err');
+} finally {
+uploadSessionBtn.disabled = false;
+uploadSessionInput.value = '';
+}
+}
+
+downloadSessionBtn?.addEventListener('click', downloadSession);
+uploadSessionBtn?.addEventListener('click', () => uploadSessionInput.click());
+uploadSessionInput?.addEventListener('change', (e) => {
+const file = e.target.files?.[0];
+if (file) uploadSession(file);
+});
+
+// Refresh when we enter the app
+setInterval(() => {
+if (!app.classList.contains('hidden')) refreshSessionStatus();
+}, 15000);
 
 // ============================================================================
 // AUTH GATE
@@ -569,8 +566,6 @@ function showLogin() {
   loginScreen.classList.remove('hidden');
   loginScreen.classList.add('flex');
   app.classList.add('hidden');
-  stopSessionCodePolling();
-  stopSessionStatusPolling();
   setTimeout(() => pwInput.focus(), 100);
 }
 
@@ -579,8 +574,6 @@ function enterApp() {
   loginScreen.classList.remove('flex');
   app.classList.remove('hidden');
   startSocket();
-  startSessionCodePolling();
-  startSessionStatusPolling();
 }
 
 async function doLogin() {
@@ -645,6 +638,9 @@ function startSocket() {
 
   socket.on('state', (data) => {
     renderState(data);
+    if (['code_ready', 'connected', 'error'].includes(data.state)) {
+      setLoading(false);
+    }
   });
 
   fetch('/api/state')
@@ -726,7 +722,8 @@ copyBtn.addEventListener('click', async () => {
   }
 });
 
-document.getElementById('sessionCodeRefresh').addEventListener('click', loadSessionCode);
+// Session code refresh button
+document.getElementById('sessionCodeRefresh')?.addEventListener('click', loadSessionCode);
 
 // ============================================================================
 // BOOT
