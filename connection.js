@@ -1,6 +1,14 @@
 // ============================================================================
 // connection.js — Baileys socket + pairing code + rich error reporting
 // ============================================================================
+// Design:
+//   1. Generation counter on every socket kills ghost reconnects.
+//   2. stopBot() is async and fully awaited.
+//   3. startBot() is re-entrant-safe.
+//   4. DMs: reply to whatever remoteJid WhatsApp gave us. Try to normalize
+//      @lid → @s.whatsapp.net via senderPn / remoteJidAlt / LID_MAP, but if
+//      none of those resolve, KEEP the @lid and try anyway. Never drop.
+// ============================================================================
 
 const {
   default: makeWASocket,
@@ -18,14 +26,6 @@ const path = require('path');
 const state = require('./state');
 const handlers = require('./handlers');
 const { preCommandHooks } = handlers;
-
-// ⚠️ Require engine lazily inside handleIncoming to avoid a circular import
-// at module load time (engine.js requires state.js which is fine, but
-// engine.js's install() is called by handlers.js — we don't want to trigger
-// that ordering here).
-function getEngine() {
-  try { return require('./engine'); } catch (_) { return null; }
-}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -54,105 +54,6 @@ const DISCONNECT_MESSAGES = {
   [DisconnectReason.forbidden]: 'Number forbidden by WhatsApp.',
   [DisconnectReason.unavailableService]: 'WhatsApp service unavailable.'
 };
-
-// ============================================================================
-// 🔧 FIX 1 — MESSAGE STORE for getMessage (retry / re-encryption)
-// ============================================================================
-// When a recipient can't decrypt a message (key desync, offline device coming
-// online later, multi-device race), they send a retry receipt. Baileys calls
-// `getMessage(key)` to fetch the original and re-encrypt it. Without this
-// handler, Baileys silently drops the retry and the recipient is stuck on
-// "Waiting for this message. This may take a while."
-//
-// This store caches every message (incoming + outgoing echoes) keyed by
-// key.id so retries can be answered. Bounded by count + TTL to avoid leaks.
-// ============================================================================
-const MESSAGE_STORE = new Map();          // id -> WAMessage
-const MESSAGE_STORE_MAX = 2000;
-const MESSAGE_STORE_TTL = 30 * 60 * 1000; // 30 min
-
-function rememberMessage(msg) {
-  if (!msg?.key?.id) return;
-  MESSAGE_STORE.set(msg.key.id, msg);
-
-  if (MESSAGE_STORE.size > MESSAGE_STORE_MAX) {
-    const cutoff = Date.now() - MESSAGE_STORE_TTL;
-    for (const [id, m] of MESSAGE_STORE) {
-      const ts = (m.messageTimestamp || 0) * 1000;
-      if (ts && ts < cutoff) MESSAGE_STORE.delete(id);
-      if (MESSAGE_STORE.size <= MESSAGE_STORE_MAX) break;
-    }
-    while (MESSAGE_STORE.size > MESSAGE_STORE_MAX) {
-      const first = MESSAGE_STORE.keys().next().value;
-      MESSAGE_STORE.delete(first);
-    }
-  }
-}
-
-async function getMessageForRetry(key) {
-  if (!key?.id) return undefined;
-  const cached = MESSAGE_STORE.get(key.id);
-  if (cached) return cached;
-
-  // Optional fallback: if you installed Baileys with the `store` helper.
-  try {
-    const baileys = require('@whiskeysockets/baileys');
-    if (baileys?.store?.loadMessage) {
-      return await baileys.store.loadMessage(key.remoteJid, key.id);
-    }
-  } catch (_) { /* optional */ }
-
-  return undefined;
-}
-
-// ============================================================================
-// 🔧 FIX 3a — SAFE SEND helper
-// ============================================================================
-// Retries transient E2EE / socket errors instead of letting them bubble up
-// and trigger handler crashes or reconnect storms. Use this for anything
-// that isn't a direct reply to an inbound message (automations, broadcasts,
-// scheduled sends, welcome/goodbye, etc.).
-// ============================================================================
-async function safeSend(jid, content, options = {}, retries = 2) {
-  const sock = currentSock;
-  if (!sock) throw new Error('Socket not ready');
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const sent = await sock.sendMessage(jid, content, options);
-      // Cache outgoing messages so getMessage can answer retry receipts.
-      try { rememberMessage(sent); } catch (_) {}
-      return sent;
-    } catch (e) {
-      const msg = e?.message || String(e);
-      const transient =
-        /Connection Closed|Connection Terminated|Timed Out|EPIPE|ECONNRESET|Stream Errored|not connected|Socket closed|Bad MAC|decrypt/i
-          .test(msg);
-
-      if (!transient || attempt === retries) {
-        console.error(`[safeSend] giving up (${attempt + 1}/${retries + 1}):`, msg);
-        throw e;
-      }
-      console.warn(`[safeSend] transient error, retry ${attempt + 1}/${retries}:`, msg);
-      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-    }
-  }
-}
-
-// ============================================================================
-// 🔧 FIX 2a — Serialize creds.update saves
-// ============================================================================
-// Rapid creds.update events (common during pairing + initial sync) can race
-// each other in the multi-file store and corrupt creds.json / app-state-sync
-// keys. Chaining the writes prevents that.
-// ============================================================================
-let credsSaveChain = Promise.resolve();
-function queueSaveCreds(saveCreds) {
-  credsSaveChain = credsSaveChain
-    .then(() => saveCreds())
-    .catch((e) => console.error('[Creds] save failed:', e.message));
-  return credsSaveChain;
-}
 
 // ---------------------------------------------------------------------------
 // Banner
@@ -184,6 +85,8 @@ function validateNumber(raw) {
 // ============================================================================
 // SENDER RESOLVER
 // ============================================================================
+// Best-effort resolution of the sender's phone-number JID. Falls back to the
+// raw input if nothing better is found. Never returns null.
 function resolveSenderJid(msg, fallbackJid) {
   const candidates = [
     msg?.key?.senderPn,
@@ -195,7 +98,7 @@ function resolveSenderJid(msg, fallbackJid) {
   ];
 
   for (const c of candidates) {
-    if (c && typeof c === 'string' && c.includes('@')) {
+    if (c && typeof c === 'string' && c.endsWith('@s.whatsapp.net')) {
       const num = c.split('@')[0].split(':')[0];
       if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
     }
@@ -204,7 +107,7 @@ function resolveSenderJid(msg, fallbackJid) {
   const participant = msg?.key?.participant;
   if (participant && participant.endsWith('@s.whatsapp.net')) {
     const num = participant.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
+    if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
 
   if (fallbackJid) {
@@ -212,11 +115,13 @@ function resolveSenderJid(msg, fallbackJid) {
     if (fallbackJid.endsWith('@lid')) {
       const pn = state.resolveLid && state.resolveLid(raw);
       if (pn) return `${pn}@s.whatsapp.net`;
+      // Keep the raw @lid as the sender's identity. Do NOT fabricate.
+      return fallbackJid;
     }
     if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
   }
 
-  return participant || fallbackJid || '';
+  return fallbackJid || '';
 }
 
 // ============================================================================
@@ -351,8 +256,7 @@ function startScheduler() {
           jid,
           s.action === 'open' ? 'not_announcement' : 'announcement'
         );
-        // 🔧 FIX 3b — safeSend for scheduled broadcasts
-        await safeSend(jid, {
+        await sock.sendMessage(jid, {
           text:
             s.action === 'open'
               ? '🔓 *Group opened on schedule*'
@@ -368,7 +272,7 @@ function startScheduler() {
       } else {
         state.schedules.delete(jid);
       }
-      state.saveState();  // debounced in state.js
+      state.saveState();
     }
   }, 30 * 1000);
   console.log('[Schedule] ticker started');
@@ -426,7 +330,6 @@ async function startBot(rawNumber) {
       const old = currentSock;
       currentSock = null;
       state.sock = null;
-      if (typeof state.setSafeSend === 'function') state.setSafeSend(null);
       await teardownSocket(old);
     }
 
@@ -437,7 +340,6 @@ async function startBot(rawNumber) {
       message: 'Opening secure channel with WhatsApp...'
     });
 
-    // ---------- auth ----------
     let authState, saveCreds;
     try {
       const auth = await useMultiFileAuthState(AUTH_DIR);
@@ -452,7 +354,6 @@ async function startBot(rawNumber) {
       return { ok: false, error: e.message };
     }
 
-    // ---------- version ----------
     let version;
     try {
       const vres = await fetchLatestBaileysVersion();
@@ -462,7 +363,6 @@ async function startBot(rawNumber) {
       version = undefined;
     }
 
-    // ---------- socket ----------
     let sock;
     try {
       sock = makeWASocket({
@@ -479,15 +379,7 @@ async function startBot(rawNumber) {
         markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000,
-
-        // 🔧 FIX 1 — required so Baileys can answer retry receipts by
-        // re-encrypting and re-sending the original message.
-        getMessage: getMessageForRetry,
-
-        // 🔧 FIX 1b — bounded, faster retry handling for key renegotiation.
-        retryRequestDelayMs: 250,
-        maxMsgRetryCount: 5,
+        keepAliveIntervalMs: 30000
       });
     } catch (e) {
       console.error('[Socket] creation failed:', e.message);
@@ -499,12 +391,7 @@ async function startBot(rawNumber) {
     currentSock = sock;
     state.sock = sock;
 
-    // 🔧 FIX 2c — wire state.js's banner sender to our safeSend so banner
-    // replies get the same E2EE retry treatment as everything else.
-    if (typeof state.setSafeSend === 'function') state.setSafeSend(safeSend);
-
-    // 🔧 FIX 2b — serialize creds.saveCreds to avoid multi-file write races
-    sock.ev.on('creds.update', () => queueSaveCreds(saveCreds));
+    sock.ev.on('creds.update', saveCreds);
 
     // ---------- pairing code ----------
     if (!sock.authState.creds.registered) {
@@ -582,24 +469,12 @@ async function startBot(rawNumber) {
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const reason = DISCONNECT_MESSAGES[statusCode] || 'Unknown disconnect.';
-
-        // 🔧 FIX 3c — don't reconnect on terminal states, and don't wipe auth
-        // except on truly fatal ones. This prevents restart storms when a
-        // key exchange failure triggers a socket close.
-        const NO_RECONNECT = new Set([
-          DisconnectReason.loggedOut,
-          DisconnectReason.forbidden,
-          DisconnectReason.badSession,
-          DisconnectReason.multideviceMismatch,
-          DisconnectReason.connectionReplaced,
-        ]);
-        const shouldReconnect = !NO_RECONNECT.has(statusCode);
+        const shouldReconnect =
+          statusCode !== DisconnectReason.loggedOut &&
+          statusCode !== DisconnectReason.forbidden;
 
         stopScheduler();
         state.setState('disconnected', { code: statusCode, message: reason });
-
-        // Stale close (a newer socket already exists) — ignore.
-        if (myGen !== currentGen) return;
 
         if (shouldReconnect) {
           console.log('↻ Reconnecting in 3s...');
@@ -609,16 +484,9 @@ async function startBot(rawNumber) {
             if (myGen === currentGen) startBot(state.currentNumber);
           }, 3000);
         } else {
-          if (
-            statusCode === DisconnectReason.loggedOut ||
-            statusCode === DisconnectReason.badSession ||
-            statusCode === DisconnectReason.forbidden
-          ) {
-            try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
-          }
+          try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
           state.sock = null;
           state.botJid = null;
-          if (typeof state.setSafeSend === 'function') state.setSafeSend(null);
           state.setState('error', {
             message: reason,
             hint: 'You will need to pair again.'
@@ -630,11 +498,11 @@ async function startBot(rawNumber) {
     // ---------- messages ----------
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (myGen !== currentGen) return;
+      // Accept 'append' — that's how Baileys delivers your own DMs to the
+      // bot. Without this, first-time DMs from your own phone silently drop.
       if (type !== 'notify' && type !== 'append') return;
       for (const msg of messages) {
         try {
-          // 🔧 FIX 1c — cache every message so retries can be answered.
-          rememberMessage(msg);
           await handleIncoming(msg);
         } catch (e) {
           console.error('[Message]', e.message);
@@ -669,57 +537,58 @@ async function startBot(rawNumber) {
 async function handleIncoming(msg) {
   if (!msg.message) return;
 
-  let from = msg.key.remoteJid;
-  if (!from || from === 'status@broadcast') return;
+  // Raw remoteJid as WhatsApp sent it. This is what we will reply to if
+  // nothing better is available. NEVER drop the message just because the
+  // JID looks unusual.
+  const rawFrom = msg.key.remoteJid;
+  if (!rawFrom || rawFrom === 'status@broadcast') return;
 
-  // ---- LID → PN resolution ----
-  if (from.endsWith('@lid')) {
+  // Best-effort normalization: try to rewrite @lid → @s.whatsapp.net using
+  // whatever info Baileys gave us. If nothing resolves, keep the raw @lid
+  // and try to reply anyway.
+  let from = rawFrom;
+  if (rawFrom.endsWith('@lid')) {
     const alt =
       msg.key?.senderPn ||
       msg.key?.participantPn ||
       msg.key?.remoteJidAlt ||
       msg.key?.participantAlt;
 
-    let resolved = null;
     if (alt && alt.endsWith('@s.whatsapp.net')) {
-      resolved = alt;
+      from = alt;
+      console.log('[LID] resolved via alt →', from);
     } else {
-      const num = from.split('@')[0].split(':')[0];
+      const num = rawFrom.split('@')[0].split(':')[0];
       const pn = state.resolveLid && state.resolveLid(num);
-      if (pn) resolved = `${pn}@s.whatsapp.net`;
+      if (pn) {
+        from = `${pn}@s.whatsapp.net`;
+        console.log('[LID] resolved via map →', from);
+      } else {
+        // Learn if we can, but do NOT drop. Try the raw @lid.
+        console.log('[LID] no mapping for', rawFrom, '— sending to raw @lid');
+      }
     }
-
-    if (!resolved) {
-      console.error(
-        '[LID] DM cannot be routed — reply would silently fail.\n' +
-        '  remoteJid      = ' + from + '\n' +
-        '  senderPn       = ' + (msg.key?.senderPn || 'undefined') + '\n' +
-        '  participantPn  = ' + (msg.key?.participantPn || 'undefined') + '\n' +
-        '  remoteJidAlt   = ' + (msg.key?.remoteJidAlt || 'undefined') + '\n' +
-        '  participantAlt = ' + (msg.key?.participantAlt || 'undefined') + '\n' +
-        '  -> Add a mapping in state.js: lidToPn.set(\'<lid-digits>\', \'<phone-digits>\')'
-      );
-      return;
-    }
-    from = resolved;
   }
 
   const senderJid = resolveSenderJid(msg, from);
 
+  // Debug log — remove or leave, it's cheap.
   console.log('[in]', {
+    rawFrom,
     from,
     senderJid,
     fromMe: msg.key.fromMe,
-    participant: msg.key.participant || null,
     text: extractText(msg).slice(0, 40)
   });
 
+  // pause check
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) {
     console.log('[in] dropped: chat paused');
     return;
   }
 
-  // ---- LID → PN learning ----
+  // ---------- LID → PN learning ----------
+  // Learn from every message where Baileys gave us both JIDs, in DMs too.
   try {
     const participant = msg.key?.participant || '';
     const pn =
@@ -729,9 +598,18 @@ async function handleIncoming(msg) {
       msg.key?.remoteJidAlt;
 
     if (
+      rawFrom.endsWith('@lid') &&
+      pn &&
+      pn.endsWith('@s.whatsapp.net') &&
+      typeof state.registerLidMapping === 'function'
+    ) {
+      state.registerLidMapping(rawFrom, pn);
+    }
+
+    if (
       participant.endsWith('@lid') &&
       pn &&
-      pn.includes('@s.whatsapp.net') &&
+      pn.endsWith('@s.whatsapp.net') &&
       typeof state.registerLidMapping === 'function'
     ) {
       state.registerLidMapping(participant, pn);
@@ -759,7 +637,6 @@ async function handleIncoming(msg) {
         if (linkRegex.test(body)) {
           const action = state.antilinkAction.get(from) || 'delete';
 
-          // Delete must be immediate; safeSend retry semantics don't apply.
           try {
             await state.sock.sendMessage(from, { delete: msg.key });
           } catch (e) {
@@ -767,14 +644,14 @@ async function handleIncoming(msg) {
           }
 
           if (action === 'warn') {
-            await safeSend(from, {
+            await state.sock.sendMessage(from, {
               text: `⚠️ @${senderJid.split('@')[0]}, links are not allowed here.`,
               mentions: [senderJid]
             });
           } else if (action === 'kick') {
             try {
               await state.sock.groupParticipantsUpdate(from, [senderJid], 'remove');
-              await safeSend(from, {
+              await state.sock.sendMessage(from, {
                 text: `🚫 @${senderJid.split('@')[0]} was removed for posting a link.`,
                 mentions: [senderJid]
               });
@@ -799,7 +676,7 @@ async function handleIncoming(msg) {
       if (chatReactions && !chatMuted && !msg.key.fromMe) {
         const emojis = ['👍', '❤️', '😂', '🔥', '🎉', '👀', '💯', '🙌'];
         const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-        await safeSend(from, {
+        await state.sock.sendMessage(from, {
           react: { text: emoji, key: msg.key }
         });
       }
@@ -819,22 +696,13 @@ async function handleIncoming(msg) {
   // ---------- Pre-command hooks ----------
   try {
     const stopped = await preCommandHooks(msg, from, senderJid, text);
-    console.log('[hook] stopped =', stopped);
     if (stopped) return;
   } catch (e) {
     console.error('[hooks]', e.message);
   }
 
   // ---------- Commands ----------
-  // 🔧 FIX 4 — accept both '.' and '!' prefixes via engine.isCommand.
-  // Falls back to '.'-only if engine isn't loadable (defensive).
-  const engine = getEngine();
-  const isCmd = engine && typeof engine.isCommand === 'function'
-    ? engine.isCommand(text)
-    : text.startsWith('.');
-
-  if (!isCmd) return;
-
+  if (!text.startsWith('.') && !text.startsWith('!')) return;
   console.log('[cmd] dispatching', text.split(' ')[0], 'from', senderJid, 'chat', from);
   await handlers.handleCommand(msg, from, senderJid, text);
 }
@@ -871,9 +739,6 @@ async function stopBot() {
     currentSock = null;
     state.sock = null;
 
-    // 🔧 FIX 2d — unhook the safeSend bridge — the socket is going away.
-    if (typeof state.setSafeSend === 'function') state.setSafeSend(null);
-
     await teardownSocket(old);
 
     state.botJid = null;
@@ -895,7 +760,5 @@ module.exports = {
   resolveSenderJid,
   exportSession,
   importSession,
-  hasStoredSession,
-  safeSend,
-  rememberMessage,
+  hasStoredSession
 };
