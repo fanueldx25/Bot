@@ -1,6 +1,19 @@
 // ============================================================================
 // handlers.js — Feature handlers + command router (extensible version)
 // ============================================================================
+// Fixes applied in this file:
+//   1. .trivia no longer attaches a rogue listener to sock.ev
+//   2. .restart awaits stopBot() before startBot()
+//   3. .pair goes through connection.stopBot() instead of raw sock.end()
+//   4. handleCommand guards against null socket
+//   5. resolveSenderJid handles @lid correctly instead of lying about it
+//   6. helpers.mentions unwraps ephemeral / viewOnce / document wrappers
+//   7. helpers.contextInfo does the same
+//   8. helpers.quoted reuses contextInfo
+//   9. Trivia state is a bounded Map with a sweep timer
+//  10. .calc caps expression length and rejects non-finite results
+//  11. handleCommand preserves arg casing (only the command name is lowered)
+// ============================================================================
 
 const state = require('./state');
 const {
@@ -28,24 +41,83 @@ const os = require('os');
 const ADMIN_NUMBER = state.ADMIN_NUMBER;
 
 // ============================================================================
+// EPHEMERAL GAME STATE (per-chat, expires)
+// ============================================================================
+// 🔧 FIX 1 + 9: never attach listeners to sock.ev for per-command state.
+// Use a bounded Map with a periodic sweep instead.
+const TRIVIA_STATE = new Map(); // chatJid → { answers: string[], expiresAt: number }
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [chat, s] of TRIVIA_STATE) {
+    if (now > s.expiresAt) TRIVIA_STATE.delete(chat);
+  }
+}, 60_000).unref();
+
+// ============================================================================
 // SENDER RESOLVER
 // ============================================================================
+// 🔧 FIX 5: don't fabricate @s.whatsapp.net JIDs from @lid fallbacks.
 function resolveSenderJid(msg, fallbackJid) {
+  // 1. Explicit phone-number JID provided by Baileys
   const pn = msg?.key?.senderPn || msg?.key?.participantPn;
-  if (pn && typeof pn === 'string') {
+  if (pn && typeof pn === 'string' && pn.endsWith('@s.whatsapp.net')) {
     const num = pn.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
+    if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
+
+  // 2. Group participant — always a phone JID in groups
   const participant = msg?.key?.participant;
   if (participant && participant.endsWith('@s.whatsapp.net')) {
     const num = participant.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
+    if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
+
+  // 3. Fallback JID (DM remoteJid). Could be @s.whatsapp.net OR @lid.
   if (fallbackJid) {
-    const num = fallbackJid.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
+    const raw = fallbackJid.split('@')[0].split(':')[0];
+    if (fallbackJid.endsWith('@lid')) {
+      const resolved = state.resolveLid && state.resolveLid(raw);
+      if (resolved) return `${resolved}@s.whatsapp.net`;
+      return fallbackJid; // honest: don't pretend it's a phone JID
+    }
+    if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
   }
+
   return '';
+}
+
+// ============================================================================
+// MESSAGE UNWRAPPING
+// ============================================================================
+// 🔧 FIX 6/7/8: Baileys can deliver mentions/quotes nested inside wrappers
+// like ephemeralMessage, viewOnceMessage, documentWithCaptionMessage, etc.
+// This unwraps to the innermost real message.
+const WRAPPER_KEYS = [
+  'ephemeralMessage',
+  'viewOnceMessage',
+  'viewOnceMessageV2',
+  'viewOnceMessageV2Extension',
+  'documentWithCaptionMessage',
+  'editedMessage',
+  'deviceSentMessage'
+];
+
+function unwrapMessage(message) {
+  let m = message;
+  let guard = 0;
+  while (m && guard++ < 6) {
+    let unwrapped = false;
+    for (const k of WRAPPER_KEYS) {
+      if (m[k]?.message) {
+        m = m[k].message;
+        unwrapped = true;
+        break;
+      }
+    }
+    if (!unwrapped) break;
+  }
+  return m;
 }
 
 // ============================================================================
@@ -83,21 +155,32 @@ const helpers = {
     if (!from.endsWith('@g.us')) helpers.fail('❌ This command only works in groups.');
   },
 
+  // 🔧 FIX 6: unwrap before scanning, and scan every message type
   mentions(msg) {
-    return (
-      msg?.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
-      msg?.message?.imageMessage?.contextInfo?.mentionedJid ||
-      msg?.message?.videoMessage?.contextInfo?.mentionedJid ||
-      []
-    );
+    const m = unwrapMessage(msg?.message);
+    if (!m) return [];
+    for (const key of Object.keys(m)) {
+      const ci = m[key]?.contextInfo;
+      if (ci?.mentionedJid?.length) return ci.mentionedJid;
+    }
+    return [];
   },
 
+  // 🔧 FIX 8: reuse contextInfo
   quoted(msg) {
-    return msg?.message?.extendedTextMessage?.contextInfo?.quotedMessage || null;
+    const ci = helpers.contextInfo(msg);
+    return ci?.quotedMessage || null;
   },
 
+  // 🔧 FIX 7: unwrap before looking for contextInfo
   contextInfo(msg) {
-    return msg?.message?.extendedTextMessage?.contextInfo || null;
+    const m = unwrapMessage(msg?.message);
+    if (!m) return null;
+    for (const key of Object.keys(m)) {
+      const ci = m[key]?.contextInfo;
+      if (ci) return ci;
+    }
+    return null;
   },
 
   requireMention(msg, usage) {
@@ -305,7 +388,7 @@ _We'll miss you._`
 }
 
 // ============================================================================
-// 🆕 TEXT-TO-STICKER RENDERER (SVG → PNG → WEBP)
+// TEXT-TO-STICKER RENDERER (SVG → PNG → WEBP)
 // ============================================================================
 async function renderTextSticker(text, opts = {}) {
   let {
@@ -337,7 +420,6 @@ async function renderTextSticker(text, opts = {}) {
   const SIZE = 512;
   const fontFamily = FONTS[font] || FONTS.Arial;
 
-  // Word-wrap
   const MAX_CHARS_PER_LINE = 14;
   const words = String(text).split(/\s+/);
   const lines = [];
@@ -414,7 +496,7 @@ async function renderTextSticker(text, opts = {}) {
 }
 
 // ============================================================================
-// 🆕 PRE-COMMAND HOOKS: auto-correct + anti-mention
+// PRE-COMMAND HOOKS: trivia answer + auto-correct + anti-mention
 // ----------------------------------------------------------------------------
 // Call this from connection.js BEFORE handleCommand.
 // Returns true if the message was consumed and should not proceed.
@@ -423,6 +505,21 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
   if (!rawText || !rawText.trim()) return false;
   const sock = state.sock;
   if (!sock) return false;
+
+  // ---------- 🔧 FIX 1: TRIVIA ANSWER INTERCEPTION ----------
+  const trivia = TRIVIA_STATE.get(from);
+  if (trivia) {
+    if (Date.now() > trivia.expiresAt) {
+      TRIVIA_STATE.delete(from);
+    } else if (!rawText.startsWith('.')) {
+      const guess = rawText.trim().toLowerCase();
+      if (trivia.answers.includes(guess)) {
+        TRIVIA_STATE.delete(from);
+        try { await sock.sendMessage(from, { text: '✅ Correct!' }); } catch {}
+        return true;
+      }
+    }
+  }
 
   // ---------- AUTO-CORRECT ----------
   if (
@@ -457,11 +554,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
 
   // ---------- ANTI-MENTION ----------
   if (from.endsWith('@g.us') && state.antimentionGroups.has(from)) {
-    const mentioned =
-      msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
-      msg.message?.imageMessage?.contextInfo?.mentionedJid ||
-      msg.message?.videoMessage?.contextInfo?.mentionedJid ||
-      [];
+    const mentioned = helpers.mentions(msg);
 
     const mentionsGroupJid = mentioned.includes(from);
     const massMention = mentioned.length >= 5;
@@ -525,7 +618,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
 
 const COMMANDS = [
   // ========================================================================
-  // 📌 GENERAL
+  // GENERAL
   // ========================================================================
   {
     name: '.help',
@@ -582,13 +675,13 @@ const COMMANDS = [
         from,
         `${UI.box('WHO AM I', '👤')}
 
-│ Your number   : +${num}
-│ Resolved JID  : ${senderJid}
+│ Your number    : +${num}
+│ Resolved JID   : ${senderJid}
 │ Raw participant: ${raw}
-│ senderPn      : ${pn}
-│ participantPn : ${ppn}
-│ Admin number  : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'NOT SET'}
-│ You are admin : ${admin ? '✅ YES' : '❌ NO'}`
+│ senderPn       : ${pn}
+│ participantPn  : ${ppn}
+│ Admin number   : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'NOT SET'}
+│ You are admin  : ${admin ? '✅ YES' : '❌ NO'}`
       );
     }
   },
@@ -634,9 +727,12 @@ const COMMANDS = [
     desc: 'Safe calculator',
     usage: '.calc <expression>',
     handler: async ({ from, text }) => {
+      // 🔧 FIX 10: cap length and reject non-finite results
       const expr = text.replace(/^\.calc\s+/i, '').replace(/[^0-9+\-*/(). ]/g, '');
+      if (expr.length > 200) helpers.fail('❌ Expression too long.');
       try {
         const result = Function(`"use strict"; return (${expr})`)();
+        if (!Number.isFinite(result)) throw new Error('non-finite');
         await helpers.reply(from, `🧮 ${expr} = *${result}*`);
       } catch {
         helpers.fail('❌ Invalid expression.');
@@ -645,7 +741,7 @@ const COMMANDS = [
   },
 
   // ========================================================================
-  // 🎨 MEDIA
+  // MEDIA
   // ========================================================================
   {
     name: '.sticker',
@@ -872,7 +968,7 @@ const COMMANDS = [
   },
 
   // ========================================================================
-  // 🎲 FUN
+  // FUN
   // ========================================================================
   {
     name: '.roll',
@@ -942,6 +1038,7 @@ const COMMANDS = [
     }
   },
   {
+    // 🔧 FIX 1: no listener, uses TRIVIA_STATE map consumed by preCommandHooks
     name: '.trivia',
     category: 'fun',
     desc: 'Play a trivia question',
@@ -954,26 +1051,14 @@ const COMMANDS = [
         { q: 'Who wrote "Romeo and Juliet"?', a: ['shakespeare', 'william shakespeare'] }
       ];
       const pick = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
+      TRIVIA_STATE.set(from, {
+        answers: pick.a,
+        expiresAt: Date.now() + 30_000
+      });
       await helpers.reply(
         from,
         `${UI.box('TRIVIA', '🧠')}\n\n${pick.q}\n\n_Reply with your answer — you have 30s._`
       );
-
-      const sock = state.sock;
-      const listener = async (m) => {
-        try {
-          const mtext = (
-            m.message?.conversation || m.message?.extendedTextMessage?.text || ''
-          ).toLowerCase().trim();
-          if (!mtext) return;
-          if (pick.a.includes(mtext)) {
-            await sock.sendMessage(from, { text: '✅ Correct!' });
-            sock.ev.off('messages.upsert', listener);
-          }
-        } catch {}
-      };
-      sock.ev.on('messages.upsert', listener);
-      setTimeout(() => sock.ev.off('messages.upsert', listener), 30000);
     }
   },
   {
@@ -1015,7 +1100,7 @@ const COMMANDS = [
       const mentioned = helpers.requireMention(msg, '.ship @user1 @user2');
       if (mentioned.length < 2) helpers.fail('❌ Usage: .ship @user1 @user2');
       const [a, b] = mentioned;
-      const seed = [a, b].sort().join('|');
+      const seed = [a, b].slice().sort().join('|');
       let h = 0;
       for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
       const pct = Math.abs(h) % 101;
@@ -1030,7 +1115,7 @@ const COMMANDS = [
   },
 
   // ========================================================================
-  // 🛠️ TOOLS
+  // TOOLS
   // ========================================================================
   {
     name: '.shorten',
@@ -1138,7 +1223,7 @@ const COMMANDS = [
     desc: 'Manage auto-correct dictionary',
     usage: '.dict add <wrong> <right> | del <wrong> | list',
     handler: async ({ from, args }) => {
-      const sub = args[0];
+      const sub = (args[0] || '').toLowerCase();
       if (sub === 'add') {
         const wrong = (args[1] || '').toLowerCase();
         const right = args[2];
@@ -1186,7 +1271,8 @@ const COMMANDS = [
       const newText = args.join(' ');
       if (!newText) helpers.fail('❌ Usage: .edit <new text>');
 
-      const sender = msg.message?.extendedTextMessage?.contextInfo?.participant || '';
+      const ci = helpers.contextInfo(msg);
+      const sender = ci?.participant || '';
       const senderNum = sender.split('@')[0];
       await helpers.reply(
         from,
@@ -1197,7 +1283,7 @@ const COMMANDS = [
   },
 
   // ========================================================================
-  // 👮 ADMIN
+  // ADMIN
   // ========================================================================
   {
     name: '.status',
@@ -1243,23 +1329,25 @@ const COMMANDS = [
     category: 'admin',
     desc: 'Disconnect session',
     handler: async ({ from }) => {
-      await helpers.reply(from, '🚪 *Logging out...*');
+      await helpers.reply(from, '🚪 *Logging out…*');
       try { await state.sock.logout(); } catch (e) {}
     }
   },
   {
+    // 🔧 FIX 2: await stopBot before startBot
     name: '.restart',
     admin: true,
     category: 'admin',
     desc: 'Restart bot',
     handler: async ({ from }) => {
-      await helpers.reply(from, '🔄 *Restarting...*');
+      await helpers.reply(from, '🔄 *Restarting…*');
       const conn = require('./connection');
-      conn.stopBot();
-      setTimeout(() => conn.startBot(state.currentNumber), 2000);
+      await conn.stopBot();
+      await conn.startBot(state.currentNumber);
     }
   },
   {
+    // 🔧 FIX 3: use connection.stopBot(), not raw sock.end()
     name: '.pair',
     admin: true,
     category: 'admin',
@@ -1268,12 +1356,11 @@ const COMMANDS = [
     handler: async ({ from, args }) => {
       const num = args[0] || state.currentNumber;
       if (!num) helpers.fail('❌ Usage: .pair <number>');
-      await helpers.reply(from, `⏳ Requesting code for +${num}...`);
+      await helpers.reply(from, `⏳ Requesting code for +${num}…`);
       const conn = require('./connection');
-      try { if (state.sock) state.sock.end(undefined); } catch (e) {}
-      await new Promise((r) => setTimeout(r, 1000));
+      await conn.stopBot();
       await conn.startBot(num);
-      await helpers.reply(from, '📱 Code sent to dashboard. Open the web UI to see it.');
+      await helpers.reply(from, '📱 New pairing code sent to the dashboard.');
     }
   },
   {
@@ -1308,7 +1395,7 @@ const COMMANDS = [
   },
 
   // ========================================================================
-  // ⏸️ PAUSE
+  // PAUSE
   // ========================================================================
   {
     name: '.pause',
@@ -1360,7 +1447,7 @@ const COMMANDS = [
   },
 
   // ========================================================================
-  // 👥 GROUP
+  // GROUP
   // ========================================================================
   {
     name: '.welcome',
@@ -1543,7 +1630,7 @@ ${admins}`;
   },
 
   // ========================================================================
-  // 🛡️ MODERATION
+  // MODERATION
   // ========================================================================
   {
     name: '.antilink',
@@ -1849,7 +1936,7 @@ Usage: .reactions on|off [global]`
   },
 
   // ========================================================================
-  // 📸 SPECIAL
+  // SPECIAL
   // ========================================================================
   {
     name: '.vo',
@@ -1866,7 +1953,7 @@ Usage: .reactions on|off [global]`
         saveState();
         await helpers.reply(from, `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ❌ OFF`);
       } else {
-        helpers.fail('Usage: .vo on/off');
+        await helpers.reply(from, `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ${state.viewOnceEnabled ? '✅ ON' : '❌ OFF'}\n\nUsage: .vo on|off`);
       }
     }
   },
@@ -1885,7 +1972,7 @@ Usage: .reactions on|off [global]`
         saveState();
         await helpers.reply(from, `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ❌ OFF`);
       } else {
-        helpers.fail('Usage: .autodl on/off');
+        await helpers.reply(from, `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ${state.autoDownload ? '✅ ON' : '❌ OFF'}\n\nUsage: .autodl on|off`);
       }
     }
   },
@@ -1934,7 +2021,7 @@ Usage: .reactions on|off [global]`
 // ============================================================================
 // BUILD LOOKUP TABLES
 // ============================================================================
-const COMMAND_LOOKUP = new Map(); // trigger → command object
+const COMMAND_LOOKUP = new Map();
 const ADMIN_TRIGGERS = new Set();
 
 for (const cmd of COMMANDS) {
@@ -1946,7 +2033,7 @@ for (const cmd of COMMANDS) {
 }
 
 // ============================================================================
-// MENU BUILDER (auto-generates from registry)
+// MENU BUILDER
 // ============================================================================
 function buildMenu(uptimeMin) {
   const CATEGORY_META = {
@@ -2007,12 +2094,20 @@ function buildMenu(uptimeMin) {
 // COMMAND ROUTER
 // ============================================================================
 async function handleCommand(msg, from, senderJid, rawText) {
+  // 🔧 FIX 4: guard against null socket during teardown
   const sockInstance = state.sock;
+  if (!sockInstance) {
+    console.log('[cmd] dropped — no socket');
+    return;
+  }
+
   const text = rawText.trim();
-  const cmd = text.toLowerCase();
-  const parts = cmd.split(' ');
-  const base = parts[0];
+
+  // 🔧 FIX 11: only lowercase the command name, preserve arg casing
+  const parts = text.split(' ');
+  const base = parts[0].toLowerCase();
   const args = parts.slice(1);
+
   const admin = isAdmin(senderJid);
   const isGroup = from.endsWith('@g.us');
 
@@ -2067,6 +2162,6 @@ module.exports = {
   resolveSenderJid,
   helpers,
   COMMANDS,
-  preCommandHooks,        // 🆕
-  renderTextSticker       // 🆕 (exported for reuse)
+  preCommandHooks,
+  renderTextSticker
 };

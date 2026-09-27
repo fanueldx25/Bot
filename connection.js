@@ -10,6 +10,8 @@
 //   3. startBot() is re-entrant-safe: a `starting` flag prevents duplicate
 //      sockets when two callers race.
 //   4. Auth dir is never touched while a socket is alive.
+//   5. DMs from newer WhatsApp clients arrive as @lid; we normalize them to
+//      @s.whatsapp.net so replies actually deliver.
 // ============================================================================
 
 const {
@@ -37,14 +39,14 @@ const logger = pino({ level: 'silent' });
 
 // 🔧 FIX: module-level refs. These are the single source of truth for
 // "which socket is live" and "which generation are we on".
-let currentSock = null;   // the live Baileys socket
-let currentGen = 0;       // bumped on every start/stop; stale handlers bail
+let currentSock = null;    // the live Baileys socket
+let currentGen = 0;        // bumped on every start/stop; stale handlers bail
 let reconnectTimer = null; // pending reconnect setTimeout handle
-let starting = false;     // re-entrancy guard for startBot()
-let stopping = false;     // re-entrancy guard for stopBot()
+let starting = false;      // re-entrancy guard for startBot()
+let stopping = false;      // re-entrancy guard for stopBot()
 
 // ---------------------------------------------------------------------------
-// Friendly disconnect reasons (unchanged)
+// Friendly disconnect reasons
 // ---------------------------------------------------------------------------
 const DISCONNECT_MESSAGES = {
   [DisconnectReason.loggedOut]: 'Session logged out. You must link again.',
@@ -89,10 +91,9 @@ function validateNumber(raw) {
 // ============================================================================
 // SENDER RESOLVER — handles @lid linked-device JIDs
 // ============================================================================
-// 🔧 FIX: this now returns BOTH the canonical JID and a "best-effort" phone
-// number, and it prefers @s.whatsapp.net over @lid. In DMs, `participant` is
-// undefined, so we fall back to `remoteJid` — but only if remoteJid is not
-// itself an @lid, because replying to @lid is unreliable on some accounts.
+// Prefers @s.whatsapp.net over @lid. In DMs, `participant` is undefined, so
+// we fall back to `remoteJid` — but if remoteJid itself is an @lid, try the
+// LID map before giving up.
 function resolveSenderJid(msg, fallbackJid) {
   const candidates = [
     msg?.key?.senderPn,
@@ -116,8 +117,6 @@ function resolveSenderJid(msg, fallbackJid) {
     return `${num}@s.whatsapp.net`;
   }
 
-  // In a DM the sender is the remoteJid, but it might be an @lid.
-  // If it is, try to resolve it via the LID map before giving up.
   if (fallbackJid) {
     const raw = fallbackJid.split('@')[0].split(':')[0];
     if (fallbackJid.endsWith('@lid')) {
@@ -131,7 +130,7 @@ function resolveSenderJid(msg, fallbackJid) {
 }
 
 // ============================================================================
-// SESSION EXPORT / IMPORT (unchanged logic, just cleaned up)
+// SESSION EXPORT / IMPORT
 // ============================================================================
 function exportSession() {
   try {
@@ -244,7 +243,7 @@ function hasStoredSession() {
 }
 
 // ============================================================================
-// SCHEDULER (unchanged)
+// SCHEDULER
 // ============================================================================
 let schedulerTimer = null;
 
@@ -294,24 +293,16 @@ function stopScheduler() {
 // ============================================================================
 // INTERNAL: tear down a socket cleanly
 // ============================================================================
-// 🔧 FIX: this is the single place that knows how to kill a socket without
-// leaving ghosts behind. Every caller (startBot, stopBot) goes through it.
 async function teardownSocket(sock) {
   if (!sock) return;
 
-  // 1. Remove listeners FIRST so nothing fires during teardown.
   try { sock.ev.removeAllListeners('connection.update'); } catch (_) {}
   try { sock.ev.removeAllListeners('creds.update'); } catch (_) {}
   try { sock.ev.removeAllListeners('messages.upsert'); } catch (_) {}
   try { sock.ev.removeAllListeners('group-participants.update'); } catch (_) {}
 
-  // 2. Close the socket. Baileys' end() is async — await it so the WS
-  //    is genuinely dead before we open a replacement.
   try { await sock.end(undefined); } catch (_) {}
 
-  // 3. Give the event loop one tick to flush any final close events.
-  //    They won't reach our handlers (listeners removed), but other
-  //    timers may still be scheduled; a microtask boundary is enough.
   await new Promise((r) => setImmediate(r));
 }
 
@@ -326,8 +317,6 @@ async function startBot(rawNumber) {
   }
   const phoneNumber = v.clean;
 
-  // 🔧 FIX: re-entrancy guard. Two callers racing (upload handler + ghost
-  // reconnect timer) used to spawn two live sockets.
   if (starting) {
     console.log('[Bot] startBot already in progress — ignoring duplicate call');
     return { ok: false, error: 'Already starting' };
@@ -335,7 +324,6 @@ async function startBot(rawNumber) {
   starting = true;
 
   try {
-    // 🔧 FIX: cancel any pending reconnect from a previous generation.
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -343,7 +331,6 @@ async function startBot(rawNumber) {
 
     stopScheduler();
 
-    // 🔧 FIX: tear down the previous socket fully (listeners + await end).
     if (currentSock) {
       const old = currentSock;
       currentSock = null;
@@ -408,8 +395,6 @@ async function startBot(rawNumber) {
       return { ok: false, error: e.message };
     }
 
-    // 🔧 FIX: capture the generation this socket belongs to. Every handler
-    // below checks `myGen === currentGen` and bails if we've moved on.
     const myGen = ++currentGen;
     currentSock = sock;
     state.sock = sock;
@@ -425,7 +410,6 @@ async function startBot(rawNumber) {
 
       let attempt = 0;
       const requestCode = async () => {
-        // Abort if a newer startBot/stopBot has superseded this socket.
         if (myGen !== currentGen) return false;
 
         attempt++;
@@ -461,8 +445,6 @@ async function startBot(rawNumber) {
         }
       };
 
-      // 🔧 FIX: guard the timer callback too — if a new startBot has fired
-      // in the 3.5s window, don't request a code on a dead socket.
       setTimeout(() => {
         if (myGen === currentGen) requestCode();
       }, 3500);
@@ -470,8 +452,6 @@ async function startBot(rawNumber) {
 
     // ---------- connection.update ----------
     sock.ev.on('connection.update', (update) => {
-      // 🔧 FIX: THE critical guard. A ghost socket's close event used to
-      // flip state to 'disconnected' and schedule another startBot.
       if (myGen !== currentGen) return;
 
       const { connection, lastDisconnect, isNewLogin } = update;
@@ -506,16 +486,12 @@ async function startBot(rawNumber) {
 
         if (shouldReconnect) {
           console.log('↻ Reconnecting in 3s...');
-          // 🔧 FIX: store the timer so stopBot() can cancel it.
           if (reconnectTimer) clearTimeout(reconnectTimer);
           reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
-            // Re-check generation: if stopBot() ran during the 3s wait,
-            // this socket is dead and we must NOT reconnect.
             if (myGen === currentGen) startBot(state.currentNumber);
           }, 3000);
         } else {
-          // Hard logout — wipe auth so we don't try to reuse a dead session.
           try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
           state.sock = null;
           state.botJid = null;
@@ -530,7 +506,10 @@ async function startBot(rawNumber) {
     // ---------- messages ----------
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (myGen !== currentGen) return;
-      if (type !== 'notify') return;
+      // 🔧 FIX: accept 'append' too. Baileys emits type 'append' when the
+      // message is one YOU sent from the linked phone — including DMs to the
+      // bot itself. Groups work because other members' messages are 'notify'.
+      if (type !== 'notify' && type !== 'append') return;
       for (const msg of messages) {
         try {
           await handleIncoming(msg);
@@ -566,13 +545,33 @@ async function startBot(rawNumber) {
 // ============================================================================
 async function handleIncoming(msg) {
   if (!msg.message) return;
-  const from = msg.key.remoteJid;
+
+  // 🔧 FIX: `let` instead of `const` — we may reassign below to normalize
+  // an @lid DM JID to @s.whatsapp.net.
+  let from = msg.key.remoteJid;
   if (!from || from === 'status@broadcast') return;
+
+  // 🔧 FIX: DMs from newer WhatsApp clients arrive as `...@lid`. Replying
+  // to an @lid JID silently fails on some accounts. Resolve to
+  // @s.whatsapp.net using senderPn / remoteJidAlt first, then the LID map.
+  if (from.endsWith('@lid')) {
+    const alt =
+      msg.key?.senderPn ||
+      msg.key?.participantPn ||
+      msg.key?.remoteJidAlt ||
+      msg.key?.participantAlt;
+    if (alt && alt.endsWith('@s.whatsapp.net')) {
+      from = alt;
+    } else {
+      const num = from.split('@')[0].split(':')[0];
+      const pn = state.resolveLid && state.resolveLid(num);
+      if (pn) from = `${pn}@s.whatsapp.net`;
+    }
+  }
 
   const senderJid = resolveSenderJid(msg, from);
 
-  // 🔧 FIX: log everything at debug level so DM routing problems are visible.
-  // Comment this out once you've confirmed DM commands work.
+  // Debug log so DM routing problems are visible in the terminal.
   console.log('[in]', {
     from,
     senderJid,
@@ -606,10 +605,7 @@ async function handleIncoming(msg) {
     }
   } catch (_) { /* silent */ }
 
-  // ---------- Anti-link ----------
-  // 🔧 FIX: explicitly guard `from.endsWith('@g.us')`. In a DM, groupMetadata
-  // would throw and the old code silently swallowed it — but a badly-behaved
-  // antilink handler can also delete the message in DMs by accident.
+  // ---------- Anti-link (group only) ----------
   if (from.endsWith('@g.us')) {
     try {
       if (
@@ -660,9 +656,7 @@ async function handleIncoming(msg) {
     }
   }
 
-  // ---------- Reactions ----------
-  // 🔧 FIX: also group-only. Reacting to every DM is almost certainly not
-  // what you want, and it can interfere with command flows.
+  // ---------- Reactions (group only) ----------
   if (from.endsWith('@g.us')) {
     try {
       const chatReactions = state.reactionsGlobal || state.reactionsEnabled.has(from);
@@ -689,8 +683,6 @@ async function handleIncoming(msg) {
   if (!text) return;
 
   // ---------- Pre-command hooks ----------
-  // 🔧 FIX: wrap each hook individually and log the outcome. If your hooks
-  // are DM-hostile (assume group context), you'll now SEE it in the logs.
   try {
     const stopped = await preCommandHooks(msg, from, senderJid, text);
     console.log('[hook] stopped =', stopped);
@@ -719,8 +711,6 @@ function extractText(msg) {
 // ============================================================================
 // STOP
 // ============================================================================
-// 🔧 FIX: now async, now cancels reconnect timers, now removes listeners
-// BEFORE end(). Callers in server.js must `await connection.stopBot()`.
 async function stopBot() {
   if (stopping) return;
   stopping = true;
@@ -728,13 +718,11 @@ async function stopBot() {
   try {
     stopScheduler();
 
-    // Cancel any pending reconnect so it can't resurrect the bot.
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
 
-    // Bump generation so any in-flight handler from the old socket bails.
     currentGen++;
 
     const old = currentSock;
