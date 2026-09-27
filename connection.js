@@ -18,6 +18,9 @@ const path = require('path');
 const state = require('./state');
 const handlers = require('./handlers');
 
+// 🆕 Destructure the hook function so we can call it directly
+const { preCommandHooks } = handlers;
+
 const AUTH_DIR = './auth_info_baileys';
 const logger = pino({ level: 'silent' });
 
@@ -62,7 +65,6 @@ function validateNumber(raw) {
 // SENDER RESOLVER — handles @lid linked-device JIDs
 // ============================================================================
 function resolveSenderJid(msg, fallbackJid) {
-  // Priority list — first valid phone number wins
   const candidates = [
     msg?.key?.senderPn,
     msg?.key?.participantPn,
@@ -79,14 +81,12 @@ function resolveSenderJid(msg, fallbackJid) {
     }
   }
 
-  // participant — use only if it's already @s.whatsapp.net
   const participant = msg?.key?.participant;
   if (participant && participant.endsWith('@s.whatsapp.net')) {
     const num = participant.split('@')[0].split(':')[0];
     return `${num}@s.whatsapp.net`;
   }
 
-  // fallback — DM chat JID
   if (fallbackJid) {
     const num = fallbackJid.split('@')[0].split(':')[0];
     if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
@@ -96,7 +96,7 @@ function resolveSenderJid(msg, fallbackJid) {
 }
 
 // ============================================================================
-// SESSION EXPORT / IMPORT (works on Render free tier — no persistent disk)
+// SESSION EXPORT / IMPORT
 // ============================================================================
 function exportSession() {
   try {
@@ -337,7 +337,6 @@ async function startBot(rawNumber) {
   state.sock = sock;
   sock.ev.on('creds.update', saveCreds);
 
-  // ---------- Pairing code ----------
   if (!sock.authState.creds.registered) {
     state.setState('connecting', {
       number: phoneNumber,
@@ -380,7 +379,6 @@ async function startBot(rawNumber) {
     setTimeout(requestCode, 3500);
   }
 
-  // ---------- Connection updates ----------
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, isNewLogin } = update;
 
@@ -427,7 +425,6 @@ async function startBot(rawNumber) {
     }
   });
 
-  // ---------- Messages ----------
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
@@ -439,7 +436,6 @@ async function startBot(rawNumber) {
     }
   });
 
-  // ---------- Group events ----------
   sock.ev.on('group-participants.update', async (update) => {
     const { id, participants, action } = update;
     try {
@@ -562,10 +558,21 @@ async function handleIncoming(msg) {
     if (captured) return;
   }
 
-  // ---------- Commands ----------
+  // ---------- Extract text ----------
   const text = extractText(msg);
-  if (!text || !text.startsWith('.')) return;
+  if (!text) return;
 
+  // 🆕 ---------- Pre-command hooks (auto-correct + anti-mention) ----------
+  // These run BEFORE the command router and can consume the message.
+  try {
+    const stopped = await preCommandHooks(msg, from, senderJid, text);
+    if (stopped) return;
+  } catch (e) {
+    console.error('[hooks]', e.message);
+  }
+
+  // ---------- Commands ----------
+  if (!text.startsWith('.')) return;
   await handlers.handleCommand(msg, from, senderJid, text);
 }
 
@@ -601,7 +608,6 @@ module.exports = {
   loadBanner,
   validateNumber,
   resolveSenderJid,
-  // session
   exportSession,
   importSession,
   hasStoredSession

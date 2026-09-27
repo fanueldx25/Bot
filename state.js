@@ -38,8 +38,17 @@ const schedules = new Map();
 // ---------- Extra admins ----------
 const extraAdmins = new Set();
 
-// ✏️ NEW: warnings store — groupJid → { userJid: [reason, reason, ...] }
+// ---------- Warnings ----------
 const warnings = new Map();
+
+// 🆕 ---------- Auto-correct ----------
+const autoCorrectEnabled = new Set();   // chat JIDs with auto-correct ON
+const dictionary = new Map();           // "wrong" → "right"
+
+// 🆕 ---------- Anti-mention ----------
+const antimentionGroups = new Set();    // group JIDs with anti-mention ON
+const antimentionAction = new Map();    // groupJid → 'warn' | 'kick'
+const antimentionWarnings = new Map();  // groupJid → { userJid: [reason, ...] }
 
 // ============================================================================
 // LID → PN MAPPING
@@ -60,7 +69,7 @@ function registerLidMapping(lidJid, pnJid) {
   if (!lidNum || !pnNum) return;
   if (lidNum === pnNum) return;
   if (!/^\d{7,15}$/.test(lidNum) || !/^\d{7,15}$/.test(pnNum)) return;
-  if (lidToPn.get(lidNum) === pnNum) return; // already mapped
+  if (lidToPn.get(lidNum) === pnNum) return;
   lidToPn.set(lidNum, pnNum);
   console.log(`[LID] mapped ${lidNum} → ${pnNum}`);
   saveState();
@@ -96,9 +105,17 @@ function saveState() {
       schedules: Object.fromEntries(schedules),
       extraAdmins: [...extraAdmins],
       lidMappings: Object.fromEntries(lidToPn),
-      // ✏️ NEW: persist warnings (nested object → plain object)
       warnings: Object.fromEntries(
         [...warnings.entries()].map(([g, u]) => [g, u])
+      ),
+      // 🆕 auto-correct
+      autoCorrectEnabled: [...autoCorrectEnabled],
+      dictionary: Object.fromEntries(dictionary),
+      // 🆕 anti-mention
+      antimentionGroups: [...antimentionGroups],
+      antimentionAction: Object.fromEntries(antimentionAction),
+      antimentionWarnings: Object.fromEntries(
+        [...antimentionWarnings.entries()].map(([g, u]) => [g, u])
       )
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
@@ -131,9 +148,19 @@ function loadState() {
     (data.extraAdmins || []).forEach((x) => extraAdmins.add(x));
     Object.entries(data.lidMappings || {}).forEach(([k, v]) => lidToPn.set(k, v));
 
-    // ✏️ NEW: restore warnings
     Object.entries(data.warnings || {}).forEach(([g, users]) => {
       warnings.set(g, users || {});
+    });
+
+    // 🆕 restore auto-correct
+    (data.autoCorrectEnabled || []).forEach((x) => autoCorrectEnabled.add(x));
+    Object.entries(data.dictionary || {}).forEach(([k, v]) => dictionary.set(k, v));
+
+    // 🆕 restore anti-mention
+    (data.antimentionGroups || []).forEach((x) => antimentionGroups.add(x));
+    Object.entries(data.antimentionAction || {}).forEach(([k, v]) => antimentionAction.set(k, v));
+    Object.entries(data.antimentionWarnings || {}).forEach(([g, users]) => {
+      antimentionWarnings.set(g, users || {});
     });
 
     console.log('[State] loaded from disk');
@@ -170,15 +197,12 @@ function isAdmin(jid) {
   const num = String(jid).split('@')[0].split(':')[0];
   if (!num) return false;
 
-  // 1. exact match
   if (ADMIN_NUMBER && num === ADMIN_NUMBER) return true;
 
-  // 2. last-10-digit fallback
   if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 && num.length >= 10) {
     if (num.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
   }
 
-  // 3. LID → PN mapping
   const pn = lidToPn.get(num);
   if (pn) {
     if (pn === ADMIN_NUMBER) return true;
@@ -187,7 +211,6 @@ function isAdmin(jid) {
     }
   }
 
-  // 4. extra admins
   if (extraAdmins.has(num)) return true;
   if (pn && extraAdmins.has(pn)) return true;
 
@@ -196,13 +219,11 @@ function isAdmin(jid) {
 
 // ============================================================================
 // PRESENCE WRAPPERS
-// ✏️ FIXED: use try/finally so fn() is called exactly once even if
-// sendPresenceUpdate throws. Previously fn() ran twice on presence errors.
 // ============================================================================
 async function withTyping(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('composing', jid);
-  } catch (_) { /* ignore presence errors */ }
+  } catch (_) { /* ignore */ }
   try {
     return await fn();
   } finally {
@@ -215,7 +236,7 @@ async function withTyping(jid, fn) {
 async function withRecording(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('recording', jid);
-  } catch (_) { /* ignore presence errors */ }
+  } catch (_) { /* ignore */ }
   try {
     return await fn();
   } finally {
@@ -237,7 +258,6 @@ async function sendWithBanner(jid, text) {
 
 // ============================================================================
 // SEASONAL SESSION CODE
-// ✏️ Cleaned: removed unused windowSeconds param from slot helper
 // ============================================================================
 function generateSessionCodeForSlot(slot) {
   const secret = process.env.SESSION_SECRET || 'default-session-secret';
@@ -279,7 +299,14 @@ module.exports = {
   schedules,
   extraAdmins,
   lidToPn,
-  warnings,          // ✏️ NEW
+  warnings,
+
+  // 🆕 new stores
+  autoCorrectEnabled,
+  dictionary,
+  antimentionGroups,
+  antimentionAction,
+  antimentionWarnings,
 
   get sock() { return sock; },
   set sock(v) { sock = v; },
@@ -314,7 +341,6 @@ module.exports = {
   generateSessionCode,
   verifySessionCode,
 
-  // LID helpers
   registerLidMapping,
   resolveLid
 };

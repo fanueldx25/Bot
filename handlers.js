@@ -52,24 +52,20 @@ function resolveSenderJid(msg, fallbackJid) {
 // SHARED HELPERS (used by every command)
 // ============================================================================
 const helpers = {
-  /** Send a plain text reply in the chat the command came from. */
   async reply(from, text, opts = {}) {
     const sock = state.sock;
     if (!sock) return;
     return sock.sendMessage(from, { text, ...opts });
   },
 
-  /** Reply with the banner image + text (falls back to text). */
   async replyWithBanner(from, text) {
     return sendWithBanner(from, text);
   },
 
-  /** Reply while showing the "typing…" presence. */
   async replyTyping(from, text, opts = {}) {
     return withTyping(from, () => helpers.reply(from, text, opts));
   },
 
-  /** Reply with the standard "denied" box. */
   async denied(from) {
     return helpers.replyTyping(
       from,
@@ -77,19 +73,16 @@ const helpers = {
     );
   },
 
-  /** Throw a user-facing error inside a handler. */
   fail(message) {
     const err = new Error(message);
     err.userFacing = true;
     throw err;
   },
 
-  /** Verify the chat is a group, else fail with a friendly message. */
   requireGroup(from) {
     if (!from.endsWith('@g.us')) helpers.fail('❌ This command only works in groups.');
   },
 
-  /** Extract mentioned JIDs from the current message. */
   mentions(msg) {
     return (
       msg?.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
@@ -99,24 +92,20 @@ const helpers = {
     );
   },
 
-  /** Extract quoted message from the current message. */
   quoted(msg) {
     return msg?.message?.extendedTextMessage?.contextInfo?.quotedMessage || null;
   },
 
-  /** Extract the contextInfo of the current message. */
   contextInfo(msg) {
     return msg?.message?.extendedTextMessage?.contextInfo || null;
   },
 
-  /** Require at least one mention, else fail. */
   requireMention(msg, usage) {
     const m = helpers.mentions(msg);
     if (!m.length) helpers.fail(`❌ Usage: ${usage}`);
     return m;
   },
 
-  /** Format a duration in seconds to "Xh Ym". */
   humanDuration(seconds) {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -316,24 +305,222 @@ _We'll miss you._`
 }
 
 // ============================================================================
-// COMMAND REGISTRY
+// 🆕 TEXT-TO-STICKER RENDERER (SVG → PNG → WEBP)
+// ============================================================================
+async function renderTextSticker(text, opts = {}) {
+  let {
+    font = 'Arial',
+    color = 'white',
+    bg = 'transparent',
+    wm = false,
+    random = false
+  } = opts;
+
+  const FONTS = {
+    Arial: 'Arial, Helvetica, sans-serif',
+    Impact: 'Impact, "Arial Black", sans-serif',
+    Comic: '"Comic Sans MS", "Comic Sans", cursive',
+    Times: '"Times New Roman", Times, serif',
+    Courier: '"Courier New", Courier, monospace',
+    Verdana: 'Verdana, Geneva, sans-serif'
+  };
+
+  const COLORS = ['white', 'black', 'red', 'green', 'blue', 'yellow', 'pink', 'orange', 'purple', 'cyan'];
+
+  if (random) {
+    const fontKeys = Object.keys(FONTS);
+    font = fontKeys[Math.floor(Math.random() * fontKeys.length)];
+    color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    bg = COLORS[Math.floor(Math.random() * COLORS.length)];
+  }
+
+  const SIZE = 512;
+  const fontFamily = FONTS[font] || FONTS.Arial;
+
+  // Word-wrap
+  const MAX_CHARS_PER_LINE = 14;
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length > MAX_CHARS_PER_LINE) {
+      if (cur) lines.push(cur);
+      cur = w;
+    } else {
+      cur = (cur + ' ' + w).trim();
+    }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > 6) lines.length = 6;
+
+  const lineHeight = 64;
+  const totalH = lines.length * lineHeight;
+  const startY = SIZE / 2 - totalH / 2 + lineHeight * 0.8;
+
+  const esc = (s) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const bgRect =
+    bg === 'transparent'
+      ? ''
+      : `<rect width="${SIZE}" height="${SIZE}" fill="${esc(bg)}"/>`;
+
+  const linesSvg = lines
+    .map((l, i) => {
+      const y = startY + i * lineHeight;
+      return `<text x="${SIZE / 2}" y="${y}"
+        text-anchor="middle"
+        font-family="${esc(fontFamily)}"
+        font-size="52"
+        font-weight="900"
+        fill="${esc(color)}"
+        stroke="black"
+        stroke-width="3"
+        paint-order="stroke"
+        stroke-linejoin="round"
+      >${esc(l)}</text>`;
+    })
+    .join('');
+
+  const wmSvg = wm
+    ? `<text x="${SIZE / 2}" y="${SIZE - 24}" text-anchor="middle"
+        font-family="Arial" font-size="18" fill="${esc(color)}" opacity="0.7"
+      >Fanuels DX</text>`
+    : '';
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+    ${bgRect}
+    ${linesSvg}
+    ${wmSvg}
+  </svg>`;
+
+  const { Resvg } = require('@resvg/resvg-js');
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'width', value: SIZE },
+    background: bg === 'transparent' ? undefined : bg
+  });
+  const png = resvg.render().asPng();
+
+  try {
+    const sharp = require('sharp');
+    return await sharp(png).webp({ quality: 90 }).toBuffer();
+  } catch {
+    return png;
+  }
+}
+
+// ============================================================================
+// 🆕 PRE-COMMAND HOOKS: auto-correct + anti-mention
 // ----------------------------------------------------------------------------
-// Each command object:
-// {
-//   name:     '.ping',              // primary trigger
-//   aliases:  ['.p'],               // optional alternative triggers
-//   admin:    false,                // true = admin-only
-//   category: 'general',            // used by menu grouping
-//   usage:    '.ping',              // optional usage hint
-//   desc:     'Check bot alive',    // used by menu
-//   handler:  async (ctx) => {}     // required
-// }
-//
-// `ctx` = { msg, from, senderJid, args, text, base, isGroup, admin, sock, state }
-//
-// To add a command:
-//   1) Drop a new object into the COMMANDS array below.
-//   2) Done. The menu auto-updates, admin gate auto-applies.
+// Call this from connection.js BEFORE handleCommand.
+// Returns true if the message was consumed and should not proceed.
+// ============================================================================
+async function preCommandHooks(msg, from, senderJid, rawText) {
+  if (!rawText || !rawText.trim()) return false;
+  const sock = state.sock;
+  if (!sock) return false;
+
+  // ---------- AUTO-CORRECT ----------
+  if (
+    state.autoCorrectEnabled.has(from) &&
+    !rawText.startsWith('.') &&
+    state.dictionary.size > 0
+  ) {
+    const tokens = rawText.split(/(\s+)/);
+    let changed = false;
+    const fixed = tokens
+      .map((w) => {
+        const key = w.toLowerCase().replace(/[^\w']/g, '');
+        if (key && state.dictionary.has(key)) {
+          changed = true;
+          return w.replace(new RegExp(key, 'i'), state.dictionary.get(key));
+        }
+        return w;
+      })
+      .join('');
+
+    if (changed && fixed !== rawText) {
+      try {
+        await sock.sendMessage(from, {
+          text: `✍️ *Did you mean:*\n${fixed}`,
+          quoted: msg
+        });
+      } catch (e) {
+        console.error('[auto]', e.message);
+      }
+    }
+  }
+
+  // ---------- ANTI-MENTION ----------
+  if (from.endsWith('@g.us') && state.antimentionGroups.has(from)) {
+    const mentioned =
+      msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
+      msg.message?.imageMessage?.contextInfo?.mentionedJid ||
+      msg.message?.videoMessage?.contextInfo?.mentionedJid ||
+      [];
+
+    const mentionsGroupJid = mentioned.includes(from);
+    const massMention = mentioned.length >= 5;
+
+    if (mentionsGroupJid || massMention) {
+      const policy = state.antimentionAction.get(from) || 'warn';
+      const groupWarns = state.antimentionWarnings.get(from) || {};
+      const list = groupWarns[senderJid] || [];
+      list.push('mentioned the group');
+      groupWarns[senderJid] = list;
+      state.antimentionWarnings.set(from, groupWarns);
+      saveState();
+
+      try {
+        await sock.sendMessage(from, { delete: msg.key });
+      } catch (e) {
+        console.error('[antimention] delete failed:', e.message);
+      }
+
+      if (policy === 'kick') {
+        try {
+          await sock.groupParticipantsUpdate(from, [senderJid], 'remove');
+          await sock.sendMessage(from, {
+            text: `🚪 @${senderJid.split('@')[0]} kicked for mentioning the group.`,
+            mentions: [senderJid]
+          });
+          delete groupWarns[senderJid];
+          state.antimentionWarnings.set(from, groupWarns);
+          saveState();
+        } catch (e) {
+          console.error('[antimention] kick failed:', e.message);
+        }
+      } else {
+        await sock.sendMessage(from, {
+          text: `⚠️ @${senderJid.split('@')[0]} — group mentions are not allowed (${list.length}/3).`,
+          mentions: [senderJid]
+        });
+        if (list.length >= 3) {
+          try {
+            await sock.groupParticipantsUpdate(from, [senderJid], 'remove');
+            await sock.sendMessage(from, {
+              text: `🚪 @${senderJid.split('@')[0]} kicked (3 anti-mention warnings).`,
+              mentions: [senderJid]
+            });
+          } catch (e) {}
+          delete groupWarns[senderJid];
+          state.antimentionWarnings.set(from, groupWarns);
+          saveState();
+        }
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// ============================================================================
+// COMMAND REGISTRY
 // ============================================================================
 
 const COMMANDS = [
@@ -542,7 +729,6 @@ const COMMANDS = [
       const mp3 = Buffer.from(await res.arrayBuffer());
       if (!mp3 || mp3.length < 100) helpers.fail('❌ Empty audio');
 
-      // Try ffmpeg for real voice note; fall back to mp3 document
       let ogg = null;
       try {
         const ffmpeg = require('fluent-ffmpeg');
@@ -639,6 +825,48 @@ const COMMANDS = [
           mimetype: 'audio/ogg; codecs=opus',
           ptt: true
         });
+      }
+    }
+  },
+  {
+    name: '.stext',
+    category: 'media',
+    desc: 'Text → sticker',
+    usage: '.stext <text> [--font=… --color=… --bg=… --wm --random]',
+    handler: async ({ msg, from, text }) => {
+      let raw = text.replace(/^\.stext\s*/i, '').trim();
+
+      if (!raw) {
+        const quoted = helpers.quoted(msg);
+        raw = quoted?.conversation || quoted?.extendedTextMessage?.text || '';
+        if (!raw) helpers.fail('❌ Usage: .stext <text> (or reply to a text message)');
+      }
+
+      const flags = {};
+      raw = raw
+        .replace(/--(\w+)(?:=(\S+))?/g, (_, key, val) => {
+          flags[key] = val === undefined ? true : val;
+          return '';
+        })
+        .trim();
+
+      if (!raw) helpers.fail('❌ No text after flags.');
+      if (raw.length > 80) helpers.fail(`❌ Max 80 chars (you sent ${raw.length}).`);
+
+      const opts = {
+        font: typeof flags.font === 'string' ? flags.font : 'Arial',
+        color: typeof flags.color === 'string' ? flags.color : 'white',
+        bg: typeof flags.bg === 'string' ? flags.bg : 'transparent',
+        wm: !!flags.wm,
+        random: !!flags.random
+      };
+
+      try {
+        const stickerBuf = await renderTextSticker(raw, opts);
+        await state.sock.sendMessage(from, { sticker: stickerBuf });
+      } catch (e) {
+        console.error('[stext]', e);
+        helpers.fail('❌ Sticker render failed: ' + e.message);
       }
     }
   },
@@ -903,6 +1131,70 @@ const COMMANDS = [
       });
     }
   },
+  {
+    name: '.dict',
+    admin: true,
+    category: 'tools',
+    desc: 'Manage auto-correct dictionary',
+    usage: '.dict add <wrong> <right> | del <wrong> | list',
+    handler: async ({ from, args }) => {
+      const sub = args[0];
+      if (sub === 'add') {
+        const wrong = (args[1] || '').toLowerCase();
+        const right = args[2];
+        if (!wrong || !right) helpers.fail('Usage: .dict add <wrong> <right>');
+        state.dictionary.set(wrong, right);
+        saveState();
+        await helpers.reply(from, `${UI.box('DICT ADDED', '📖')}\n\n${wrong} → ${right}`);
+      } else if (sub === 'del' || sub === 'remove') {
+        const wrong = (args[1] || '').toLowerCase();
+        if (!wrong) helpers.fail('Usage: .dict del <wrong>');
+        const existed = state.dictionary.delete(wrong);
+        saveState();
+        await helpers.reply(
+          from,
+          existed ? `${UI.box('DICT REMOVED', '🗑️')}` : '❌ Not in dictionary.'
+        );
+      } else if (sub === 'list') {
+        const entries = [...state.dictionary.entries()];
+        if (!entries.length) {
+          await helpers.reply(from, '📖 Dictionary is empty.');
+          return;
+        }
+        const body = entries
+          .slice(0, 100)
+          .map(([w, r]) => `│ ${w} → ${r}`)
+          .join('\n');
+        const more = entries.length > 100 ? `\n… and ${entries.length - 100} more.` : '';
+        await helpers.reply(
+          from,
+          `${UI.box('DICTIONARY', '📖')}\n\n${body}${more}\n\n_${entries.length} entries_`
+        );
+      } else {
+        helpers.fail('Usage: .dict add|del|list');
+      }
+    }
+  },
+  {
+    name: '.edit',
+    category: 'tools',
+    desc: 'Reply to a message to repost it edited',
+    usage: '.edit <new text>',
+    handler: async ({ msg, from, args }) => {
+      const quoted = helpers.quoted(msg);
+      if (!quoted) helpers.fail('❌ Reply to a message with *.edit <new text>*');
+      const newText = args.join(' ');
+      if (!newText) helpers.fail('❌ Usage: .edit <new text>');
+
+      const sender = msg.message?.extendedTextMessage?.contextInfo?.participant || '';
+      const senderNum = sender.split('@')[0];
+      await helpers.reply(
+        from,
+        `✏️ *Edited* (@${senderNum})\n\n${newText}`,
+        sender ? { mentions: [sender] } : {}
+      );
+    }
+  },
 
   // ========================================================================
   // 👮 ADMIN
@@ -933,6 +1225,9 @@ const COMMANDS = [
 │ Auto-DL    : ${state.autoDownload ? '✅ ON' : '❌ OFF'}
 │ Welcome    : ${state.welcomeEnabled.size} group(s)
 │ Anti-link  : ${state.antilinkGroups.size} group(s)
+│ Auto-corr. : ${state.autoCorrectEnabled.size} chat(s)
+│ Anti-ment. : ${state.antimentionGroups.size} group(s)
+│ Dict words : ${state.dictionary.size}
 │ Reactions  : ${state.reactionsGlobal ? '✅ global' : state.reactionsEnabled.size + ' chat(s)'}
 │ Schedules  : ${state.schedules.size}
 
@@ -1294,6 +1589,71 @@ Usage:
     }
   },
   {
+    name: '.auto',
+    admin: true,
+    category: 'moderation',
+    desc: 'Auto-correct messages in this chat',
+    usage: '.auto on|off',
+    handler: async ({ from, args }) => {
+      if (args[0] === 'on') {
+        state.autoCorrectEnabled.add(from);
+        saveState();
+        await helpers.reply(
+          from,
+          `${UI.box('AUTO-CORRECT ON', '✍️')}\n\nBot will reply with corrections.`
+        );
+      } else if (args[0] === 'off') {
+        state.autoCorrectEnabled.delete(from);
+        saveState();
+        await helpers.reply(from, `${UI.box('AUTO-CORRECT OFF', '🚫')}`);
+      } else {
+        helpers.fail('Usage: .auto on|off');
+      }
+    }
+  },
+  {
+    name: '.antimention',
+    admin: true,
+    category: 'moderation',
+    desc: 'Block group mentions in chat',
+    usage: '.antimention on|off | action warn|kick',
+    handler: async ({ from, args }) => {
+      helpers.requireGroup(from);
+      const sub = args[0];
+      if (sub === 'on') {
+        state.antimentionGroups.add(from);
+        saveState();
+        await helpers.reply(
+          from,
+          `${UI.box('ANTI-MENTION ON', '🛡️')}\n\nAction: ${state.antimentionAction.get(from) || 'warn'}`
+        );
+      } else if (sub === 'off') {
+        state.antimentionGroups.delete(from);
+        saveState();
+        await helpers.reply(from, `${UI.box('ANTI-MENTION OFF', '🚫')}`);
+      } else if (sub === 'action') {
+        const a = args[1];
+        if (!['warn', 'kick'].includes(a)) helpers.fail('Usage: .antimention action warn|kick');
+        state.antimentionAction.set(from, a);
+        saveState();
+        await helpers.reply(from, `${UI.box('ANTI-MENTION ACTION', '⚙️')}\n\n${a}`);
+      } else {
+        const enabled = state.antimentionGroups.has(from);
+        await helpers.reply(
+          from,
+          `${UI.box('ANTI-MENTION', '🛡️')}
+
+│ Status : ${enabled ? '✅ ON' : '❌ OFF'}
+│ Action : ${state.antimentionAction.get(from) || 'warn'}
+
+Usage:
+│ .antimention on|off
+│ .antimention action warn|kick`
+        );
+      }
+    }
+  },
+  {
     name: '.reactions',
     admin: true,
     category: 'moderation',
@@ -1603,7 +1963,6 @@ function buildMenu(uptimeMin) {
 
   const ORDER = ['general', 'media', 'fun', 'tools', 'admin', 'pause', 'group', 'moderation', 'special'];
 
-  // Group commands by category
   const byCat = {};
   for (const cmd of COMMANDS) {
     if (!cmd.category) continue;
@@ -1627,7 +1986,6 @@ function buildMenu(uptimeMin) {
 
     menu += `\n┌─ ${meta.emoji} *${meta.title}* ─────────\n`;
     for (const c of cmds) {
-      // Name column padded to 20 chars, plus description
       const name = c.name.padEnd(16, ' ');
       menu += `│ ${name} ${c.desc || ''}\n`;
     }
@@ -1660,7 +2018,6 @@ async function handleCommand(msg, from, senderJid, rawText) {
 
   const command = COMMAND_LOOKUP.get(base);
   if (!command) {
-    // Unknown command starting with '.' → reply
     if (base.startsWith('.')) {
       await withTyping(from, () =>
         sockInstance.sendMessage(from, {
@@ -1709,5 +2066,7 @@ module.exports = {
   handleCommand,
   resolveSenderJid,
   helpers,
-  COMMANDS
+  COMMANDS,
+  preCommandHooks,        // 🆕
+  renderTextSticker       // 🆕 (exported for reuse)
 };
