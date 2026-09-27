@@ -57,24 +57,57 @@ function validateNumber(raw) {
   if (/^0+$/.test(clean)) return { ok: false, error: 'Number cannot be all zeros.' };
   return { ok: true, clean };
 }
+
+// ============================================================================
+// SENDER RESOLVER — handles @lid linked-device JIDs
+// ============================================================================
+function resolveSenderJid(msg, fallbackJid) {
+  // Priority list — first valid phone number wins
+  const candidates = [
+    msg?.key?.senderPn,
+    msg?.key?.participantPn,
+    msg?.key?.participantAlt,
+    msg?.key?.remoteJidAlt,
+    msg?.senderPn,
+    msg?.participantPn
+  ];
+
+  for (const c of candidates) {
+    if (c && typeof c === 'string' && c.includes('@')) {
+      const num = c.split('@')[0].split(':')[0];
+      if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
+    }
+  }
+
+  // participant — use only if it's already @s.whatsapp.net
+  const participant = msg?.key?.participant;
+  if (participant && participant.endsWith('@s.whatsapp.net')) {
+    const num = participant.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+
+  // fallback — DM chat JID
+  if (fallbackJid) {
+    const num = fallbackJid.split('@')[0].split(':')[0];
+    if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
+  }
+
+  return participant || fallbackJid || '';
+}
+
 // ============================================================================
 // SESSION EXPORT / IMPORT (works on Render free tier — no persistent disk)
 // ============================================================================
-
-/**
- * Bundle the auth_info_baileys folder into a single base64 JSON payload.
- * Returns { ok, filename, payload } or { ok: false, error }
- */
 function exportSession() {
   try {
     if (!fs.existsSync(AUTH_DIR)) {
       return { ok: false, error: 'No auth folder found. Pair the bot first.' };
     }
-    
+
     const files = fs.readdirSync(AUTH_DIR);
     const bundle = {};
     let totalSize = 0;
-    
+
     for (const f of files) {
       const fullPath = path.join(AUTH_DIR, f);
       const stat = fs.statSync(fullPath);
@@ -83,11 +116,11 @@ function exportSession() {
       bundle[f] = content;
       totalSize += content.length;
     }
-    
+
     if (Object.keys(bundle).length === 0) {
       return { ok: false, error: 'Auth folder is empty.' };
     }
-    
+
     const inner = {
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -95,11 +128,11 @@ function exportSession() {
       jid: state.botJid || null,
       files: bundle
     };
-    
+
     const b64 = Buffer.from(JSON.stringify(inner)).toString('base64');
     const stamp = new Date().toISOString().slice(0, 10);
     const filename = `wa-session-${stamp}.json`;
-    
+
     return {
       ok: true,
       filename,
@@ -113,65 +146,53 @@ function exportSession() {
   }
 }
 
-/**
- * Restore the auth_info_baileys folder from a base64 payload.
- * Overwrites existing auth folder. Requires restart to take effect.
- */
 function importSession(base64Payload) {
   try {
     if (!base64Payload || typeof base64Payload !== 'string') {
       return { ok: false, error: 'No payload provided.' };
     }
-    
-    // Accept both raw base64 and the full JSON file content
+
     let inner;
     try {
-      // Try to parse as JSON first (the file the user downloads)
       const parsed = JSON.parse(base64Payload);
-      // The file format is { payload: "base64...", filename, version }
       if (parsed && typeof parsed.payload === 'string') {
         inner = JSON.parse(Buffer.from(parsed.payload, 'base64').toString('utf8'));
       } else if (parsed && parsed.files) {
-        // Direct inner object
         inner = parsed;
       } else {
         throw new Error('Unrecognized JSON format.');
       }
     } catch (jsonErr) {
-      // Not JSON — treat as raw base64
       try {
         inner = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
       } catch (b64Err) {
         return { ok: false, error: 'Invalid file: not JSON, not base64.' };
       }
     }
-    
+
     if (!inner || !inner.files || typeof inner.files !== 'object') {
       return { ok: false, error: 'Missing "files" object in session payload.' };
     }
-    
-    // Wipe old auth folder
+
     if (fs.existsSync(AUTH_DIR)) {
       fs.rmSync(AUTH_DIR, { recursive: true, force: true });
     }
     fs.mkdirSync(AUTH_DIR, { recursive: true });
-    
-    // Write each file back
+
     let written = 0;
     for (const [name, content] of Object.entries(inner.files)) {
       if (typeof content !== 'string') continue;
-      // Safety: prevent path traversal
       if (name.includes('/') || name.includes('\\') || name.includes('..')) continue;
       fs.writeFileSync(path.join(AUTH_DIR, name), content, 'utf8');
       written++;
     }
-    
+
     if (written === 0) {
       return { ok: false, error: 'No valid session files were found.' };
     }
-    
+
     console.log(`[Session] restored ${written} file(s) from import`);
-    
+
     return {
       ok: true,
       written,
@@ -185,9 +206,6 @@ function importSession(base64Payload) {
   }
 }
 
-/**
- * Check if a session currently exists on disk.
- */
 function hasStoredSession() {
   try {
     if (!fs.existsSync(AUTH_DIR)) return false;
@@ -199,41 +217,8 @@ function hasStoredSession() {
 }
 
 // ============================================================================
-// SENDER RESOLVER — handles @lid linked-device JIDs
-// Returns the REAL phone number as a JID string, e.g. "237678899829@s.whatsapp.net"
+// SCHEDULER
 // ============================================================================
-function resolveSenderJid(msg, fallbackJid) {
-  // 1. senderPn = real phone number (Baileys includes this for @lid messages)
-  const pn = msg?.key?.senderPn || msg?.key?.participantPn;
-  if (pn && typeof pn === 'string') {
-    const num = pn.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
-  }
-
-  // 2. participantPn (older Baileys versions)
-  const ppn = msg?.participantPn || msg?.key?.participantPn;
-  if (ppn && typeof ppn === 'string') {
-    const num = ppn.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
-  }
-
-  // 3. participant — may be @lid, but if it's @s.whatsapp.net it's fine
-  const participant = msg?.key?.participant;
-  if (participant && participant.endsWith('@s.whatsapp.net')) {
-    const num = participant.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
-  }
-
-  // 4. fallback — DM chat JID
-  if (fallbackJid) {
-    const num = fallbackJid.split('@')[0].split(':')[0];
-    return `${num}@s.whatsapp.net`;
-  }
-
-  return '';
-}
-
-// ---------- Scheduler (runs while socket is up) ----------
 let schedulerTimer = null;
 
 function startScheduler() {
@@ -279,7 +264,9 @@ function stopScheduler() {
   }
 }
 
-// ---------- Start ----------
+// ============================================================================
+// START
+// ============================================================================
 async function startBot(rawNumber) {
   const v = validateNumber(rawNumber);
   if (!v.ok) {
@@ -477,11 +464,31 @@ async function handleIncoming(msg) {
   const from = msg.key.remoteJid;
   if (!from || from === 'status@broadcast') return;
 
-  // ✅ FIX: resolve the REAL sender JID (handles @lid linked-device JIDs)
   const senderJid = resolveSenderJid(msg, from);
 
   // pause check
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) return;
+
+  // ---------- LID → PN learning ----------
+  try {
+    const participant = msg.key?.participant || '';
+    const pn =
+      msg.key?.senderPn ||
+      msg.key?.participantPn ||
+      msg.key?.participantAlt ||
+      msg.key?.remoteJidAlt;
+
+    if (
+      participant.endsWith('@lid') &&
+      pn &&
+      pn.includes('@s.whatsapp.net') &&
+      typeof state.registerLidMapping === 'function'
+    ) {
+      state.registerLidMapping(participant, pn);
+    }
+  } catch (e) {
+    // silent
+  }
 
   // ---------- Anti-link ----------
   try {
@@ -585,10 +592,17 @@ function stopBot() {
   state.setState('disconnected', { message: 'Stopped by user.' });
 }
 
+// ============================================================================
+// EXPORTS
+// ============================================================================
 module.exports = {
   startBot,
   stopBot,
   loadBanner,
   validateNumber,
-  resolveSenderJid
+  resolveSenderJid,
+  // session
+  exportSession,
+  importSession,
+  hasStoredSession
 };
