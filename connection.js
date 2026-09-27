@@ -1,6 +1,16 @@
 // ============================================================================
 // connection.js — Baileys socket + pairing code + rich error reporting
 // ============================================================================
+// FIXES APPLIED:
+// 1. Pairing code timing: waits for `connection === 'connecting'` before
+//    requesting the code. This prevents dead codes that WhatsApp rejects.
+// 2. "Waiting for this message" bug: resets sender-key-memory before every
+//    group send. This forces fresh SKDM distribution to all devices.
+// 3. Session persistence: imports SESSION_DATA env var on startup and
+//    auto-exports session JSON to admin on connect.
+// 4. LID -> PN learning: captures senderPn/participantAlt from incoming
+//    messages and persists them to disk for admin resolution after restarts.
+// ============================================================================
 
 const {
   default: makeWASocket,
@@ -41,6 +51,28 @@ const DISCONNECT_MESSAGES = {
   [DisconnectReason.unavailableService]: 'WhatsApp service unavailable.'
 };
 
+// ============================================================================
+// SENDER KEY RESET WORKAROUND
+// ============================================================================
+// Forces fresh SKDM (Sender Key Distribution Message) to all group devices.
+// This heals the "Waiting for this message" bug caused by stale sender-key-memory.
+// The map is never invalidated when a member switches phones, so the bot
+// thinks they already have the key and doesn't re-distribute it.
+async function resetGroupSenderKey(sock, groupJid) {
+  if (!sock || !groupJid) return;
+  try {
+    await sock.authState.keys.set({
+      'sender-key-memory': { [groupJid]: null }
+    });
+    console.log(`[SenderKey] Reset distribution memory for ${groupJid}`);
+  } catch (e) {
+    console.error('[SenderKey] Reset failed:', e.message);
+  }
+}
+
+// ============================================================================
+// BANNER LOADING
+// ============================================================================
 function loadBanner() {
   try {
     const p = path.join(__dirname, 'assets', 'banner.jpg');
@@ -53,6 +85,9 @@ function loadBanner() {
   }
 }
 
+// ============================================================================
+// PHONE NUMBER VALIDATION
+// ============================================================================
 function validateNumber(raw) {
   const clean = (raw || '').replace(/\D/g, '');
   if (!clean) return { ok: false, error: 'Please enter a phone number.' };
@@ -63,7 +98,7 @@ function validateNumber(raw) {
 }
 
 // ============================================================================
-// SENDER RESOLVER
+// SENDER RESOLVER (LID -> PN)
 // ============================================================================
 function resolveSenderJid(msg, fallbackJid) {
   const candidates = [
@@ -262,7 +297,7 @@ async function teardownSocket(sock) {
 }
 
 // ============================================================================
-// START
+// START BOT
 // ============================================================================
 async function startBot(rawNumber) {
   const v = validateNumber(rawNumber);
@@ -291,6 +326,22 @@ async function startBot(rawNumber) {
       currentSock = null;
       state.sock = null;
       await teardownSocket(old);
+    }
+
+    // ========================================================================
+    // IMPORT SESSION FROM ENV VAR (survives redeploys on Render free tier)
+    // ========================================================================
+    // Render's free tier wipes the filesystem on every redeploy. If the user
+    // has pasted a session JSON into the SESSION_DATA env var, import it
+    // before initializing auth state so the bot skips pairing entirely.
+    if (process.env.SESSION_DATA && !hasStoredSession()) {
+      console.log('[Session] Found SESSION_DATA env var — importing...');
+      const imported = importSession(process.env.SESSION_DATA);
+      if (imported.ok) {
+        console.log(`[Session] Imported ${imported.written} files from env var`);
+      } else {
+        console.error('[Session] Import failed:', imported.error);
+      }
     }
 
     state.currentNumber = phoneNumber;
@@ -340,7 +391,6 @@ async function startBot(rawNumber) {
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 30000,
         keepAliveIntervalMs: 25000,
-        // Critical for LID support in newer Baileys versions
         emitOwnEvents: false,
         retryRequestDelayMs: 250
       });
@@ -356,6 +406,13 @@ async function startBot(rawNumber) {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // ========================================================================
+    // PAIRING CODE REQUEST (FIXED TIMING)
+    // ========================================================================
+    // The code must be requested when the connection reaches 'connecting'.
+    // Requesting too early produces a dead code that WhatsApp rejects with
+    // "device cannot be associated". The `qr` event also fires in pairing
+    // mode, but 'connecting' is the most reliable trigger.
     if (!sock.authState.creds.registered) {
       state.setState('connecting', {
         number: phoneNumber,
@@ -363,11 +420,16 @@ async function startBot(rawNumber) {
       });
 
       let attempt = 0;
+      let pairingRequested = false;
+
       const requestCode = async () => {
         if (myGen !== currentGen) return false;
         attempt++;
         try {
-          const code = await sock.requestPairingCode(phoneNumber);
+          // Sanitize phone number to digits only (no +, spaces, or dashes)
+          const cleanNumber = phoneNumber.replace(/\D/g, '');
+          console.log(`[Pairing] Requesting code for ${cleanNumber} (attempt ${attempt})`);
+          const code = await sock.requestPairingCode(cleanNumber);
           if (myGen !== currentGen) return false;
           if (!code || typeof code !== 'string') throw new Error('Empty code returned');
           state.pairingCode = code;
@@ -397,14 +459,30 @@ async function startBot(rawNumber) {
         }
       };
 
-      setTimeout(() => {
-        if (myGen === currentGen) requestCode();
-      }, 3500);
+      // Store the function so connection.update can call it when ready
+      sock._requestPairingCode = requestCode;
     }
 
     sock.ev.on('connection.update', (update) => {
       if (myGen !== currentGen) return;
       const { connection, lastDisconnect, isNewLogin } = update;
+
+      // ====================================================================
+      // PAIRING CODE TRIGGER: connection === 'connecting'
+      // ====================================================================
+      // Request the code once the socket is ready. Do NOT wait for qr.
+      if (
+        connection === 'connecting' &&
+        !sock.authState.creds.registered &&
+        typeof sock._requestPairingCode === 'function' &&
+        !sock._pairingRequested
+      ) {
+        sock._pairingRequested = true;
+        // Small delay to let the Noise handshake complete
+        setTimeout(() => {
+          if (myGen === currentGen) sock._requestPairingCode();
+        }, 2000);
+      }
 
       if (connection === 'open') {
         state.botJid = sock.user.id;
@@ -415,6 +493,33 @@ async function startBot(rawNumber) {
         });
         console.log('✅ Connected as', sock.user.id);
         startScheduler();
+
+        // =================================================================
+        // AUTO-EXPORT SESSION TO ADMIN (survives redeploys)
+        // =================================================================
+        // After connecting, send the session JSON to the admin's number.
+        // The user can then paste it into Render's SESSION_DATA env var
+        // to restore the session after a redeploy.
+        if (process.env.ADMIN_NUMBER) {
+          setTimeout(async () => {
+            try {
+              const exp = exportSession();
+              if (exp.ok) {
+                const adminJid = `${process.env.ADMIN_NUMBER}@s.whatsapp.net`;
+                const buffer = Buffer.from(exp.payload, 'base64');
+                await sock.sendMessage(adminJid, {
+                  document: buffer,
+                  mimetype: 'application/json',
+                  fileName: exp.filename,
+                  caption: `🔐 *Session Backup*\nNumber: +${state.currentNumber || 'unknown'}\nFiles: ${exp.fileCount}\nSize: ${exp.size} bytes\n\nSave this file. To restore after redeploy, paste its base64 content into Render's SESSION_DATA env var.`
+                });
+                console.log('[Session] Auto-exported to admin');
+              }
+            } catch (e) {
+              console.error('[Session] Auto-export failed:', e.message);
+            }
+          }, 8000);
+        }
       }
 
       if (connection === 'connecting') {
@@ -470,8 +575,11 @@ async function startBot(rawNumber) {
       const { id, participants, action } = update;
       try {
         if (action === 'add' && state.welcomeEnabled.has(id)) {
+          // Reset sender key before group send to avoid "Waiting" bug
+          await resetGroupSenderKey(state.sock, id);
           await handlers.sendWelcome(id, participants);
         } else if (action === 'remove' && state.goodbyeEnabled.has(id)) {
+          await resetGroupSenderKey(state.sock, id);
           await handlers.sendGoodbye(id, participants);
         }
       } catch (e) {
@@ -486,7 +594,7 @@ async function startBot(rawNumber) {
 }
 
 // ============================================================================
-// INCOMING ROUTER
+// INCOMING MESSAGE ROUTER
 // ============================================================================
 async function handleIncoming(msg) {
   if (!msg.message) return;
@@ -507,7 +615,6 @@ async function handleIncoming(msg) {
       const num = rawFrom.split('@')[0].split(':')[0];
       const pn = state.resolveLid && state.resolveLid(num);
       if (pn) from = `${pn}@s.whatsapp.net`;
-      // else: keep raw @lid. Do NOT return.
     }
   }
 
@@ -521,36 +628,42 @@ async function handleIncoming(msg) {
     text: extractText(msg).slice(0, 40)
   });
 
+  // ==========================================================================
+  // LID -> PN LEARNING (persists across restarts)
+  // ==========================================================================
+  // The lid-mapping.update event never fires in Baileys. We learn mappings
+  // from senderPn/participantAlt on every incoming message instead.
+  try {
+    const lidCandidate = msg.key.participant || msg.key.remoteJid;
+    const pnCandidate =
+      msg.key.senderPn ||
+      msg.key.participantAlt ||
+      msg.key.remoteJidAlt;
+
+    if (
+      lidCandidate?.endsWith('@lid') &&
+      pnCandidate?.endsWith('@s.whatsapp.net') &&
+      typeof state.registerLidMapping === 'function'
+    ) {
+      const lidUser = lidCandidate.split('@')[0].split(':')[0];
+      const pnUser = pnCandidate.split('@')[0].split(':')[0];
+      state.registerLidMapping(lidUser, pnUser);
+      console.log(`[LID] Learned: ${lidUser}@lid → ${pnUser}@s.whatsapp.net`);
+    }
+  } catch (_) {}
+
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) {
     return;
   }
 
-  // LID learning
-  try {
-    const participant = msg.key?.participant || '';
-    const pn =
-      msg.key?.senderPn ||
-      msg.key?.participantPn ||
-      msg.key?.participantAlt ||
-      msg.key?.remoteJidAlt;
-
-    if (
-      rawFrom.endsWith('@lid') &&
-      pn &&
-      pn.endsWith('@s.whatsapp.net') &&
-      typeof state.registerLidMapping === 'function'
-    ) {
-      state.registerLidMapping(rawFrom, pn);
-    }
-    if (
-      participant.endsWith('@lid') &&
-      pn &&
-      pn.endsWith('@s.whatsapp.net') &&
-      typeof state.registerLidMapping === 'function'
-    ) {
-      state.registerLidMapping(participant, pn);
-    }
-  } catch (_) {}
+  // ==========================================================================
+  // RESET SENDER KEY FOR GROUP CHATS
+  // ==========================================================================
+  // Before handling any command in a group, reset the sender-key-memory.
+  // This forces fresh SKDM distribution and heals the "Waiting" bug.
+  if (from.endsWith('@g.us')) {
+    await resetGroupSenderKey(state.sock, from);
+  }
 
   // Anti-link (group only)
   if (from.endsWith('@g.us')) {
@@ -635,7 +748,7 @@ function extractText(msg) {
 }
 
 // ============================================================================
-// STOP
+// STOP BOT
 // ============================================================================
 async function stopBot() {
   if (stopping) return;
@@ -667,5 +780,6 @@ module.exports = {
   resolveSenderJid,
   exportSession,
   importSession,
-  hasStoredSession
+  hasStoredSession,
+  resetGroupSenderKey
 };

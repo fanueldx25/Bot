@@ -45,9 +45,37 @@ const antimentionAction = new Map();
 const antimentionWarnings = new Map();
 
 // ============================================================================
-// LID → PN MAP
+// LID → PN MAP  (in-memory + file-backed)
 // ============================================================================
-const lidToPn = new Map();
+const LID_FILE = path.join(__dirname, 'lid-mappings.json');
+
+const lidToPn = new Map();   // in-memory fast lookup
+let lidMap = {};             // file-backed object mirror
+
+function loadLidMap() {
+  try {
+    if (fs.existsSync(LID_FILE)) {
+      lidMap = JSON.parse(fs.readFileSync(LID_FILE, 'utf8'));
+      // hydrate the in-memory Map from the file
+      for (const [lid, pn] of Object.entries(lidMap)) {
+        if (!lidToPn.has(lid)) lidToPn.set(lid, pn);
+      }
+      console.log(`[LID] loaded ${Object.keys(lidMap).length} mapping(s) from ${LID_FILE}`);
+    } else {
+      console.log('[LID] no lid-mappings.json found — starting fresh');
+    }
+  } catch (e) {
+    console.error('[LID] Load error:', e.message);
+  }
+}
+
+function saveLidMap() {
+  try {
+    fs.writeFileSync(LID_FILE, JSON.stringify(lidMap, null, 2));
+  } catch (e) {
+    console.error('[LID] Save error:', e.message);
+  }
+}
 
 (function loadLidMapFromEnv() {
   const raw = (process.env.LID_MAP || '').trim();
@@ -62,10 +90,15 @@ const lidToPn = new Map();
     const pnDigits = (pn || '').replace(/\D/g, '');
     if (!lidDigits || !pnDigits) continue;
     lidToPn.set(lidDigits, pnDigits);
+    lidMap[lidDigits] = pnDigits;
     count++;
   }
   console.log(`[LID] loaded ${count} mapping(s) from LID_MAP env`);
+  if (count) saveLidMap();
 })();
+
+// Load file-backed map on startup (fills in anything not from env)
+loadLidMap();
 
 // ---------------------------------------------------------------------------
 // Admin numbers
@@ -92,19 +125,23 @@ const ADMIN_NUMBER = (process.env.ADMIN_NUMBER || '').replace(/\D/g, '');
 function registerLidMapping(lidJid, pnJid) {
   if (!lidJid || !pnJid) return;
   const lidNum = String(lidJid).split('@')[0].split(':')[0];
-  const pnNum = String(pnJid).split('@')[0].split(':')[0];
+  const pnNum  = String(pnJid).split('@')[0].split(':')[0];
   if (!lidNum || !pnNum) return;
   if (lidNum === pnNum) return;
   if (!/^\d{7,15}$/.test(lidNum) || !/^\d{7,15}$/.test(pnNum)) return;
   if (lidToPn.get(lidNum) === pnNum) return;
+
   lidToPn.set(lidNum, pnNum);
+  lidMap[lidNum] = pnNum;
   console.log(`[LID] mapped ${lidNum} → ${pnNum}`);
-  saveState();
+
+  saveLidMap();   // persist to lid-mappings.json
+  saveState();    // keep bot_state.json in sync too
 }
 
 function resolveLid(num) {
   const clean = String(num || '').split('@')[0].split(':')[0];
-  return lidToPn.get(clean) || null;
+  return lidToPn.get(clean) || lidMap[clean] || null;
 }
 
 // ============================================================================
@@ -172,7 +209,9 @@ function loadState() {
 
     Object.entries(data.lidMappings || {}).forEach(([k, v]) => {
       if (!lidToPn.has(k)) lidToPn.set(k, v);
+      if (!lidMap[k]) lidMap[k] = v;
     });
+    saveLidMap();
 
     Object.entries(data.warnings || {}).forEach(([g, users]) => {
       warnings.set(g, users || {});
@@ -228,11 +267,9 @@ function isAdmin(jid) {
   const num = String(jid).split('@')[0].split(':')[0];
   if (!num) return false;
 
-  // Direct match against the raw digits.
   if (ADMIN_NUMBER && num === ADMIN_NUMBER) return true;
   if (extraAdmins.has(num)) return true;
 
-  // Last-10-digit match for country-code prefix variations.
   if (num.length >= 10) {
     if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 &&
         num.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
@@ -241,8 +278,7 @@ function isAdmin(jid) {
     }
   }
 
-  // If the JID is @lid, also try the LID→PN map.
-  const pn = lidToPn.get(num);
+  const pn = lidToPn.get(num) || lidMap[num];
   if (pn) {
     if (ADMIN_NUMBER && pn === ADMIN_NUMBER) return true;
     if (extraAdmins.has(pn)) return true;
@@ -382,5 +418,7 @@ module.exports = {
   verifySessionCode,
 
   registerLidMapping,
-  resolveLid
+  resolveLid,
+  loadLidMap,
+  saveLidMap
 };
