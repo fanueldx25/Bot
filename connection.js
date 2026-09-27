@@ -58,6 +58,41 @@ function validateNumber(raw) {
   return { ok: true, clean };
 }
 
+// ============================================================================
+// SENDER RESOLVER — handles @lid linked-device JIDs
+// Returns the REAL phone number as a JID string, e.g. "237678899829@s.whatsapp.net"
+// ============================================================================
+function resolveSenderJid(msg, fallbackJid) {
+  // 1. senderPn = real phone number (Baileys includes this for @lid messages)
+  const pn = msg?.key?.senderPn || msg?.key?.participantPn;
+  if (pn && typeof pn === 'string') {
+    const num = pn.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+
+  // 2. participantPn (older Baileys versions)
+  const ppn = msg?.participantPn || msg?.key?.participantPn;
+  if (ppn && typeof ppn === 'string') {
+    const num = ppn.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+
+  // 3. participant — may be @lid, but if it's @s.whatsapp.net it's fine
+  const participant = msg?.key?.participant;
+  if (participant && participant.endsWith('@s.whatsapp.net')) {
+    const num = participant.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+
+  // 4. fallback — DM chat JID
+  if (fallbackJid) {
+    const num = fallbackJid.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+
+  return '';
+}
+
 // ---------- Scheduler (runs while socket is up) ----------
 let schedulerTimer = null;
 
@@ -106,7 +141,6 @@ function stopScheduler() {
 
 // ---------- Start ----------
 async function startBot(rawNumber) {
-  // 1. validate
   const v = validateNumber(rawNumber);
   if (!v.ok) {
     state.setState('error', { message: v.error });
@@ -114,7 +148,6 @@ async function startBot(rawNumber) {
   }
   const phoneNumber = v.clean;
 
-  // 2. stop old socket + scheduler
   stopScheduler();
   if (state.sock) {
     try { state.sock.end(undefined); } catch (e) {}
@@ -128,7 +161,6 @@ async function startBot(rawNumber) {
     message: 'Opening secure channel with WhatsApp...'
   });
 
-  // 3. init auth state
   let authState, saveCreds, version;
   try {
     const auth = await useMultiFileAuthState(AUTH_DIR);
@@ -151,7 +183,6 @@ async function startBot(rawNumber) {
     version = undefined;
   }
 
-  // 4. create socket
   let sock;
   try {
     sock = makeWASocket({
@@ -306,7 +337,8 @@ async function handleIncoming(msg) {
   const from = msg.key.remoteJid;
   if (!from || from === 'status@broadcast') return;
 
-  const senderJid = msg.key.participant || from;
+  // ✅ FIX: resolve the REAL sender JID (handles @lid linked-device JIDs)
+  const senderJid = resolveSenderJid(msg, from);
 
   // pause check
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) return;
@@ -331,7 +363,6 @@ async function handleIncoming(msg) {
       if (linkRegex.test(body)) {
         const action = state.antilinkAction.get(from) || 'delete';
 
-        // delete the offending message
         try {
           await state.sock.sendMessage(from, { delete: msg.key });
         } catch (e) {
@@ -418,5 +449,6 @@ module.exports = {
   startBot,
   stopBot,
   loadBanner,
-  validateNumber
+  validateNumber,
+  resolveSenderJid
 };

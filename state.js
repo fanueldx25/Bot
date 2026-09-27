@@ -16,26 +16,26 @@ let sock = null;
 let botJid = null;
 let currentNumber = null;
 let pairingCode = null;
-let connectionState = 'disconnected'; // disconnected | connecting | code_ready | connected | error
+let connectionState = 'disconnected';
 let io = null;
 let BANNER_BUFFER = null;
 
 let viewOnceEnabled = true;
 let autoDownload = true;
 
-// ---------- NEW: reactions ----------
-const reactionsEnabled = new Set(); // chat JIDs where bot reacts
-const reactionsDisabled = new Set(); // chat JIDs where bot stays quiet
+// ---------- Reactions ----------
+const reactionsEnabled = new Set();
+const reactionsDisabled = new Set();
 let reactionsGlobal = false;
 
-// ---------- NEW: anti-link ----------
+// ---------- Anti-link ----------
 const antilinkGroups = new Set();
-const antilinkAction = new Map(); // jid -> 'delete' | 'warn' | 'kick'
+const antilinkAction = new Map();
 
-// ---------- NEW: schedules ----------
-const schedules = new Map(); // jid -> { action, at, repeat }
+// ---------- Schedules ----------
+const schedules = new Map();
 
-// ---------- NEW: extra admins (promotable via .addadmin) ----------
+// ---------- Extra admins ----------
 const extraAdmins = new Set();
 
 // ---------- Admin number (digits only) ----------
@@ -49,14 +49,12 @@ const STATE_FILE = path.join(__dirname, 'bot_state.json');
 function saveState() {
   try {
     const data = {
-      // existing
       pausedChats: [...pausedChats],
       welcomeEnabled: [...welcomeEnabled],
       goodbyeEnabled: [...goodbyeEnabled],
       customWelcome,
       viewOnceEnabled,
       autoDownload,
-      // new
       reactionsEnabled: [...reactionsEnabled],
       reactionsDisabled: [...reactionsDisabled],
       reactionsGlobal,
@@ -73,10 +71,12 @@ function saveState() {
 
 function loadState() {
   try {
-    if (!fs.existsSync(STATE_FILE)) return;
+    if (!fs.existsSync(STATE_FILE)) {
+      console.log('[State] no saved state — starting fresh');
+      return;
+    }
     const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
     
-    // existing
     (data.pausedChats || []).forEach((x) => pausedChats.add(x));
     (data.welcomeEnabled || []).forEach((x) => welcomeEnabled.add(x));
     (data.goodbyeEnabled || []).forEach((x) => goodbyeEnabled.add(x));
@@ -84,7 +84,6 @@ function loadState() {
     if (typeof data.viewOnceEnabled === 'boolean') viewOnceEnabled = data.viewOnceEnabled;
     if (typeof data.autoDownload === 'boolean') autoDownload = data.autoDownload;
     
-    // new
     (data.reactionsEnabled || []).forEach((x) => reactionsEnabled.add(x));
     (data.reactionsDisabled || []).forEach((x) => reactionsDisabled.add(x));
     if (typeof data.reactionsGlobal === 'boolean') reactionsGlobal = data.reactionsGlobal;
@@ -100,7 +99,7 @@ function loadState() {
 }
 
 // ============================================================================
-// SOCKET.IO EMIT
+// SOCKET.IO
 // ============================================================================
 function emit(event, data) {
   if (io) io.emit(event, data);
@@ -112,7 +111,7 @@ function setState(state, extra = {}) {
 }
 
 // ============================================================================
-// UI HELPERS
+// UI
 // ============================================================================
 const UI = {
   box: (title, emoji = '📦') =>
@@ -120,13 +119,22 @@ const UI = {
 };
 
 // ============================================================================
-// ADMIN CHECK (root admin + extraAdmins)
+// ADMIN CHECK
 // ============================================================================
 function isAdmin(jid) {
-  const num = (jid || '').split('@')[0].split(':')[0];
+  if (!jid) return false;
+  const num = String(jid).split('@')[0].split(':')[0];
   if (!num) return false;
+  
   if (ADMIN_NUMBER && num === ADMIN_NUMBER) return true;
-  return extraAdmins.has(num);
+  
+  if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 && num.length >= 10) {
+    if (num.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
+  }
+  
+  if (extraAdmins.has(num)) return true;
+  
+  return false;
 }
 
 // ============================================================================
@@ -163,7 +171,7 @@ async function sendWithBanner(jid, text) {
 }
 
 // ============================================================================
-// SEASONAL SESSION CODE (time-based, rotating every 60s)
+// SEASONAL SESSION CODE
 // ============================================================================
 function generateSessionCodeForSlot(slot, windowSeconds = 60) {
   const secret = process.env.SESSION_SECRET || 'default-session-secret';
@@ -190,10 +198,9 @@ function verifySessionCode(code, windowSeconds = 60) {
 }
 
 // ============================================================================
-// EXPORTS (getters/setters keep live refs in sync)
+// EXPORTS
 // ============================================================================
 module.exports = {
-  // mutable sets/objects (same reference always)
   pausedChats,
   welcomeEnabled,
   goodbyeEnabled,
@@ -205,7 +212,6 @@ module.exports = {
   schedules,
   extraAdmins,
   
-  // live values via getters
   get sock() { return sock; },
   set sock(v) { sock = v; },
   get botJid() { return botJid; },
@@ -226,7 +232,6 @@ module.exports = {
   get reactionsGlobal() { return reactionsGlobal; },
   set reactionsGlobal(v) { reactionsGlobal = v; },
   
-  // constants / helpers
   ADMIN_NUMBER,
   UI,
   isAdmin,
@@ -237,8 +242,6 @@ module.exports = {
   loadState,
   emit,
   setState,
-  
-  // session code helpers
   generateSessionCode,
   verifySessionCode
 };

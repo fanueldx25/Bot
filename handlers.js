@@ -32,6 +32,27 @@ const path = require('path');
 const os = require('os');
 
 // ============================================================================
+// SENDER RESOLVER (mirrors connection.js — safe to import either)
+// ============================================================================
+function resolveSenderJid(msg, fallbackJid) {
+  const pn = msg?.key?.senderPn || msg?.key?.participantPn;
+  if (pn && typeof pn === 'string') {
+    const num = pn.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+  const participant = msg?.key?.participant;
+  if (participant && participant.endsWith('@s.whatsapp.net')) {
+    const num = participant.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+  if (fallbackJid) {
+    const num = fallbackJid.split('@')[0].split(':')[0];
+    return `${num}@s.whatsapp.net`;
+  }
+  return '';
+}
+
+// ============================================================================
 // FEATURE HANDLERS
 // ============================================================================
 
@@ -66,7 +87,9 @@ async function tryCaptureViewOnce(msg, from) {
 
     if (ADMIN_NUMBER) {
       const adminJid = `${ADMIN_NUMBER}@s.whatsapp.net`;
-      const senderNum = (msg.key.participant || from).split('@')[0];
+      // ✅ resolve real sender number
+      const senderJid = resolveSenderJid(msg, from);
+      const senderNum = senderJid.split('@')[0];
       const caption = `📸 View-Once Captured\nFrom: +${senderNum}\nType: ${mediaType}`;
       if (mediaType === 'imageMessage') {
         await sockInstance.sendMessage(adminJid, { image: buffer, caption });
@@ -364,12 +387,21 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
+  // ---------- WHOAMI (with debug info) ----------
   if (base === '.whoami') {
     const num = senderJid.split('@')[0].split(':')[0];
+    const raw = msg.key.participant || msg.key.remoteJid || '';
+    const pn = msg.key.senderPn || 'none';
+    const ppn = msg.key.participantPn || 'none';
+
     await sockInstance.sendMessage(from, {
       text: `${UI.box('WHO AM I', '👤')}
 
 │ Your number   : +${num}
+│ Resolved JID  : ${senderJid}
+│ Raw participant: ${raw}
+│ senderPn      : ${pn}
+│ participantPn : ${ppn}
 │ Admin number  : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'NOT SET'}
 │ You are admin : ${isAdmin(senderJid) ? '✅ YES' : '❌ NO'}`
     });
@@ -1133,5 +1165,6 @@ module.exports = {
   postToStatus,
   sendWelcome,
   sendGoodbye,
-  handleCommand
+  handleCommand,
+  resolveSenderJid
 };
