@@ -2,18 +2,21 @@
 // handlers.js — Feature handlers + command router (extensible version)
 // ============================================================================
 // Fixes applied in this file:
-//   1. .trivia no longer attaches a rogue listener to sock.ev
-//   2. .restart awaits stopBot() before startBot()
-//   3. .pair goes through connection.stopBot() instead of raw sock.end()
-//   4. handleCommand guards against null socket
-//   5. resolveSenderJid handles @lid correctly instead of lying about it
-//   6. helpers.mentions unwraps ephemeral / viewOnce / document wrappers
-//   7. helpers.contextInfo does the same
-//   8. helpers.quoted reuses contextInfo
-//   9. Trivia state is a bounded Map with a sweep timer
-//  10. .calc caps expression length and rejects non-finite results
-//  11. handleCommand preserves arg casing (only the command name is lowered)
-//  12. helpers.reply + replyWithBanner log every send for DM debugging
+//   1.  .trivia no longer attaches a rogue listener to sock.ev
+//   2.  .restart awaits stopBot() before startBot()
+//   3.  .pair goes through connection.stopBot() instead of raw sock.end()
+//   4.  handleCommand guards against null socket
+//   5.  resolveSenderJid handles @lid correctly instead of lying about it
+//   6.  helpers.mentions unwraps ephemeral / viewOnce / document wrappers
+//   7.  helpers.contextInfo does the same
+//   8.  helpers.quoted reuses contextInfo
+//   9.  Trivia state is a bounded Map with a sweep timer
+//   10. .calc caps expression length and rejects non-finite results
+//   11. handleCommand preserves arg casing (only the command name is lowered)
+//   12. helpers.reply + replyWithBanner log every send for DM debugging
+//   13. helpers.resolveJid converts @lid mentions to @s.whatsapp.net when
+//       the LID is mapped, returns null otherwise so callers can error out.
+//       Used by .getpp, .kick, .promote, .demote, .warn, .ship, .addadmin.
 // ============================================================================
 
 const state = require('./state');
@@ -116,8 +119,6 @@ function unwrapMessage(message) {
 // SHARED HELPERS (used by every command)
 // ============================================================================
 const helpers = {
-  // 🔧 FIX 12: log every outgoing reply so we can see exactly what JID is
-  // being targeted and whether sendMessage succeeded or threw.
   async reply(from, text, opts = {}) {
     const sock = state.sock;
     if (!sock) {
@@ -166,6 +167,23 @@ const helpers = {
 
   requireGroup(from) {
     if (!from.endsWith('@g.us')) helpers.fail('❌ This command only works in groups.');
+  },
+
+  // 🔧 Resolve any user JID to a routable @s.whatsapp.net JID.
+  // Returns:
+  //   - the same JID if it's already @s.whatsapp.net
+  //   - the resolved phone JID if the input is a mapped @lid
+  //   - null if the input is an unmapped @lid (caller should show an error)
+  resolveJid(jid) {
+    if (!jid) return jid;
+    if (jid.endsWith('@s.whatsapp.net')) return jid;
+    if (jid.endsWith('@lid')) {
+      const num = jid.split('@')[0].split(':')[0];
+      const pn = state.resolveLid && state.resolveLid(num);
+      if (pn) return `${pn}@s.whatsapp.net`;
+      return null;
+    }
+    return jid;
   },
 
   mentions(msg) {
@@ -870,13 +888,19 @@ const COMMANDS = [
     }
   },
   {
+    // 🔧 resolveJid: convert @lid mention to @s.whatsapp.net before use
     name: '.getpp',
     category: 'media',
     desc: 'Get profile picture',
     handler: async ({ msg, from }) => {
       let target = from;
       const mentioned = helpers.mentions(msg);
-      if (mentioned.length) target = mentioned[0];
+      if (mentioned.length) {
+        target = helpers.resolveJid(mentioned[0]);
+        if (!target) {
+          helpers.fail('❌ Cannot resolve this user — their LID is not in LID_MAP.');
+        }
+      }
       try {
         const url = await state.sock.profilePictureUrl(target, 'image');
         await state.sock.sendMessage(from, { image: { url }, caption: '📷 *Profile picture*' });
@@ -1097,6 +1121,7 @@ const COMMANDS = [
     }
   },
   {
+    // 🔧 resolveJid for the mention list so mentions don't fail on @lid
     name: '.ship',
     category: 'fun',
     desc: 'Ship two users',
@@ -1105,6 +1130,9 @@ const COMMANDS = [
       const mentioned = helpers.requireMention(msg, '.ship @user1 @user2');
       if (mentioned.length < 2) helpers.fail('❌ Usage: .ship @user1 @user2');
       const [a, b] = mentioned;
+      const aRes = helpers.resolveJid(a) || a;
+      const bRes = helpers.resolveJid(b) || b;
+
       const seed = [a, b].slice().sort().join('|');
       let h = 0;
       for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
@@ -1114,7 +1142,7 @@ const COMMANDS = [
       await helpers.reply(
         from,
         `${UI.box('SHIP', '💞')}\n\n│ @${a.split('@')[0]}  ❤️  @${b.split('@')[0]}\n│ ${bar}  *${pct}%*`,
-        { mentions: [a, b] }
+        { mentions: [aRes, bRes] }
       );
     }
   },
@@ -1277,7 +1305,8 @@ const COMMANDS = [
       if (!newText) helpers.fail('❌ Usage: .edit <new text>');
 
       const ci = helpers.contextInfo(msg);
-      const sender = ci?.participant || '';
+      const senderRaw = ci?.participant || '';
+      const sender = helpers.resolveJid(senderRaw) || senderRaw;
       const senderNum = sender.split('@')[0];
       await helpers.reply(
         from,
@@ -1367,18 +1396,22 @@ const COMMANDS = [
     }
   },
   {
+    // 🔧 resolveJid: store the phone number, not the LID, when possible
     name: '.addadmin',
     admin: true,
     category: 'admin',
     desc: 'Promote user to admin',
     handler: async ({ msg, from }) => {
       const mentioned = helpers.requireMention(msg, '.addadmin @user');
+      const added = [];
       for (const jid of mentioned) {
-        const num = jid.split('@')[0].split(':')[0];
+        const resolved = helpers.resolveJid(jid) || jid;
+        const num = resolved.split('@')[0].split(':')[0];
         state.extraAdmins.add(num);
+        added.push(num);
       }
       saveState();
-      await helpers.reply(from, `${UI.box('ADMIN ADDED', '✅')}`);
+      await helpers.reply(from, `${UI.box('ADMIN ADDED', '✅')}\n\n${added.join('\n')}`);
     }
   },
   {
@@ -1389,7 +1422,8 @@ const COMMANDS = [
     handler: async ({ msg, from }) => {
       const mentioned = helpers.requireMention(msg, '.deladmin @user');
       for (const jid of mentioned) {
-        const num = jid.split('@')[0].split(':')[0];
+        const resolved = helpers.resolveJid(jid) || jid;
+        const num = resolved.split('@')[0].split(':')[0];
         state.extraAdmins.delete(num);
       }
       saveState();
@@ -1544,6 +1578,7 @@ ${list}
     }
   },
   {
+    // 🔧 resolveJid: convert @lid mention to phone JID before kicking
     name: '.kick',
     admin: true,
     category: 'group',
@@ -1552,7 +1587,11 @@ ${list}
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.kick @user');
-      await state.sock.groupParticipantsUpdate(from, mentioned, 'remove');
+      const resolved = mentioned.map((j) => helpers.resolveJid(j)).filter(Boolean);
+      if (!resolved.length) {
+        helpers.fail('❌ Cannot resolve any mentioned user — their LIDs are not in LID_MAP.');
+      }
+      await state.sock.groupParticipantsUpdate(from, resolved, 'remove');
       await helpers.reply(from, `${UI.box('KICKED', '✅')}`);
     }
   },
@@ -1565,7 +1604,11 @@ ${list}
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.promote @user');
-      await state.sock.groupParticipantsUpdate(from, mentioned, 'promote');
+      const resolved = mentioned.map((j) => helpers.resolveJid(j)).filter(Boolean);
+      if (!resolved.length) {
+        helpers.fail('❌ Cannot resolve mentioned user — add their LID to LID_MAP.');
+      }
+      await state.sock.groupParticipantsUpdate(from, resolved, 'promote');
       await helpers.reply(from, `${UI.box('PROMOTED', '✅')}`);
     }
   },
@@ -1578,7 +1621,11 @@ ${list}
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.demote @user');
-      await state.sock.groupParticipantsUpdate(from, mentioned, 'demote');
+      const resolved = mentioned.map((j) => helpers.resolveJid(j)).filter(Boolean);
+      if (!resolved.length) {
+        helpers.fail('❌ Cannot resolve mentioned user — add their LID to LID_MAP.');
+      }
+      await state.sock.groupParticipantsUpdate(from, resolved, 'demote');
       await helpers.reply(from, `${UI.box('DEMOTED', '✅')}`);
     }
   },
@@ -1859,6 +1906,7 @@ Usage: .reactions on|off [global]`
     }
   },
   {
+    // 🔧 resolveJid on the target so kick/mention works for @lid users
     name: '.warn',
     admin: true,
     category: 'moderation',
@@ -1867,7 +1915,8 @@ Usage: .reactions on|off [global]`
     handler: async ({ msg, from, args }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.warn @user [reason]');
-      const target = mentioned[0];
+      const targetRaw = mentioned[0];
+      const target = helpers.resolveJid(targetRaw) || targetRaw;
       const groupWarns = state.warnings.get(from) || {};
       const reason = args.slice(1).join(' ') || 'no reason given';
       const list = groupWarns[target] || [];
@@ -1906,7 +1955,8 @@ Usage: .reactions on|off [global]`
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.warnings @user');
-      const target = mentioned[0];
+      const targetRaw = mentioned[0];
+      const target = helpers.resolveJid(targetRaw) || targetRaw;
       const groupWarns = state.warnings.get(from) || {};
       const list = groupWarns[target] || [];
       await state.sock.sendMessage(from, {
@@ -1926,7 +1976,8 @@ Usage: .reactions on|off [global]`
     handler: async ({ msg, from }) => {
       helpers.requireGroup(from);
       const mentioned = helpers.requireMention(msg, '.resetwarn @user');
-      const target = mentioned[0];
+      const targetRaw = mentioned[0];
+      const target = helpers.resolveJid(targetRaw) || targetRaw;
       const groupWarns = state.warnings.get(from) || {};
       delete groupWarns[target];
       state.warnings.set(from, groupWarns);
