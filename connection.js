@@ -3,13 +3,25 @@
 // ============================================================================
 // FIXES APPLIED:
 // 1. Pairing code timing: waits for `connection === 'connecting'` before
-//    requesting the code. This prevents dead codes that WhatsApp rejects.
+//    requesting the code. Prevents dead codes WhatsApp rejects.
 // 2. "Waiting for this message" bug: resets sender-key-memory before every
-//    group send. This forces fresh SKDM distribution to all devices.
+//    group send. Forces fresh SKDM distribution to all devices.
 // 3. Session persistence: imports SESSION_DATA env var on startup and
 //    auto-exports session JSON to admin on connect.
 // 4. LID -> PN learning: captures senderPn/participantAlt from incoming
 //    messages and persists them to disk for admin resolution after restarts.
+//
+// 🔧 FIX A: resolveSenderJid now resolves @lid participants via the LID map
+//           and NEVER returns the group JID as the sender. Previously, an
+//           unresolved @lid participant caused senderJid to fall back to
+//           the group JID, so isAdmin(<group>) → false → "restricted to
+//           admins" for EVERYONE in groups.
+// 🔧 FIX B: LID learning now covers DMs as well as groups (checks
+//           remoteJid when participant is missing).
+// 🔧 FIX C: safeSend + rememberMessage + getMessage wired back in so
+//           retry receipts are answered and transient E2EE errors retry.
+// 🔧 FIX D: state.setSafeSend(safeSend) so state.sendWithBanner also uses
+//           the retry path.
 // ============================================================================
 
 const {
@@ -52,12 +64,75 @@ const DISCONNECT_MESSAGES = {
 };
 
 // ============================================================================
+// 🔧 FIX C — MESSAGE STORE for getMessage (retry / re-encryption)
+// ============================================================================
+const MESSAGE_STORE = new Map();
+const MESSAGE_STORE_MAX = 2000;
+const MESSAGE_STORE_TTL = 30 * 60 * 1000;
+
+function rememberMessage(msg) {
+  if (!msg?.key?.id) return;
+  MESSAGE_STORE.set(msg.key.id, msg);
+  if (MESSAGE_STORE.size > MESSAGE_STORE_MAX) {
+    const cutoff = Date.now() - MESSAGE_STORE_TTL;
+    for (const [id, m] of MESSAGE_STORE) {
+      const ts = (m.messageTimestamp || 0) * 1000;
+      if (ts && ts < cutoff) MESSAGE_STORE.delete(id);
+      if (MESSAGE_STORE.size <= MESSAGE_STORE_MAX) break;
+    }
+    while (MESSAGE_STORE.size > MESSAGE_STORE_MAX) {
+      const first = MESSAGE_STORE.keys().next().value;
+      MESSAGE_STORE.delete(first);
+    }
+  }
+}
+
+async function getMessageForRetry(key) {
+  if (!key?.id) return undefined;
+  return MESSAGE_STORE.get(key.id) || undefined;
+}
+
+// ============================================================================
+// 🔧 FIX C — SAFE SEND helper
+// ============================================================================
+async function safeSend(jid, content, options = {}, retries = 2) {
+  const sock = currentSock;
+  if (!sock) throw new Error('Socket not ready');
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const sent = await sock.sendMessage(jid, content, options);
+      try { rememberMessage(sent); } catch (_) {}
+      return sent;
+    } catch (e) {
+      const msg = e?.message || String(e);
+      const transient =
+        /Connection Closed|Connection Terminated|Timed Out|EPIPE|ECONNRESET|Stream Errored|not connected|Socket closed|Bad MAC|decrypt/i
+          .test(msg);
+      if (!transient || attempt === retries) {
+        console.error(`[safeSend] giving up (${attempt + 1}/${retries + 1}):`, msg);
+        throw e;
+      }
+      console.warn(`[safeSend] transient error, retry ${attempt + 1}/${retries}:`, msg);
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+}
+
+// ============================================================================
+// 🔧 FIX — Serialize creds.update saves
+// ============================================================================
+let credsSaveChain = Promise.resolve();
+function queueSaveCreds(saveCreds) {
+  credsSaveChain = credsSaveChain
+    .then(() => saveCreds())
+    .catch((e) => console.error('[Creds] save failed:', e.message));
+  return credsSaveChain;
+}
+
+// ============================================================================
 // SENDER KEY RESET WORKAROUND
 // ============================================================================
-// Forces fresh SKDM (Sender Key Distribution Message) to all group devices.
-// This heals the "Waiting for this message" bug caused by stale sender-key-memory.
-// The map is never invalidated when a member switches phones, so the bot
-// thinks they already have the key and doesn't re-distribute it.
 async function resetGroupSenderKey(sock, groupJid) {
   if (!sock || !groupJid) return;
   try {
@@ -98,9 +173,17 @@ function validateNumber(raw) {
 }
 
 // ============================================================================
-// SENDER RESOLVER (LID -> PN)
+// 🔧 FIX A — SENDER RESOLVER (handles DMs, groups, and @lid participants)
+// ============================================================================
+// Order of resolution:
+//   1. Explicit phone JID fields on the key (senderPn, participantPn, …)
+//   2. key.participant  (groups)  — resolve @lid via the LID map
+//   3. key.remoteJid    (DMs)     — resolve @lid via the LID map
+//   4. Return the raw @lid if unmapped so isAdmin() can still fall back.
+// NEVER return a @g.us JID as the sender.
 // ============================================================================
 function resolveSenderJid(msg, fallbackJid) {
+  // ---- 1) Explicit phone JID fields first --------------------------------
   const candidates = [
     msg?.key?.senderPn,
     msg?.key?.participantPn,
@@ -109,7 +192,6 @@ function resolveSenderJid(msg, fallbackJid) {
     msg?.senderPn,
     msg?.participantPn
   ];
-
   for (const c of candidates) {
     if (c && typeof c === 'string' && c.endsWith('@s.whatsapp.net')) {
       const num = c.split('@')[0].split(':')[0];
@@ -117,23 +199,41 @@ function resolveSenderJid(msg, fallbackJid) {
     }
   }
 
+  // ---- 2) Group participant ---------------------------------------------
   const participant = msg?.key?.participant;
-  if (participant && participant.endsWith('@s.whatsapp.net')) {
-    const num = participant.split('@')[0].split(':')[0];
-    if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
+  if (participant && typeof participant === 'string') {
+    if (participant.endsWith('@s.whatsapp.net')) {
+      const num = participant.split('@')[0].split(':')[0];
+      if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
+    }
+    if (participant.endsWith('@lid')) {
+      const lidNum = participant.split('@')[0].split(':')[0];
+      const pn = state.resolveLid && state.resolveLid(lidNum);
+      if (pn) return `${pn}@s.whatsapp.net`;
+      // Unmapped — return the raw @lid so isAdmin() can try its LID fallback
+      return participant;
+    }
   }
 
-  if (fallbackJid) {
-    const raw = fallbackJid.split('@')[0].split(':')[0];
+  // ---- 3) DM / fallback --------------------------------------------------
+  if (fallbackJid && typeof fallbackJid === 'string') {
+    if (fallbackJid.endsWith('@s.whatsapp.net')) {
+      const num = fallbackJid.split('@')[0].split(':')[0];
+      if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
+    }
     if (fallbackJid.endsWith('@lid')) {
-      const pn = state.resolveLid && state.resolveLid(raw);
+      const lidNum = fallbackJid.split('@')[0].split(':')[0];
+      const pn = state.resolveLid && state.resolveLid(lidNum);
       if (pn) return `${pn}@s.whatsapp.net`;
       return fallbackJid;
     }
-    if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
+    // 🔧 Never return the group JID as the sender.
+    if (fallbackJid.endsWith('@g.us')) {
+      return participant || '';
+    }
   }
 
-  return fallbackJid || '';
+  return participant || fallbackJid || '';
 }
 
 // ============================================================================
@@ -255,7 +355,7 @@ function startScheduler() {
           jid,
           s.action === 'open' ? 'not_announcement' : 'announcement'
         );
-        await sock.sendMessage(jid, {
+        await safeSend(jid, {
           text:
             s.action === 'open'
               ? '🔓 *Group opened on schedule*'
@@ -325,15 +425,11 @@ async function startBot(rawNumber) {
       const old = currentSock;
       currentSock = null;
       state.sock = null;
+      if (typeof state.setSafeSend === 'function') state.setSafeSend(null);
       await teardownSocket(old);
     }
 
-    // ========================================================================
-    // IMPORT SESSION FROM ENV VAR (survives redeploys on Render free tier)
-    // ========================================================================
-    // Render's free tier wipes the filesystem on every redeploy. If the user
-    // has pasted a session JSON into the SESSION_DATA env var, import it
-    // before initializing auth state so the bot skips pairing entirely.
+    // ---- Session import from env var (survives Render redeploys) ----
     if (process.env.SESSION_DATA && !hasStoredSession()) {
       console.log('[Session] Found SESSION_DATA env var — importing...');
       const imported = importSession(process.env.SESSION_DATA);
@@ -392,7 +488,12 @@ async function startBot(rawNumber) {
         defaultQueryTimeoutMs: 30000,
         keepAliveIntervalMs: 25000,
         emitOwnEvents: false,
-        retryRequestDelayMs: 250
+        retryRequestDelayMs: 250,
+        maxMsgRetryCount: 5,
+
+        // 🔧 FIX C — required so Baileys can answer retry receipts by
+        // re-encrypting and re-sending the original message.
+        getMessage: getMessageForRetry,
       });
     } catch (e) {
       console.error('[Socket] creation failed:', e.message);
@@ -404,15 +505,15 @@ async function startBot(rawNumber) {
     currentSock = sock;
     state.sock = sock;
 
-    sock.ev.on('creds.update', saveCreds);
+    // 🔧 FIX D — route banner sends through safeSend.
+    if (typeof state.setSafeSend === 'function') state.setSafeSend(safeSend);
+
+    // 🔧 FIX — serialize creds.update saves.
+    sock.ev.on('creds.update', () => queueSaveCreds(saveCreds));
 
     // ========================================================================
-    // PAIRING CODE REQUEST (FIXED TIMING)
+    // PAIRING CODE REQUEST
     // ========================================================================
-    // The code must be requested when the connection reaches 'connecting'.
-    // Requesting too early produces a dead code that WhatsApp rejects with
-    // "device cannot be associated". The `qr` event also fires in pairing
-    // mode, but 'connecting' is the most reliable trigger.
     if (!sock.authState.creds.registered) {
       state.setState('connecting', {
         number: phoneNumber,
@@ -420,13 +521,10 @@ async function startBot(rawNumber) {
       });
 
       let attempt = 0;
-      let pairingRequested = false;
-
       const requestCode = async () => {
         if (myGen !== currentGen) return false;
         attempt++;
         try {
-          // Sanitize phone number to digits only (no +, spaces, or dashes)
           const cleanNumber = phoneNumber.replace(/\D/g, '');
           console.log(`[Pairing] Requesting code for ${cleanNumber} (attempt ${attempt})`);
           const code = await sock.requestPairingCode(cleanNumber);
@@ -459,7 +557,6 @@ async function startBot(rawNumber) {
         }
       };
 
-      // Store the function so connection.update can call it when ready
       sock._requestPairingCode = requestCode;
     }
 
@@ -467,10 +564,7 @@ async function startBot(rawNumber) {
       if (myGen !== currentGen) return;
       const { connection, lastDisconnect, isNewLogin } = update;
 
-      // ====================================================================
-      // PAIRING CODE TRIGGER: connection === 'connecting'
-      // ====================================================================
-      // Request the code once the socket is ready. Do NOT wait for qr.
+      // Pairing code trigger — connection === 'connecting'
       if (
         connection === 'connecting' &&
         !sock.authState.creds.registered &&
@@ -478,7 +572,6 @@ async function startBot(rawNumber) {
         !sock._pairingRequested
       ) {
         sock._pairingRequested = true;
-        // Small delay to let the Noise handshake complete
         setTimeout(() => {
           if (myGen === currentGen) sock._requestPairingCode();
         }, 2000);
@@ -494,12 +587,7 @@ async function startBot(rawNumber) {
         console.log('✅ Connected as', sock.user.id);
         startScheduler();
 
-        // =================================================================
-        // AUTO-EXPORT SESSION TO ADMIN (survives redeploys)
-        // =================================================================
-        // After connecting, send the session JSON to the admin's number.
-        // The user can then paste it into Render's SESSION_DATA env var
-        // to restore the session after a redeploy.
+        // Auto-export session to admin
         if (process.env.ADMIN_NUMBER) {
           setTimeout(async () => {
             try {
@@ -507,7 +595,7 @@ async function startBot(rawNumber) {
               if (exp.ok) {
                 const adminJid = `${process.env.ADMIN_NUMBER}@s.whatsapp.net`;
                 const buffer = Buffer.from(exp.payload, 'base64');
-                await sock.sendMessage(adminJid, {
+                await safeSend(adminJid, {
                   document: buffer,
                   mimetype: 'application/json',
                   fileName: exp.filename,
@@ -532,12 +620,20 @@ async function startBot(rawNumber) {
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const reason = DISCONNECT_MESSAGES[statusCode] || 'Unknown disconnect.';
-        const shouldReconnect =
-          statusCode !== DisconnectReason.loggedOut &&
-          statusCode !== DisconnectReason.forbidden;
+
+        const NO_RECONNECT = new Set([
+          DisconnectReason.loggedOut,
+          DisconnectReason.forbidden,
+          DisconnectReason.badSession,
+          DisconnectReason.multideviceMismatch,
+          DisconnectReason.connectionReplaced,
+        ]);
+        const shouldReconnect = !NO_RECONNECT.has(statusCode);
 
         stopScheduler();
         state.setState('disconnected', { code: statusCode, message: reason });
+
+        if (myGen !== currentGen) return;
 
         if (shouldReconnect) {
           console.log('↻ Reconnecting in 3s...');
@@ -547,9 +643,16 @@ async function startBot(rawNumber) {
             if (myGen === currentGen) startBot(state.currentNumber);
           }, 3000);
         } else {
-          try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
+          if (
+            statusCode === DisconnectReason.loggedOut ||
+            statusCode === DisconnectReason.badSession ||
+            statusCode === DisconnectReason.forbidden
+          ) {
+            try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
+          }
           state.sock = null;
           state.botJid = null;
+          if (typeof state.setSafeSend === 'function') state.setSafeSend(null);
           state.setState('error', {
             message: reason,
             hint: 'You will need to pair again.'
@@ -563,6 +666,7 @@ async function startBot(rawNumber) {
       if (type !== 'notify' && type !== 'append') return;
       for (const msg of messages) {
         try {
+          rememberMessage(msg);
           await handleIncoming(msg);
         } catch (e) {
           console.error('[Message]', e.message);
@@ -575,7 +679,6 @@ async function startBot(rawNumber) {
       const { id, participants, action } = update;
       try {
         if (action === 'add' && state.welcomeEnabled.has(id)) {
-          // Reset sender key before group send to avoid "Waiting" bug
           await resetGroupSenderKey(state.sock, id);
           await handlers.sendWelcome(id, participants);
         } else if (action === 'remove' && state.goodbyeEnabled.has(id)) {
@@ -602,6 +705,46 @@ async function handleIncoming(msg) {
   const rawFrom = msg.key.remoteJid;
   if (!rawFrom || rawFrom === 'status@broadcast') return;
 
+  // ---------------------------------------------------------------------
+  // 🔧 FIX B — LID → PN learning FIRST (before any resolution) so that
+  // the same message's `resolveSenderJid` call benefits from the mapping
+  // we just learned. This covers both DMs and groups.
+  // ---------------------------------------------------------------------
+  try {
+    const pnCandidate =
+      msg.key?.senderPn ||
+      msg.key?.participantPn ||
+      msg.key?.participantAlt ||
+      msg.key?.remoteJidAlt;
+
+    const lidCandidates = [
+      msg.key?.participant,   // groups
+      msg.key?.remoteJid,     // DMs
+      msg.key?.participantAlt,
+      msg.key?.remoteJidAlt
+    ];
+
+    for (const lid of lidCandidates) {
+      if (
+        lid &&
+        typeof lid === 'string' &&
+        lid.endsWith('@lid') &&
+        pnCandidate &&
+        typeof pnCandidate === 'string' &&
+        pnCandidate.endsWith('@s.whatsapp.net') &&
+        typeof state.registerLidMapping === 'function'
+      ) {
+        const lidUser = lid.split('@')[0].split(':')[0];
+        const pnUser = pnCandidate.split('@')[0].split(':')[0];
+        state.registerLidMapping(lidUser, pnUser);
+        console.log(`[LID] Learned: ${lidUser}@lid → ${pnUser}@s.whatsapp.net`);
+      }
+    }
+  } catch (_) {}
+
+  // ---------------------------------------------------------------------
+  // Resolve the chat JID (DM @lid → phone JID) for routing purposes.
+  // ---------------------------------------------------------------------
   let from = rawFrom;
   if (rawFrom.endsWith('@lid')) {
     const alt =
@@ -618,6 +761,7 @@ async function handleIncoming(msg) {
     }
   }
 
+  // 🔧 FIX A — resolve sender via the corrected resolver.
   const senderJid = resolveSenderJid(msg, from);
 
   console.log('[in]', {
@@ -625,47 +769,20 @@ async function handleIncoming(msg) {
     from,
     senderJid,
     fromMe: msg.key.fromMe,
+    isAdmin: state.isAdmin(senderJid),
     text: extractText(msg).slice(0, 40)
   });
-
-  // ==========================================================================
-  // LID -> PN LEARNING (persists across restarts)
-  // ==========================================================================
-  // The lid-mapping.update event never fires in Baileys. We learn mappings
-  // from senderPn/participantAlt on every incoming message instead.
-  try {
-    const lidCandidate = msg.key.participant || msg.key.remoteJid;
-    const pnCandidate =
-      msg.key.senderPn ||
-      msg.key.participantAlt ||
-      msg.key.remoteJidAlt;
-
-    if (
-      lidCandidate?.endsWith('@lid') &&
-      pnCandidate?.endsWith('@s.whatsapp.net') &&
-      typeof state.registerLidMapping === 'function'
-    ) {
-      const lidUser = lidCandidate.split('@')[0].split(':')[0];
-      const pnUser = pnCandidate.split('@')[0].split(':')[0];
-      state.registerLidMapping(lidUser, pnUser);
-      console.log(`[LID] Learned: ${lidUser}@lid → ${pnUser}@s.whatsapp.net`);
-    }
-  } catch (_) {}
 
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) {
     return;
   }
 
-  // ==========================================================================
-  // RESET SENDER KEY FOR GROUP CHATS
-  // ==========================================================================
-  // Before handling any command in a group, reset the sender-key-memory.
-  // This forces fresh SKDM distribution and heals the "Waiting" bug.
+  // Reset sender key for group chats (heals "Waiting for this message")
   if (from.endsWith('@g.us')) {
     await resetGroupSenderKey(state.sock, from);
   }
 
-  // Anti-link (group only)
+  // ---------- Anti-link (group only) ----------
   if (from.endsWith('@g.us')) {
     try {
       if (
@@ -685,14 +802,14 @@ async function handleIncoming(msg) {
           const action = state.antilinkAction.get(from) || 'delete';
           try { await state.sock.sendMessage(from, { delete: msg.key }); } catch (e) {}
           if (action === 'warn') {
-            await state.sock.sendMessage(from, {
+            await safeSend(from, {
               text: `⚠️ @${senderJid.split('@')[0]}, links are not allowed here.`,
               mentions: [senderJid]
             });
           } else if (action === 'kick') {
             try {
               await state.sock.groupParticipantsUpdate(from, [senderJid], 'remove');
-              await state.sock.sendMessage(from, {
+              await safeSend(from, {
                 text: `🚫 @${senderJid.split('@')[0]} was removed for posting a link.`,
                 mentions: [senderJid]
               });
@@ -704,7 +821,7 @@ async function handleIncoming(msg) {
     } catch (e) {}
   }
 
-  // Reactions (group only)
+  // ---------- Reactions (group only) ----------
   if (from.endsWith('@g.us')) {
     try {
       const chatReactions = state.reactionsGlobal || state.reactionsEnabled.has(from);
@@ -712,7 +829,7 @@ async function handleIncoming(msg) {
       if (chatReactions && !chatMuted && !msg.key.fromMe) {
         const emojis = ['👍', '❤️', '😂', '🔥', '🎉', '👀', '💯', '🙌'];
         const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-        await state.sock.sendMessage(from, { react: { text: emoji, key: msg.key } });
+        await safeSend(from, { react: { text: emoji, key: msg.key } });
       }
     } catch (_) {}
   }
@@ -732,10 +849,47 @@ async function handleIncoming(msg) {
     console.error('[hooks]', e.message);
   }
 
-  if (!text.startsWith('.') && !text.startsWith('!')) return;
-  await handlers.handleCommand(msg, from, senderJid, text);
-}
-
+  // 🔧 TIER 2 — accept prefixed commands AND bare command words.
+  //   ".ping", "!ping", and "ping" all work.
+  //   Only bare words that EXACTLY match a known command name/alias are
+  //   treated as commands, so normal chatter is never hijacked.
+  const engine = (() => { try { return require('./engine'); } catch { return null; } })();
+  
+    // 🔧 TIER 2 — accept prefixed commands AND bare command words.
+  //   Bare words are DM-only so group chatter doesn't trigger commands.
+  const isPrefixed = text.startsWith('.') || text.startsWith('!');
+  const inGroup = from.endsWith('@g.us');
+  
+  if (isPrefixed) {
+    await handlers.handleCommand(msg, from, senderJid, text);
+    return;
+  }
+  
+  if (!inGroup && typeof handlers.isKnownCommand === 'function') {
+    const firstToken = text.trim().split(/\s+/)[0].toLowerCase();
+    if (firstToken && firstToken.length < 20 && handlers.isKnownCommand(firstToken)) {
+      await handlers.handleCommand(msg, from, senderJid, text);
+      return;
+    }
+  }
+  }
+  
+  if (isPrefixed) {
+    await handlers.handleCommand(msg, from, senderJid, text);
+    return;
+  }
+  
+  // Bare-word path — only if the first token is a known command.
+  const firstToken = text.trim().split(/\s+/)[0].toLowerCase();
+  const looksLikeCommand = firstToken.length > 0 && firstToken.length < 20;
+  
+  if (looksLikeCommand && typeof handlers.isKnownCommand === 'function') {
+    if (handlers.isKnownCommand(firstToken)) {
+      // Handlers accept both ".x" and "x" forms; pass the raw text.
+      await handlers.handleCommand(msg, from, senderJid, '.' + text);
+      return;
+    }
+  }
 function extractText(msg) {
   const m = msg.message;
   return (
@@ -763,6 +917,7 @@ async function stopBot() {
     const old = currentSock;
     currentSock = null;
     state.sock = null;
+    if (typeof state.setSafeSend === 'function') state.setSafeSend(null);
     await teardownSocket(old);
     state.botJid = null;
     state.pairingCode = null;
@@ -781,5 +936,7 @@ module.exports = {
   exportSession,
   importSession,
   hasStoredSession,
-  resetGroupSenderKey
+  resetGroupSenderKey,
+  safeSend,
+  rememberMessage,
 };

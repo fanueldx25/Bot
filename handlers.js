@@ -99,16 +99,16 @@ const STATUS_TIMERS = new Map(); // msgId → { t3: Timeout, t5: Timeout }
 function scheduleStatusEngagement(msgId) {
   if (!msgId) return;
   cancelStatusEngagement(msgId);
-
+  
   const sock = state.sock;
   if (!sock) return;
-
+  
   const t3 = setTimeout(() => {
     viewStatus(msgId).catch((e) =>
       console.error('[status-view 3m]', e.message)
     );
   }, 3 * 60 * 1000);
-
+  
   const t5 = setTimeout(() => {
     viewStatus(msgId).catch((e) =>
       console.error('[status-view 5m]', e.message)
@@ -117,7 +117,7 @@ function scheduleStatusEngagement(msgId) {
       console.error('[status-like 5m]', e.message)
     );
   }, 5 * 60 * 1000);
-
+  
   STATUS_TIMERS.set(msgId, { t3, t5 });
 }
 
@@ -136,12 +136,11 @@ async function viewStatus(msgId) {
   try {
     // Baileys accepts an array of { remoteJid, id, participant } keys.
     await sock.readMessages([
-      {
-        remoteJid: 'status@broadcast',
-        id: msgId,
-        participant: state.botJid || undefined
-      }
-    ]);
+    {
+      remoteJid: 'status@broadcast',
+      id: msgId,
+      participant: state.botJid || undefined
+    }]);
     console.log('[status] viewed', msgId);
   } catch (e) {
     console.error('[status] view failed', e.message);
@@ -154,9 +153,7 @@ async function likeStatus(msgId) {
   if (!sock) return;
   try {
     await sock.sendMessage(
-      'status@broadcast',
-      { react: { text: '❤️', key: { remoteJid: 'status@broadcast', id: msgId, fromMe: true } } },
-      { statusJidList: [] }
+      'status@broadcast', { react: { text: '❤️', key: { remoteJid: 'status@broadcast', id: msgId, fromMe: true } } }, { statusJidList: [] }
     );
     console.log('[status] liked', msgId);
   } catch (e) {
@@ -173,13 +170,13 @@ function resolveSenderJid(msg, fallbackJid) {
     const num = pn.split('@')[0].split(':')[0];
     if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
-
+  
   const participant = msg?.key?.participant;
   if (participant && participant.endsWith('@s.whatsapp.net')) {
     const num = participant.split('@')[0].split(':')[0];
     if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
-
+  
   if (fallbackJid) {
     const raw = fallbackJid.split('@')[0].split(':')[0];
     if (fallbackJid.endsWith('@lid')) {
@@ -189,7 +186,7 @@ function resolveSenderJid(msg, fallbackJid) {
     }
     if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
   }
-
+  
   return '';
 }
 
@@ -209,7 +206,7 @@ const WRAPPER_KEYS = [
 function unwrapMessage(message) {
   let m = message;
   let guard = 0;
-  while (m && guard++ < 6) {
+  while (m && guard++< 6) {
     let unwrapped = false;
     for (const k of WRAPPER_KEYS) {
       if (m[k]?.message) {
@@ -613,66 +610,106 @@ async function renderTextSticker(text, opts = {}) {
   const bgRect =
     bg === 'transparent'
       ? ''
-      : `<rect width="${SIZE}" height="${SIZE}" fill="${esc(bg)}"/>`;
+      : `<rect width="${SIZE}" height="${SIZE}" fill="${esc(bg)}"/>
+    `;
 
   const linesSvg = lines
     .map((l, i) => {
       const y = startY + i * lineHeight;
-      return `<text x="${SIZE / 2}" y="${y}"
-        text-anchor="middle"
-        font-family="${esc(fontFamily)}"
-        font-size="52"
-        font-weight="900"
-        fill="${esc(color)}"
-        stroke="black"
-        stroke-width="3"
-        paint-order="stroke"
-        stroke-linejoin="round"
-      >${esc(l)}</text>`;
+      return ` < text x = "${SIZE / 2}"
+    y = "${y}"
+    text - anchor = "middle"
+    font - family = "${esc(fontFamily)}"
+    font - size = "52"
+    font - weight = "900"
+    fill = "${esc(color)}"
+    stroke = "black"
+    stroke - width = "3"
+    paint - order = "stroke"
+    stroke - linejoin = "round" >
+    $ { esc(l) }
+    </text>
+    `;
     })
     .join('');
 
   const wmSvg = wm
-    ? `<text x="${SIZE / 2}" y="${SIZE - 24}" text-anchor="middle"
-        font-family="Arial" font-size="18" fill="${esc(color)}" opacity="0.7"
-      >Fanuels DX</text>`
-    : '';
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+    ? ` < text x = "${SIZE / 2}"
+    y = "${SIZE - 24}"
+    text - anchor = "middle"
+    font - family = "Arial"
+    font - size = "18"
+    fill = "${esc(color)}"
+    opacity = "0.7" >
+    Fanuels DX < /text>`: '';
+    
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
     ${bgRect}
     ${linesSvg}
     ${wmSvg}
   </svg>`;
-
-  const { Resvg } = require('@resvg/resvg-js');
-  const resvg = new Resvg(svg, {
-    fitTo: { mode: 'width', value: SIZE },
-    background: bg === 'transparent' ? undefined : bg
-  });
-  const png = resvg.render().asPng();
-
-  try {
-    const sharp = require('sharp');
-    return await sharp(png).webp({ quality: 90 }).toBuffer();
-  } catch {
-    return png;
+    
+    const { Resvg } = require('@resvg/resvg-js');
+    const resvg = new Resvg(svg, {
+      fitTo: { mode: 'width', value: SIZE },
+      background: bg === 'transparent' ? undefined : bg
+    });
+    const png = resvg.render().asPng();
+    
+    try {
+      const sharp = require('sharp');
+      return await sharp(png).webp({ quality: 90 }).toBuffer();
+    } catch {
+      return png;
+    }
   }
-}
-
-// ============================================================================
-// PRE-COMMAND HOOKS
-// ============================================================================
-async function preCommandHooks(msg, from, senderJid, rawText) {
-  if (!rawText || !rawText.trim()) return false;
-  const sock = state.sock;
-  if (!sock) return false;
-
-  try {
-    engine.autoRegister(msg, from, senderJid);
-  } catch (e) {
-    console.error('[engine.autoRegister]', e.message);
+  
+  // ============================================================================
+  // PRE-COMMAND HOOKS
+  // ============================================================================
+  async function preCommandHooks(msg, from, senderJid, rawText) {
+    if (!rawText || !rawText.trim()) return false;
+    const sock = state.sock;
+    if (!sock) return false;
+    
+    // ==========================================================================
+    // 🔧 TIER 1 — AUTO-LEARN LID MAPPINGS FROM ANY MESSAGE
+    // ==========================================================================
+    // No matter what the message is (a command, chatter, a sticker, a DM),
+    // try to capture a LID → PN pair from the message key and persist it.
+    // This maximizes the chance a user's DM will resolve on their next message.
+    try {
+      const pnCandidate =
+        msg.key?.senderPn ||
+        msg.key?.participantPn ||
+        msg.key?.participantAlt ||
+        msg.key?.remoteJidAlt;
+      
+      const lidCandidates = [
+        msg.key?.participant, // groups
+        msg.key?.remoteJid, // DMs
+      ];
+      
+      for (const lid of lidCandidates) {
+        if (
+          lid &&
+          typeof lid === 'string' &&
+          lid.endsWith('@lid') &&
+          pnCandidate &&
+          typeof pnCandidate === 'string' &&
+          pnCandidate.endsWith('@s.whatsapp.net')
+        ) {
+          const lidUser = lid.split('@')[0].split(':')[0];
+          const pnUser = pnCandidate.split('@')[0].split(':')[0];
+          // registerLidMapping is a no-op if already mapped.
+          state.registerLidMapping(lidUser, pnUser);
+        }
+      }
+    } catch (_) {}
+    
+    // ... rest of preCommandHooks (trivia, auto-correct, anti-mention, rate-limit)
   }
-
+  
   // ---------- TRIVIA ----------
   const trivia = TRIVIA_STATE.get(from);
   if (trivia) {
@@ -687,7 +724,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
       }
     }
   }
-
+  
   // ---------- AUTO-CORRECT ----------
   if (
     state.autoCorrectEnabled.has(from) &&
@@ -706,7 +743,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
         return w;
       })
       .join('');
-
+    
     if (changed && fixed !== rawText) {
       try {
         await safeSend(from, {
@@ -718,13 +755,13 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
       }
     }
   }
-
+  
   // ---------- ANTI-MENTION ----------
   if (from.endsWith('@g.us') && state.antimentionGroups.has(from)) {
     const mentioned = helpers.mentions(msg);
     const mentionsGroupJid = mentioned.includes(from);
     const massMention = mentioned.length >= 5;
-
+    
     if (mentionsGroupJid || massMention) {
       const policy = state.antimentionAction.get(from) || 'warn';
       const groupWarns = state.antimentionWarnings.get(from) || {};
@@ -733,11 +770,11 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
       groupWarns[senderJid] = list;
       state.antimentionWarnings.set(from, groupWarns);
       saveState();
-
+      
       try { await sock.sendMessage(from, { delete: msg.key }); } catch (e) {
         console.error('[antimention] delete failed:', e.message);
       }
-
+      
       if (policy === 'kick') {
         try {
           await sock.groupParticipantsUpdate(from, [senderJid], 'remove');
@@ -772,7 +809,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
       return true;
     }
   }
-
+  
   // ---------- RATE LIMIT ----------
   if (engine.isCommand(rawText)) {
     const r = engine.checkRate(from, senderJid || from);
@@ -786,7 +823,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
       return true;
     }
   }
-
+  
   return false;
 }
 
@@ -794,7 +831,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
 // COMMAND REGISTRY
 // ============================================================================
 const COMMANDS = [
-
+  
   // ========================================================================
   // GENERAL
   // ========================================================================
@@ -923,7 +960,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       }
     }
   },
-
+  
   // ========================================================================
   // MEDIA
   // ========================================================================
@@ -938,14 +975,15 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       const img = quoted.imageMessage;
       const vid = quoted.videoMessage;
       if (!img && !vid) helpers.fail('❌ Must be image or video.');
-
+      
       await withTyping(from, async () => {
         const mType = img ? 'imageMessage' : 'videoMessage';
         const mContent = img || vid;
         const ctx = helpers.contextInfo(msg);
         const fakeMsg = {
           key: { remoteJid: from, id: ctx.stanzaId, fromMe: false },
-          message: { [mType]: mContent }
+          message: {
+            [mType]: mContent }
         };
         const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
           logger: pino({ level: 'silent' }),
@@ -963,7 +1001,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       const quoted = helpers.quoted(msg);
       const stickerMsg = quoted?.stickerMessage;
       if (!stickerMsg) helpers.fail('❌ Reply to a sticker.');
-
+      
       await withTyping(from, async () => {
         const ctx = helpers.contextInfo(msg);
         const fakeMsg = {
@@ -991,16 +1029,15 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
         targetText = quoted?.conversation || quoted?.extendedTextMessage?.text || '';
       }
       if (!targetText) helpers.fail('❌ Provide text or reply to a message.');
-
+      
       const url =
         'https://translate.google.com/translate_tts?ie=UTF-8' +
         `&q=${encodeURIComponent(targetText.slice(0, 200))}` +
         '&tl=en&client=tw-ob';
-
+      
       const res = await fetch(url, {
         headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
             '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           Referer: 'https://translate.google.com/'
         }
@@ -1008,7 +1045,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       if (!res.ok) helpers.fail(`❌ TTS HTTP ${res.status}`);
       const mp3 = Buffer.from(await res.arrayBuffer());
       if (!mp3 || mp3.length < 100) helpers.fail('❌ Empty audio');
-
+      
       let ogg = null;
       try {
         const ffmpeg = require('fluent-ffmpeg');
@@ -1029,7 +1066,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       } catch (convErr) {
         console.log('[TTS] ffmpeg unavailable, sending mp3:', convErr.message);
       }
-
+      
       await withRecording(from, () => {
         if (ogg) {
           return safeSend(from, {
@@ -1073,25 +1110,26 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
     handler: async ({ msg, from }) => {
       const quoted = helpers.quoted(msg);
       if (!quoted) helpers.fail('❌ Reply to a view-once message with *.vv*.');
-
+      
       const wrappers = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
       let inner = quoted;
       for (const w of wrappers) {
         if (quoted[w]?.message) { inner = quoted[w].message; break; }
       }
-      const type = inner.imageMessage
-        ? 'imageMessage'
-        : inner.videoMessage
-        ? 'videoMessage'
-        : inner.audioMessage
-        ? 'audioMessage'
-        : null;
+      const type = inner.imageMessage ?
+        'imageMessage' :
+        inner.videoMessage ?
+        'videoMessage' :
+        inner.audioMessage ?
+        'audioMessage' :
+        null;
       if (!type) helpers.fail('❌ Not a view-once media message.');
-
+      
       const ctx = helpers.contextInfo(msg);
       const fakeMsg = {
         key: { remoteJid: from, id: ctx.stanzaId, fromMe: false },
-        message: { [type]: inner[type] }
+        message: {
+          [type]: inner[type] }
       };
       const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
         logger: pino({ level: 'silent' }),
@@ -1118,13 +1156,13 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
     usage: '.stext <text> [--font=… --color=… --bg=… --wm --random]',
     handler: async ({ msg, from, text }) => {
       let raw = text.replace(/^[.!]stext\s*/i, '').trim();
-
+      
       if (!raw) {
         const quoted = helpers.quoted(msg);
         raw = quoted?.conversation || quoted?.extendedTextMessage?.text || '';
         if (!raw) helpers.fail('❌ Usage: .stext <text> (or reply to a text message)');
       }
-
+      
       const flags = {};
       raw = raw
         .replace(/--(\w+)(?:=(\S+))?/g, (_, key, val) => {
@@ -1132,10 +1170,10 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
           return '';
         })
         .trim();
-
+      
       if (!raw) helpers.fail('❌ No text after flags.');
       if (raw.length > 80) helpers.fail(`❌ Max 80 chars (you sent ${raw.length}).`);
-
+      
       const opts = {
         font: typeof flags.font === 'string' ? flags.font : 'Arial',
         color: typeof flags.color === 'string' ? flags.color : 'white',
@@ -1143,7 +1181,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
         wm: !!flags.wm,
         random: !!flags.random
       };
-
+      
       try {
         const stickerBuf = await renderTextSticker(raw, opts);
         await safeSend(from, { sticker: stickerBuf });
@@ -1153,7 +1191,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       }
     }
   },
-
+  
   // ========================================================================
   // 🆕 DOWNLOADER — TikTok / YT / IG / FB / Spotify / X
   // ========================================================================
@@ -1165,7 +1203,7 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
     usage: '.dl <url>  |  .dl help',
     handler: async ({ from, args }) => {
       const raw = args.join(' ').trim();
-
+      
       // ---------- HELP ----------
       if (!raw || raw === 'help') {
         await helpers.replyWithBanner(
@@ -1196,22 +1234,22 @@ ${UIkit.section('NOTES', '💡')}
         );
         return;
       }
-
+      
       // ---------- PARSE ----------
-      const KNOWN = ['tiktok','tt','yt','youtube','ig','instagram','fb','facebook','spotify','sp','x','twitter'];
+      const KNOWN = ['tiktok', 'tt', 'yt', 'youtube', 'ig', 'instagram', 'fb', 'facebook', 'spotify', 'sp', 'x', 'twitter'];
       let platform = null;
       let url = raw;
-
+      
       const first = raw.split(/\s+/)[0].toLowerCase();
       if (KNOWN.includes(first)) {
         platform = first;
         url = raw.split(/\s+/).slice(1).join(' ').trim();
       }
-
+      
       if (!/^https?:\/\//i.test(url)) {
         helpers.fail('❌ Provide a valid URL, e.g. `.dl https://vt.tiktok.com/xxxx`');
       }
-
+      
       if (!platform) {
         if (/tiktok\.com/i.test(url)) platform = 'tiktok';
         else if (/(youtube\.com|youtu\.be)/i.test(url)) platform = 'yt';
@@ -1221,17 +1259,23 @@ ${UIkit.section('NOTES', '💡')}
         else if (/(twitter\.com|x\.com)/i.test(url)) platform = 'x';
         else platform = 'unknown';
       }
-
+      
       const PRETTY = {
-        tiktok: '🎵 TikTok', tt: '🎵 TikTok',
-        yt: '▶️ YouTube', youtube: '▶️ YouTube',
-        ig: '📸 Instagram', instagram: '📸 Instagram',
-        fb: '📘 Facebook', facebook: '📘 Facebook',
-        spotify: '🎧 Spotify', sp: '🎧 Spotify',
-        x: '🐦 Twitter/X', twitter: '🐦 Twitter/X',
+        tiktok: '🎵 TikTok',
+        tt: '🎵 TikTok',
+        yt: '▶️ YouTube',
+        youtube: '▶️ YouTube',
+        ig: '📸 Instagram',
+        instagram: '📸 Instagram',
+        fb: '📘 Facebook',
+        facebook: '📘 Facebook',
+        spotify: '🎧 Spotify',
+        sp: '🎧 Spotify',
+        x: '🐦 Twitter/X',
+        twitter: '🐦 Twitter/X',
         unknown: '🌐 Unknown'
-      }[platform];
-
+      } [platform];
+      
       await helpers.reply(
         from,
         `${UIkit.box('DOWNLOAD REQUEST', '⏳')}
@@ -1241,7 +1285,7 @@ ${UIkit.row('Platform', PRETTY)}
 ${UIkit.row('URL', url.slice(0, 42) + (url.length > 42 ? '…' : ''))}
 ${UIkit.row('Status', 'fetching…')}`
       );
-
+      
       try {
         // Prefer the transformer-based downloader if available
         const transformer = require('./transformer');
@@ -1254,7 +1298,7 @@ ${UIkit.row('Status', 'fetching…')}`
           safeSend
         });
         if (handled) return;
-
+        
         helpers.fail(
           `❌ No handler found for platform *${PRETTY}*.\n` +
           `📌 The transformer module must export handleDownload().`
@@ -1265,7 +1309,7 @@ ${UIkit.row('Status', 'fetching…')}`
       }
     }
   },
-
+  
   // ========================================================================
   // FUN
   // ========================================================================
@@ -1303,8 +1347,8 @@ ${UIkit.row('Status', 'fetching…')}`
     usage: '.8ball <question>',
     handler: async ({ from }) => {
       const answers = [
-        'Yes.','No.','Maybe.','Ask again later.','Definitely.',
-        'Absolutely not.',"I wouldn't bet on it.",'Signs point to yes.'
+        'Yes.', 'No.', 'Maybe.', 'Ask again later.', 'Definitely.',
+        'Absolutely not.', "I wouldn't bet on it.", 'Signs point to yes.'
       ];
       await helpers.reply(from, '🎱 ' + answers[Math.floor(Math.random() * answers.length)]);
     }
@@ -1343,10 +1387,10 @@ ${UIkit.row('Status', 'fetching…')}`
     handler: async ({ from }) => {
       const QUESTIONS = [
         { q: 'What is the capital of Australia?', a: ['canberra'] },
-        { q: 'How many continents are there?', a: ['7','seven'] },
+        { q: 'How many continents are there?', a: ['7', 'seven'] },
         { q: 'What planet is known as the Red Planet?', a: ['mars'] },
-        { q: 'What is the largest ocean on Earth?', a: ['pacific','pacific ocean'] },
-        { q: 'Who wrote "Romeo and Juliet"?', a: ['shakespeare','william shakespeare'] }
+        { q: 'What is the largest ocean on Earth?', a: ['pacific', 'pacific ocean'] },
+        { q: 'Who wrote "Romeo and Juliet"?', a: ['shakespeare', 'william shakespeare'] }
       ];
       const pick = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
       TRIVIA_STATE.set(from, {
@@ -1400,7 +1444,7 @@ ${UIkit.row('Status', 'fetching…')}`
       const [a, b] = mentioned;
       const aRes = helpers.resolveJid(a) || a;
       const bRes = helpers.resolveJid(b) || b;
-
+      
       const seed = [a, b].slice().sort().join('|');
       let h = 0;
       for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
@@ -1413,12 +1457,11 @@ ${UIkit.row('Status', 'fetching…')}`
 ${UIkit.section('LOVE METER', '💞')}
 ${UIkit.row('A', `@${a.split('@')[0]}`)}
 ${UIkit.row('B', `@${b.split('@')[0]}`)}
-${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
-        { mentions: [aRes, bRes] }
+${UIkit.row('Score', `${bar}  *${pct}%*`)}`, { mentions: [aRes, bRes] }
       );
     }
   },
-
+  
   // ========================================================================
   // TOOLS
   // ========================================================================
@@ -1491,7 +1534,7 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
     handler: async ({ from, args }) => {
       const query = args.join(' ');
       if (!query) helpers.fail('❌ Usage: .lyrics <song or artist>');
-
+      
       await withTyping(from, async () => {
         try {
           const r = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
@@ -1572,7 +1615,7 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
       if (!quoted) helpers.fail('❌ Reply to a message with *.edit <new text>*');
       const newText = args.join(' ');
       if (!newText) helpers.fail('❌ Usage: .edit <new text>');
-
+      
       const ci = helpers.contextInfo(msg);
       const senderRaw = ci?.participant || '';
       const sender = helpers.resolveJid(senderRaw) || senderRaw;
@@ -1584,7 +1627,7 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
       );
     }
   },
-
+  
   // ========================================================================
   // ADMIN
   // ========================================================================
@@ -1694,7 +1737,7 @@ ${UIkit.section('REPORT', '🕐')}
       await helpers.reply(from, `${UIkit.box('ADMIN REMOVED', '✅')}`);
     }
   },
-
+  
   // ========================================================================
   // PAUSE
   // ========================================================================
@@ -1746,7 +1789,7 @@ ${UIkit.section('REPORT', '🕐')}
       await helpers.reply(from, `${UIkit.box('PAUSE STATUS', '📋')}\n\n│ ${status}`);
     }
   },
-
+  
   // ========================================================================
   // GROUP
   // ========================================================================
@@ -1940,7 +1983,7 @@ ${admins}`;
       await helpers.reply(from, txt);
     }
   },
-
+  
   // ========================================================================
   // 🆕 GROUP BRANDING — .setgroup
   // ========================================================================
@@ -1953,10 +1996,10 @@ ${admins}`;
     usage: '.setgroup name <text> | desc <text> | pic (reply to image) | info',
     handler: async ({ msg, from, args }) => {
       helpers.requireGroup(from);
-
+      
       const sub = (args[0] || '').toLowerCase();
       const sock = state.sock;
-
+      
       // ---------- INFO ----------
       if (!sub || sub === 'info') {
         const meta = await sock.groupMetadata(from);
@@ -1978,13 +2021,13 @@ ${UIkit.row('.setgroup info', 'show this panel')}`
         );
         return;
       }
-
+      
       // ---------- NAME ----------
       if (sub === 'name') {
         const newName = args.slice(1).join(' ').trim();
         if (!newName) helpers.fail('❌ Usage: .setgroup name <new name>');
         if (newName.length > 100) helpers.fail('❌ Name too long (max 100).');
-
+        
         await withTyping(from, async () => {
           await sock.groupUpdateSubject(from, newName);
           await helpers.reply(
@@ -1997,13 +2040,13 @@ ${UIkit.row('Name', newName)}`
         });
         return;
       }
-
+      
       // ---------- DESCRIPTION ----------
       if (sub === 'desc' || sub === 'description') {
         const newDesc = args.slice(1).join(' ').trim();
         if (!newDesc) helpers.fail('❌ Usage: .setgroup desc <new description>');
         if (newDesc.length > 512) helpers.fail('❌ Description too long (max 512).');
-
+        
         await withTyping(from, async () => {
           await sock.groupUpdateDescription(from, newDesc);
           await helpers.reply(
@@ -2016,7 +2059,7 @@ ${UIkit.section('NEW DESCRIPTION', '✅')}
         });
         return;
       }
-
+      
       // ---------- PICTURE ----------
       if (sub === 'pic' || sub === 'icon' || sub === 'photo') {
         const quoted = helpers.quoted(msg);
@@ -2027,7 +2070,7 @@ ${UIkit.section('NEW DESCRIPTION', '✅')}
             '📌 Tip: square images look best (min 192×192).'
           );
         }
-
+        
         await withTyping(from, async () => {
           const ctx = helpers.contextInfo(msg);
           const fakeMsg = {
@@ -2050,14 +2093,14 @@ ${UIkit.row('Size', `${(buf.length / 1024).toFixed(1)} KB`)}`
         });
         return;
       }
-
+      
       helpers.fail(
         `❌ Unknown sub-command *${sub}*.\n` +
         `📖 Try: .setgroup name | desc | pic | info`
       );
     }
   },
-
+  
   // ========================================================================
   // MODERATION
   // ========================================================================
@@ -2202,11 +2245,11 @@ ${UIkit.section('USAGE', '📖')}
           await helpers.reply(from, `${UIkit.box('REACTIONS OFF HERE', '🚫')}`);
         }
       } else {
-        const local = state.reactionsEnabled.has(from)
-          ? 'ON'
-          : state.reactionsDisabled.has(from)
-          ? 'OFF'
-          : 'inherit';
+        const local = state.reactionsEnabled.has(from) ?
+          'ON' :
+          state.reactionsDisabled.has(from) ?
+          'OFF' :
+          'inherit';
         await helpers.reply(
           from,
           `${UIkit.pandaBanner('REACTIONS')}
@@ -2230,7 +2273,7 @@ Usage: .reactions on|off [global]`
       const action = args[0];
       const timeArg = args[1];
       const repeat = args[2];
-
+      
       if (action === 'list') {
         const entries = [...state.schedules.entries()].filter(([j]) => j === from);
         if (!entries.length) {
@@ -2246,18 +2289,18 @@ Usage: .reactions on|off [global]`
         await helpers.reply(from, `${UIkit.pandaBanner('SCHEDULES')}\n\n${txt}`);
         return;
       }
-
+      
       if (action === 'cancel') {
         state.schedules.delete(from);
         saveState();
         await helpers.reply(from, `${UIkit.box('SCHEDULE CLEARED', '🗑️')}`);
         return;
       }
-
+      
       if (action !== 'open' && action !== 'close') {
         helpers.fail('Usage: .schedule open|close <HH:MM|30m|2h> [daily]');
       }
-
+      
       let at;
       if (/^\d+m$/.test(timeArg)) {
         at = Date.now() + parseInt(timeArg) * 60 * 1000;
@@ -2272,14 +2315,14 @@ Usage: .reactions on|off [global]`
       } else {
         helpers.fail('❌ Invalid time. Use HH:MM (UTC) or 30m / 2h.');
       }
-
+      
       state.schedules.set(from, {
         action,
         at,
         repeat: repeat === 'daily' ? 'daily' : 'once'
       });
       saveState();
-
+      
       const when = new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
       await helpers.reply(
         from,
@@ -2310,7 +2353,7 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       groupWarns[target] = list;
       state.warnings.set(from, groupWarns);
       saveState();
-
+      
       if (list.length >= 3) {
         try {
           await state.sock.groupParticipantsUpdate(from, [target], 'remove');
@@ -2374,7 +2417,7 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       });
     }
   },
-
+  
   // ========================================================================
   // SPECIAL
   // ========================================================================
@@ -2431,7 +2474,7 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
     handler: async ({ msg, from }) => {
       const quoted = helpers.quoted(msg);
       const ctx = helpers.contextInfo(msg);
-
+      
       if (!quoted || !ctx) {
         await helpers.replyTyping(
           from,
@@ -2451,12 +2494,12 @@ ${UIkit.section('AUTO-ENGAGE', '❤️')}
         );
         return;
       }
-
+      
       const sender =
         helpers.resolveJid(ctx.participant || '') ||
         ctx.participant ||
         from;
-
+      
       const reconstructed = {
         key: {
           remoteJid: from,
@@ -2466,7 +2509,7 @@ ${UIkit.section('AUTO-ENGAGE', '❤️')}
         },
         message: quoted
       };
-
+      
       try {
         const ok = await postToStatus(reconstructed);
         if (ok) {
@@ -2503,7 +2546,7 @@ const ADMIN_TRIGGERS = new Set();
 function buildLookup() {
   COMMAND_LOOKUP.clear();
   ADMIN_TRIGGERS.clear();
-
+  
   for (const cmd of COMMANDS) {
     const triggers = [cmd.name, ...(cmd.aliases || [])];
     for (const t of triggers) {
@@ -2511,12 +2554,27 @@ function buildLookup() {
       if (cmd.admin) ADMIN_TRIGGERS.add(t.toLowerCase());
     }
   }
-
+  
   console.log(`[handlers] lookup built with ${COMMAND_LOOKUP.size} trigger(s)`);
 }
 
+// ----------------------------------------------------------------------------
+// 🔧 TIER 2 — isKnownCommand(token)
+// ----------------------------------------------------------------------------
+// Returns true if `token` (lowercase, no prefix) matches any registered
+// command name or alias. Used to enable bare-word command invocation.
+function isKnownCommand(token) {
+  if (!token || typeof token !== 'string') return false;
+  const t = token.toLowerCase();
+  // Try both '.x' and '!x' forms against the lookup.
+  return COMMAND_LOOKUP.has('.' + t) || COMMAND_LOOKUP.has('!' + t);
+}
+
+// Build the initial lookup for core commands.
 buildLookup();
 
+// Install engine commands (pushed into COMMANDS) and rebuild so they're
+// reachable from the router.
 try {
   engine.install({
     COMMANDS,
@@ -2532,25 +2590,33 @@ try {
 // ============================================================================
 function buildMenu(uptimeMin) {
   const CATEGORY_META = {
-    general:    { emoji: '📌', title: 'GENERAL' },
-    media:      { emoji: '🎨', title: 'MEDIA' },
-    fun:        { emoji: '🎲', title: 'FUN' },
-    tools:      { emoji: '🛠️', title: 'TOOLS' },
-    admin:      { emoji: '👮', title: 'ADMIN' },
-    pause:      { emoji: '⏸️', title: 'PAUSE' },
-    group:      { emoji: '👥', title: 'GROUP' },
+    general: { emoji: '📌', title: 'GENERAL' },
+    media: { emoji: '🎨', title: 'MEDIA' },
+    fun: { emoji: '🎲', title: 'FUN' },
+    tools: { emoji: '🛠️', title: 'TOOLS' },
+    admin: { emoji: '👮', title: 'ADMIN' },
+    pause: { emoji: '⏸️', title: 'PAUSE' },
+    group: { emoji: '👥', title: 'GROUP' },
     moderation: { emoji: '🛡️', title: 'MODERATION' },
-    special:    { emoji: '📸', title: 'SPECIAL' }
+    special: { emoji: '📸', title: 'SPECIAL' }
   };
-
-  const ORDER = ['general','media','fun','tools','admin','pause','group','moderation','special'];
-
+  
+  const ORDER = ['general', 'media', 'fun', 'tools', 'admin', 'pause', 'group', 'moderation', 'special'];
+  
   const byCat = {};
   for (const cmd of COMMANDS) {
     if (!cmd.category) continue;
     (byCat[cmd.category] ||= []).push(cmd);
   }
-
+  
+  const UIkit = state.UIkit || {
+    pandaBanner: (t) => `╭━━━━━━━━━━━━━━━━━━━━╮\n┃  🐼  *${t}*\n╰━━━━━━━━━━━━━━━━━━━━╯`,
+    section: (t, e) => `┌─ ${e || '•'} *${t}* ─────────`,
+    row: (k, v) => `│ ${String(k).padEnd(10)}: ${v}`,
+    box: (t, e) => `╭━━━━━━━━━━━━━━━━━━━━╮\n┃  ${e || '📦'}  *${t}*\n╰━━━━━━━━━━━━━━━━━━━━╯`,
+    divider: '━━━━━━━━━━━━━━━━━━━━━━━'
+  };
+  
   let menu = `${UIkit.pandaBanner('COMMAND CENTER')}
 
 ${UIkit.section('BOT INFO', 'ℹ️')}
@@ -2559,20 +2625,72 @@ ${UIkit.row('Prefix',  '.  or  !')}
 ${UIkit.row('Uptime',  `${uptimeMin} min`)}
 ${UIkit.row('Admin',   ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set')}
 `;
-
+  
   for (const cat of ORDER) {
     const meta = CATEGORY_META[cat];
     const cmds = byCat[cat];
     if (!meta || !cmds?.length) continue;
-
+    
     menu += `\n${UIkit.section(meta.title, meta.emoji)}\n`;
     for (const c of cmds) {
       menu += `│ ${c.name.padEnd(16, ' ')} ${c.desc || ''}\n`;
     }
   }
-
+  
   menu += `\n${UIkit.divider}\n  🐼  _PANDA • powered by Fanuels DX_`;
   return menu;
+}
+
+// ============================================================================
+// 🔧 safeSend BRIDGE
+// ============================================================================
+// Routes every outgoing send from handlers through engine.send(), which
+// uses connection.safeSend() — that's what enables E2EE retry receipts and
+// the "Waiting for this message" fix.
+// ----------------------------------------------------------------------------
+async function safeSend(from, content, opts = {}) {
+  try {
+    return await engine.send(from, content, opts);
+  } catch (e) {
+    const sock = state.sock;
+    if (!sock) throw e;
+    console.warn('[safeSend] engine.send failed, raw fallback:', e.message);
+    return sock.sendMessage(from, content, opts);
+  }
+}
+
+// ============================================================================
+// STATUS ENGAGEMENT (stubs — wire these if you want auto-like / auto-view)
+// ============================================================================
+// These are referenced by the exports and called by connection.js if you
+// have a status broadcast listener. They're safe no-ops by default so the
+// bot doesn't crash if status features are disabled.
+// ----------------------------------------------------------------------------
+function scheduleStatusEngagement(statusKey, delayMs = 1500) {
+  if (!statusKey) return;
+  setTimeout(() => {
+    likeStatus(statusKey).catch(() => {});
+    viewStatus(statusKey).catch(() => {});
+  }, delayMs);
+}
+
+function cancelStatusEngagement(statusKey) {
+  // No-op placeholder. Real implementation would clear a timer stored in a Map.
+  void statusKey;
+}
+
+async function viewStatus(statusKey) {
+  // Default: do nothing. Enable by implementing readMessages on the socket:
+  //   await state.sock.readMessages([{ remoteJid: 'status@broadcast', id: statusKey.id, participant: statusKey.participant }]);
+  void statusKey;
+  return true;
+}
+
+async function likeStatus(statusKey) {
+  // Default: do nothing. Enable by sending a reaction to status@broadcast:
+  //   await state.sock.sendMessage('status@broadcast', { react: { text: '❤️', key: statusKey } }, { statusJidList: [statusKey.participant] });
+  void statusKey;
+  return true;
 }
 
 // ============================================================================
@@ -2584,47 +2702,59 @@ async function handleCommand(msg, from, senderJid, rawText) {
     console.log('[cmd] dropped — no socket');
     return;
   }
-
+  
   const text = rawText.trim();
-  if (!engine.isCommand(text)) return;
-
-  const parts = text.split(' ');
+  
+  // 🔧 TIER 2 — accept prefixed AND bare-word invocations.
+  // Prefixed: ".ping" / "!ping".
+  // Bare-word: "ping" (only if it maps to a real command).
+  const isPrefixed = text.startsWith('.') || text.startsWith('!');
+  let normalized = text;
+  
+  if (!isPrefixed) {
+    const firstToken = text.split(/\s+/)[0].toLowerCase();
+    if (!isKnownCommand(firstToken)) return; // unknown bare word → ignore
+    normalized = '.' + text; // normalize for lookup
+  }
+  
+  const parts = normalized.split(' ');
   const base = parts[0].toLowerCase();
   const args = parts.slice(1);
-
+  
   const admin = isAdmin(senderJid);
   const isGroup = from.endsWith('@g.us');
-
+  
   const command = COMMAND_LOOKUP.get(base);
   if (!command) {
+    // Only nag for '.'-prefixed unknowns; silent on '!x' and bare words.
     if (base.startsWith('.')) {
       await withTyping(from, () =>
         safeSend(from, {
-          text: `${UIkit.box('UNKNOWN', '❓')}\n\nCommand *${base}* not found.\nType *.help* to see the menu.`
+          text: `${(state.UIkit?.box || ((t, e) => `*${t}*`))('UNKNOWN', '❓')}\n\nCommand *${base}* not found.\nType *.help* to see the menu.`
         })
       );
     }
     return;
   }
-
+  
   if (command.admin && !admin) {
     await helpers.denied(from);
     return;
   }
-
+  
   const ctx = {
     msg,
     from,
     senderJid,
     args,
-    text,
+    text: normalized,
     base,
     isGroup,
     admin,
     sock: sockInstance,
     state
   };
-
+  
   try {
     await command.handler(ctx);
   } catch (err) {
@@ -2652,7 +2782,9 @@ module.exports = {
   preCommandHooks,
   renderTextSticker,
   buildLookup,
-  // 🔥 expose status-engagement internals for testing / external triggers
+  isKnownCommand, // 🔧 TIER 2
+  
+  // 🔥 status-engagement internals for testing / external triggers
   scheduleStatusEngagement,
   cancelStatusEngagement,
   viewStatus,
