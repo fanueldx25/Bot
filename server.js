@@ -5,6 +5,7 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const { Server } = require('socket.io');
 
@@ -16,7 +17,8 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-app.use(express.json());
+// 🔧 Raised limit — session payloads (base64) can exceed the 100kb default.
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 state.io = io;
@@ -53,7 +55,12 @@ function parseCookies(req) {
   const out = {};
   raw.split(';').forEach((p) => {
     const [k, ...v] = p.trim().split('=');
-    if (k) out[k] = decodeURIComponent(v.join('='));
+    if (!k) return;
+    try {
+      out[k] = decodeURIComponent(v.join('='));
+    } catch (_) {
+      out[k] = v.join('='); // fall back to raw value on bad encoding
+    }
   });
   return out;
 }
@@ -160,12 +167,17 @@ app.get('/api/commands', requireAuth, (req, res) => {
   res.json(collection.all());
 });
 
+// ---------- Session code API ----------
+app.get('/api/session-code', requireAuth, (req, res) => {
+  const code = state.generateSessionCode(60);
+  const expiresIn = 60 - (Math.floor(Date.now() / 1000) % 60);
+  res.json({ ok: true, code, expiresIn });
+});
 
 // ============================================================================
 // SESSION BACKUP / RESTORE
 // ============================================================================
 
-// Check if a session exists
 app.get('/api/session/status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -176,14 +188,12 @@ app.get('/api/session/status', requireAuth, (req, res) => {
   });
 });
 
-// Download the current session as a JSON file
 app.get('/api/session/download', requireAuth, (req, res) => {
   const result = connection.exportSession();
   if (!result.ok) {
     return res.status(400).json({ ok: false, error: result.error });
   }
-  
-  // Return as a downloadable JSON file
+
   const file = {
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -191,7 +201,7 @@ app.get('/api/session/download', requireAuth, (req, res) => {
     jid: state.botJid,
     payload: result.payload
   };
-  
+
   res.setHeader('Content-Type', 'application/json');
   res.setHeader(
     'Content-Disposition',
@@ -200,29 +210,31 @@ app.get('/api/session/download', requireAuth, (req, res) => {
   res.send(JSON.stringify(file, null, 2));
 });
 
-// Upload a session file (JSON body with payload or files)
 app.post('/api/session/upload', requireAuth, async (req, res) => {
   try {
-    // Accept either { payload: "base64..." } or a full JSON body
     const raw = JSON.stringify(req.body);
     const result = connection.importSession(raw);
-    
+
     if (!result.ok) {
       return res.status(400).json({ ok: false, error: result.error });
     }
-    
+
     // Restart the bot to pick up the restored session
     setTimeout(() => {
       try {
         connection.stopBot();
-        setTimeout(() => {
-          connection.startBot(result.number || state.currentNumber);
+        setTimeout(async () => {
+          try {
+            await connection.startBot(result.number || state.currentNumber);
+          } catch (e) {
+            console.error('[Session] startBot error:', e.message);
+          }
         }, 1500);
       } catch (e) {
         console.error('[Session] restart error:', e.message);
       }
     }, 1000);
-    
+
     res.json({
       ok: true,
       written: result.written,
@@ -237,13 +249,16 @@ app.post('/api/session/upload', requireAuth, async (req, res) => {
 // Delete the current session (logout from disk)
 app.post('/api/session/delete', requireAuth, (req, res) => {
   try {
-    const path = require('path');
-    const fs = require('fs');
     const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
     if (fs.existsSync(AUTH_DIR)) {
       fs.rmSync(AUTH_DIR, { recursive: true, force: true });
     }
     connection.stopBot();
+    // Clear in-memory session info so the UI doesn't show stale data
+    state.currentNumber = null;
+    state.botJid = null;
+    state.pairingCode = null;
+    state.setState('disconnected');
     res.json({ ok: true, message: 'Session deleted.' });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -258,7 +273,14 @@ io.use((socket, next) => {
   if (!PASSWORD) return next();
   const cookies = socket.handshake.headers.cookie || '';
   const match = cookies.match(/sid=([^;]+)/);
-  const sid = match ? decodeURIComponent(match[1]) : null;
+  let sid = null;
+  if (match) {
+    try {
+      sid = decodeURIComponent(match[1]);
+    } catch (_) {
+      sid = match[1];
+    }
+  }
   if (isValidToken(sid)) return next();
   return next(new Error('Unauthorized'));
 });
@@ -281,9 +303,14 @@ function startSelfPing() {
     console.log('[Ping] SELF_URL not set — self-ping disabled');
     return;
   }
+  if (typeof fetch !== 'function') {
+    console.log('[Ping] global fetch unavailable (Node <18) — self-ping disabled');
+    return;
+  }
+
   const url = SELF_URL.replace(/\/$/, '') + '/healthz';
   const INTERVAL = 1000 * 60 * 4; // 4 min — under Render's 15-min sleep
-  
+
   const ping = async () => {
     try {
       const res = await fetch(url);
@@ -292,8 +319,7 @@ function startSelfPing() {
       console.log('[Ping] failed:', e.message);
     }
   };
-  
-  // first ping after 30s, then every 4 min
+
   setTimeout(ping, 30 * 1000);
   setInterval(ping, INTERVAL);
   console.log('[Ping] enabled →', url, 'every 4 min');
@@ -312,7 +338,7 @@ server.listen(PORT, () => {
   console.log(`👑 Admin     : ${state.ADMIN_NUMBER ? '+' + state.ADMIN_NUMBER : 'NOT SET'}`);
   console.log(`📡 Self-ping : ${SELF_URL || 'disabled (no SELF_URL set)'}`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  
+
   state.loadState();
   connection.loadBanner();
   startSelfPing();
@@ -324,11 +350,4 @@ process.on('SIGTERM', () => {
   try { connection.stopBot(); } catch (e) {}
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
-});
-
-// ---------- Session code API ----------
-app.get('/api/session-code', requireAuth, (req, res) => {
-  const code = state.generateSessionCode(60);
-  const expiresIn = 60 - (Math.floor(Date.now() / 1000) % 60);
-  res.json({ ok: true, code, expiresIn });
 });
