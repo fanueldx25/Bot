@@ -1,18 +1,6 @@
 // ============================================================================
 // connection.js — Baileys socket + pairing code + rich error reporting
 // ============================================================================
-// Key design points:
-//   1. Every socket gets a generation number. Event handlers bail out if the
-//      generation has advanced. This kills the "ghost reconnect" loop where
-//      an old socket's `connection.update` keeps flipping our state.
-//   2. stopBot() is async and fully awaited. It cancels reconnect timers,
-//      removes listeners, and only then calls sock.end().
-//   3. startBot() is re-entrant-safe: a `starting` flag prevents duplicate
-//      sockets when two callers race.
-//   4. Auth dir is never touched while a socket is alive.
-//   5. DMs from newer WhatsApp clients arrive as @lid; we normalize them to
-//      @s.whatsapp.net so replies actually deliver.
-// ============================================================================
 
 const {
   default: makeWASocket,
@@ -37,13 +25,11 @@ const { preCommandHooks } = handlers;
 const AUTH_DIR = './auth_info_baileys';
 const logger = pino({ level: 'silent' });
 
-// 🔧 FIX: module-level refs. These are the single source of truth for
-// "which socket is live" and "which generation are we on".
-let currentSock = null;    // the live Baileys socket
-let currentGen = 0;        // bumped on every start/stop; stale handlers bail
-let reconnectTimer = null; // pending reconnect setTimeout handle
-let starting = false;      // re-entrancy guard for startBot()
-let stopping = false;      // re-entrancy guard for stopBot()
+let currentSock = null;
+let currentGen = 0;
+let reconnectTimer = null;
+let starting = false;
+let stopping = false;
 
 // ---------------------------------------------------------------------------
 // Friendly disconnect reasons
@@ -89,11 +75,8 @@ function validateNumber(raw) {
 }
 
 // ============================================================================
-// SENDER RESOLVER — handles @lid linked-device JIDs
+// SENDER RESOLVER
 // ============================================================================
-// Prefers @s.whatsapp.net over @lid. In DMs, `participant` is undefined, so
-// we fall back to `remoteJid` — but if remoteJid itself is an @lid, try the
-// LID map before giving up.
 function resolveSenderJid(msg, fallbackJid) {
   const candidates = [
     msg?.key?.senderPn,
@@ -506,9 +489,6 @@ async function startBot(rawNumber) {
     // ---------- messages ----------
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (myGen !== currentGen) return;
-      // 🔧 FIX: accept 'append' too. Baileys emits type 'append' when the
-      // message is one YOU sent from the linked phone — including DMs to the
-      // bot itself. Groups work because other members' messages are 'notify'.
       if (type !== 'notify' && type !== 'append') return;
       for (const msg of messages) {
         try {
@@ -546,32 +526,55 @@ async function startBot(rawNumber) {
 async function handleIncoming(msg) {
   if (!msg.message) return;
 
-  // 🔧 FIX: `let` instead of `const` — we may reassign below to normalize
-  // an @lid DM JID to @s.whatsapp.net.
   let from = msg.key.remoteJid;
   if (!from || from === 'status@broadcast') return;
 
-  // 🔧 FIX: DMs from newer WhatsApp clients arrive as `...@lid`. Replying
-  // to an @lid JID silently fails on some accounts. Resolve to
-  // @s.whatsapp.net using senderPn / remoteJidAlt first, then the LID map.
+  // ==========================================================================
+  // 🔧 THE DM FIX — @lid → @s.whatsapp.net
+  // ==========================================================================
+  // Newer WhatsApp multi-device delivers DMs with the sender's remoteJid as
+  // an @lid (linked-device identifier), not their phone JID. `sendMessage`
+  // to an unmapped @lid is silently dropped by WhatsApp's servers — the
+  // bot shows "typing…" (presence works) but the actual message never
+  // arrives. Resolve to @s.whatsapp.net via, in order:
+  //   1. msg.key.senderPn / participantPn / remoteJidAlt / participantAlt
+  //   2. the LID map (state.resolveLid)
+  // If both fail, we log the LID loudly and DROP the message instead of
+  // pretending we can reply to it.
+  // ==========================================================================
   if (from.endsWith('@lid')) {
     const alt =
       msg.key?.senderPn ||
       msg.key?.participantPn ||
       msg.key?.remoteJidAlt ||
       msg.key?.participantAlt;
+
+    let resolved = null;
     if (alt && alt.endsWith('@s.whatsapp.net')) {
-      from = alt;
+      resolved = alt;
     } else {
       const num = from.split('@')[0].split(':')[0];
       const pn = state.resolveLid && state.resolveLid(num);
-      if (pn) from = `${pn}@s.whatsapp.net`;
+      if (pn) resolved = `${pn}@s.whatsapp.net`;
     }
+
+    if (!resolved) {
+      console.error(
+        '[LID] DM cannot be routed — reply would silently fail.\n' +
+        '  remoteJid      = ' + from + '\n' +
+        '  senderPn       = ' + (msg.key?.senderPn || 'undefined') + '\n' +
+        '  participantPn  = ' + (msg.key?.participantPn || 'undefined') + '\n' +
+        '  remoteJidAlt   = ' + (msg.key?.remoteJidAlt || 'undefined') + '\n' +
+        '  participantAlt = ' + (msg.key?.participantAlt || 'undefined') + '\n' +
+        '  -> Add a mapping in state.js: lidToPn.set(\'<lid-digits>\', \'<phone-digits>\')'
+      );
+      return;
+    }
+    from = resolved;
   }
 
   const senderJid = resolveSenderJid(msg, from);
 
-  // Debug log so DM routing problems are visible in the terminal.
   console.log('[in]', {
     from,
     senderJid,
@@ -580,13 +583,12 @@ async function handleIncoming(msg) {
     text: extractText(msg).slice(0, 40)
   });
 
-  // pause check
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) {
     console.log('[in] dropped: chat paused');
     return;
   }
 
-  // ---------- LID → PN learning ----------
+  // ---------- LID → PN learning (groups) ----------
   try {
     const participant = msg.key?.participant || '';
     const pn =

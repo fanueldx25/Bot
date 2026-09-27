@@ -13,6 +13,7 @@
 //   9. Trivia state is a bounded Map with a sweep timer
 //  10. .calc caps expression length and rejects non-finite results
 //  11. handleCommand preserves arg casing (only the command name is lowered)
+//  12. helpers.reply + replyWithBanner log every send for DM debugging
 // ============================================================================
 
 const state = require('./state');
@@ -43,8 +44,6 @@ const ADMIN_NUMBER = state.ADMIN_NUMBER;
 // ============================================================================
 // EPHEMERAL GAME STATE (per-chat, expires)
 // ============================================================================
-// 🔧 FIX 1 + 9: never attach listeners to sock.ev for per-command state.
-// Use a bounded Map with a periodic sweep instead.
 const TRIVIA_STATE = new Map(); // chatJid → { answers: string[], expiresAt: number }
 
 setInterval(() => {
@@ -57,29 +56,25 @@ setInterval(() => {
 // ============================================================================
 // SENDER RESOLVER
 // ============================================================================
-// 🔧 FIX 5: don't fabricate @s.whatsapp.net JIDs from @lid fallbacks.
 function resolveSenderJid(msg, fallbackJid) {
-  // 1. Explicit phone-number JID provided by Baileys
   const pn = msg?.key?.senderPn || msg?.key?.participantPn;
   if (pn && typeof pn === 'string' && pn.endsWith('@s.whatsapp.net')) {
     const num = pn.split('@')[0].split(':')[0];
     if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
 
-  // 2. Group participant — always a phone JID in groups
   const participant = msg?.key?.participant;
   if (participant && participant.endsWith('@s.whatsapp.net')) {
     const num = participant.split('@')[0].split(':')[0];
     if (/^\d{7,15}$/.test(num)) return `${num}@s.whatsapp.net`;
   }
 
-  // 3. Fallback JID (DM remoteJid). Could be @s.whatsapp.net OR @lid.
   if (fallbackJid) {
     const raw = fallbackJid.split('@')[0].split(':')[0];
     if (fallbackJid.endsWith('@lid')) {
       const resolved = state.resolveLid && state.resolveLid(raw);
       if (resolved) return `${resolved}@s.whatsapp.net`;
-      return fallbackJid; // honest: don't pretend it's a phone JID
+      return fallbackJid;
     }
     if (/^\d{7,15}$/.test(raw)) return `${raw}@s.whatsapp.net`;
   }
@@ -90,9 +85,6 @@ function resolveSenderJid(msg, fallbackJid) {
 // ============================================================================
 // MESSAGE UNWRAPPING
 // ============================================================================
-// 🔧 FIX 6/7/8: Baileys can deliver mentions/quotes nested inside wrappers
-// like ephemeralMessage, viewOnceMessage, documentWithCaptionMessage, etc.
-// This unwraps to the innermost real message.
 const WRAPPER_KEYS = [
   'ephemeralMessage',
   'viewOnceMessage',
@@ -124,14 +116,35 @@ function unwrapMessage(message) {
 // SHARED HELPERS (used by every command)
 // ============================================================================
 const helpers = {
+  // 🔧 FIX 12: log every outgoing reply so we can see exactly what JID is
+  // being targeted and whether sendMessage succeeded or threw.
   async reply(from, text, opts = {}) {
     const sock = state.sock;
-    if (!sock) return;
-    return sock.sendMessage(from, { text, ...opts });
+    if (!sock) {
+      console.error('[reply] no socket — dropped');
+      return;
+    }
+    console.log('[reply] →', from, '|', String(text).slice(0, 60).replace(/\n/g, ' '));
+    try {
+      const res = await sock.sendMessage(from, { text, ...opts });
+      console.log('[reply] sent, id =', res?.key?.id || '(no id)');
+      return res;
+    } catch (e) {
+      console.error('[reply] sendMessage FAILED:', e.message);
+      throw e;
+    }
   },
 
   async replyWithBanner(from, text) {
-    return sendWithBanner(from, text);
+    console.log('[replyWithBanner] →', from);
+    try {
+      const res = await sendWithBanner(from, text);
+      console.log('[replyWithBanner] sent');
+      return res;
+    } catch (e) {
+      console.error('[replyWithBanner] FAILED:', e.message);
+      throw e;
+    }
   },
 
   async replyTyping(from, text, opts = {}) {
@@ -155,7 +168,6 @@ const helpers = {
     if (!from.endsWith('@g.us')) helpers.fail('❌ This command only works in groups.');
   },
 
-  // 🔧 FIX 6: unwrap before scanning, and scan every message type
   mentions(msg) {
     const m = unwrapMessage(msg?.message);
     if (!m) return [];
@@ -166,13 +178,11 @@ const helpers = {
     return [];
   },
 
-  // 🔧 FIX 8: reuse contextInfo
   quoted(msg) {
     const ci = helpers.contextInfo(msg);
     return ci?.quotedMessage || null;
   },
 
-  // 🔧 FIX 7: unwrap before looking for contextInfo
   contextInfo(msg) {
     const m = unwrapMessage(msg?.message);
     if (!m) return null;
@@ -497,16 +507,13 @@ async function renderTextSticker(text, opts = {}) {
 
 // ============================================================================
 // PRE-COMMAND HOOKS: trivia answer + auto-correct + anti-mention
-// ----------------------------------------------------------------------------
-// Call this from connection.js BEFORE handleCommand.
-// Returns true if the message was consumed and should not proceed.
 // ============================================================================
 async function preCommandHooks(msg, from, senderJid, rawText) {
   if (!rawText || !rawText.trim()) return false;
   const sock = state.sock;
   if (!sock) return false;
 
-  // ---------- 🔧 FIX 1: TRIVIA ANSWER INTERCEPTION ----------
+  // ---------- TRIVIA ANSWER INTERCEPTION ----------
   const trivia = TRIVIA_STATE.get(from);
   if (trivia) {
     if (Date.now() > trivia.expiresAt) {
@@ -727,7 +734,6 @@ const COMMANDS = [
     desc: 'Safe calculator',
     usage: '.calc <expression>',
     handler: async ({ from, text }) => {
-      // 🔧 FIX 10: cap length and reject non-finite results
       const expr = text.replace(/^\.calc\s+/i, '').replace(/[^0-9+\-*/(). ]/g, '');
       if (expr.length > 200) helpers.fail('❌ Expression too long.');
       try {
@@ -1038,7 +1044,6 @@ const COMMANDS = [
     }
   },
   {
-    // 🔧 FIX 1: no listener, uses TRIVIA_STATE map consumed by preCommandHooks
     name: '.trivia',
     category: 'fun',
     desc: 'Play a trivia question',
@@ -1334,7 +1339,6 @@ const COMMANDS = [
     }
   },
   {
-    // 🔧 FIX 2: await stopBot before startBot
     name: '.restart',
     admin: true,
     category: 'admin',
@@ -1347,7 +1351,6 @@ const COMMANDS = [
     }
   },
   {
-    // 🔧 FIX 3: use connection.stopBot(), not raw sock.end()
     name: '.pair',
     admin: true,
     category: 'admin',
@@ -2094,7 +2097,6 @@ function buildMenu(uptimeMin) {
 // COMMAND ROUTER
 // ============================================================================
 async function handleCommand(msg, from, senderJid, rawText) {
-  // 🔧 FIX 4: guard against null socket during teardown
   const sockInstance = state.sock;
   if (!sockInstance) {
     console.log('[cmd] dropped — no socket');
@@ -2102,8 +2104,6 @@ async function handleCommand(msg, from, senderJid, rawText) {
   }
 
   const text = rawText.trim();
-
-  // 🔧 FIX 11: only lowercase the command name, preserve arg casing
   const parts = text.split(' ');
   const base = parts[0].toLowerCase();
   const args = parts.slice(1);
