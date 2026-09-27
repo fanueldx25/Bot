@@ -1,24 +1,19 @@
 // transformer.js — multi-platform media downloader for PANDA bot
 // ---------------------------------------------------------------------------
 // Public API:
-//   handleDownload({ platform, url, from, state, helpers, safeSend })
+//   handleDownload({ platform, url, from, state, helpers, safeSend, args })
 //     → returns true  if handled (media sent)
 //     → returns false if platform is unknown (caller decides what to do)
 //
 // Deps:
 //   yt-dlp   (system binary, install via `pip install yt-dlp` or apt/brew)
 //   ffmpeg   (system binary, usually already present alongside yt-dlp)
-//   fluent-ffmpeg (already in package.json)
-//   @whiskeysockets/baileys (already in package.json)
 // ---------------------------------------------------------------------------
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { promisify } = require('util');
-const stream = require('stream');
-const pipeline = promisify(stream.pipeline);
 
 const UIkit = require('./ui');
 
@@ -26,47 +21,29 @@ const UIkit = require('./ui');
 // CONFIG
 // ============================================================================
 const CONFIG = {
-  // Max file size (in MB) we'll send over WhatsApp. WhatsApp caps ~ 64 MB for
-  // videos and ~ 16 MB for audio on most clients; we stay under both.
   MAX_VIDEO_MB: 60,
   MAX_AUDIO_MB: 15,
   MAX_IMAGE_MB: 10,
-
-  // yt-dlp binary name (override with env YTDLP_BIN=…)
   YTDLP: process.env.YTDLP_BIN || 'yt-dlp',
-
-  // ffmpeg binary name (override with env FFMPEG_BIN=…)
   FFMPEG: process.env.FFMPEG_BIN || 'ffmpeg',
-
-  // Per-job timeout in ms
   JOB_TIMEOUT_MS: 5 * 60 * 1000
 };
 
 // ============================================================================
 // TINY HELPERS
 // ============================================================================
-
 function tmpFile(ext) {
   return path.join(os.tmpdir(), `panda-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
 }
-
 function tmpDir() {
   const d = path.join(os.tmpdir(), `panda-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
+function safeUnlink(p) { try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch {} }
+function safeRm(p)     { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} }
+function bytesToMB(n)  { return n / 1024 / 1024; }
 
-function safeUnlink(p) {
-  try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch {}
-}
-
-function safeRm(p) {
-  try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {}
-}
-
-function bytesToMB(n) { return n / 1024 / 1024; }
-
-// Fetch with timeout + UA
 async function httpGet(url, opts = {}) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), opts.timeout || 30000);
@@ -74,8 +51,7 @@ async function httpGet(url, opts = {}) {
     const res = await fetch(url, {
       ...opts,
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
           '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         ...(opts.headers || {})
       },
@@ -89,19 +65,21 @@ async function httpGet(url, opts = {}) {
 
 async function downloadToBuffer(url, { timeout = 120000 } = {}) {
   const res = await httpGet(url, { timeout });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
+  const ct = res.headers.get('content-type') || '';
   const ab = await res.arrayBuffer();
-  return Buffer.from(ab);
+  const buf = Buffer.from(ab);
+  // Guard: if a JSON/HTML error page came back, bail loudly.
+  if (buf.length < 1024 && /(json|html)/i.test(ct)) {
+    const snippet = buf.toString('utf8', 0, 200);
+    throw new Error(`Expected media but got ${ct}: ${snippet}`);
+  }
+  return buf;
 }
 
 // ============================================================================
 // YT-DLP WRAPPER
 // ============================================================================
-
-/**
- * Run yt-dlp with given args in a cwd. Resolves with stdout string.
- * Rejects on non-zero exit or timeout.
- */
 function runYtDlp(args, { cwd, timeout = CONFIG.JOB_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(CONFIG.YTDLP, args, { cwd });
@@ -132,7 +110,6 @@ function runYtDlp(args, { cwd, timeout = CONFIG.JOB_TIMEOUT_MS } = {}) {
   });
 }
 
-/** Check yt-dlp availability once at startup. */
 let YTDLP_OK = null;
 async function hasYtDlp() {
   if (YTDLP_OK !== null) return YTDLP_OK;
@@ -145,14 +122,10 @@ async function hasYtDlp() {
   return YTDLP_OK;
 }
 
-/**
- * Use yt-dlp to fetch metadata for a URL without downloading.
- */
 async function ytDlpInfo(url) {
   const out = await runYtDlp(['--dump-json', '--no-warnings', '--no-playlist', url], {
     timeout: 45000
   });
-  // yt-dlp can emit multiple JSON lines; take the first valid one.
   for (const line of out.split('\n')) {
     const s = line.trim();
     if (!s.startsWith('{')) continue;
@@ -161,15 +134,10 @@ async function ytDlpInfo(url) {
   throw new Error('yt-dlp: could not parse info');
 }
 
-/**
- * Use yt-dlp to download a video URL into a temp dir.
- * Returns { file, info }.
- */
 async function ytDlpDownloadVideo(url) {
   const dir = tmpDir();
   const outTpl = path.join(dir, 'video.%(ext)s');
 
-  // Prefer mp4 with merged audio; fall back gracefully.
   const args = [
     '--no-warnings',
     '--no-playlist',
@@ -194,9 +162,6 @@ async function ytDlpDownloadVideo(url) {
   return { file, dir, size };
 }
 
-/**
- * Use yt-dlp to download audio (mp3) into a temp dir.
- */
 async function ytDlpDownloadAudio(url) {
   const dir = tmpDir();
   const outTpl = path.join(dir, 'audio.%(ext)s');
@@ -227,19 +192,16 @@ async function ytDlpDownloadAudio(url) {
 }
 
 // ============================================================================
-// PROGRESS UI
+// PROGRESS UI  (edit-first, falls back to plain messages)
 // ============================================================================
-
-/** Send an editable progress card; returns a function to update/delete it. */
 async function makeProgressCard(safeSend, from, title) {
-  const key = `${title.slice(0, 20)}-${Date.now()}`;
   const startText = `${UIkit.pandaBanner('DOWNLOADING')}
 
 ${UIkit.section(title, '⏳')}
 ${UIkit.row('Status', 'starting…')}
 ${UIkit.row('Progress', UIkit.bar(0))}`;
 
-  let sent;
+  let sent = null;
   try {
     sent = await safeSend(from, { text: startText });
   } catch {
@@ -247,50 +209,61 @@ ${UIkit.row('Progress', UIkit.bar(0))}`;
   }
 
   let lastEdit = 0;
+
   return {
     async update(pct, note = '') {
       const now = Date.now();
-      if (now - lastEdit < 1500) return; // throttle
+      if (now - lastEdit < 2000) return;
       lastEdit = now;
-      if (!sent?.key?.id) return;
       const text = `${UIkit.pandaBanner('DOWNLOADING')}
 
 ${UIkit.section(title, '⏳')}
 ${UIkit.row('Status', note || 'in progress')}
 ${UIkit.row('Progress', `${UIkit.bar(pct)} ${pct}%`)}`;
+
       try {
-        await safeSend(from, {
-          text,
-          edit: sent.key
-        });
-      } catch {}
+        if (sent?.key?.id) {
+          sent = await safeSend(from, { text, edit: sent.key });
+        } else {
+          sent = await safeSend(from, { text });
+        }
+      } catch {
+        // edit not supported → send fresh
+        try { sent = await safeSend(from, { text }); } catch {}
+      }
     },
     async done(note = 'ready') {
-      if (!sent?.key?.id) return;
       const text = `${UIkit.pandaBanner('READY')}
 
 ${UIkit.section(title, '✅')}
 ${UIkit.row('Status', note)}
 ${UIkit.row('Progress', `${UIkit.bar(100)} 100%`)}`;
       try {
-        await safeSend(from, { text, edit: sent.key });
-      } catch {}
+        if (sent?.key?.id) {
+          sent = await safeSend(from, { text, edit: sent.key });
+        } else {
+          await safeSend(from, { text });
+        }
+      } catch { try { await safeSend(from, { text }); } catch {} }
     },
     async fail(err) {
-      if (!sent?.key?.id) return;
       const text = `${UIkit.pandaBanner('FAILED')}
 
 ${UIkit.section(title, '❌')}
-${UIkit.row('Reason', String(err).slice(0, 80))}`;
+${UIkit.row('Reason', String(err).slice(0, 120))}`;
       try {
-        await safeSend(from, { text, edit: sent.key });
-      } catch {}
+        if (sent?.key?.id) {
+          sent = await safeSend(from, { text, edit: sent.key });
+        } else {
+          await safeSend(from, { text });
+        }
+      } catch { try { await safeSend(from, { text }); } catch {} }
     }
   };
 }
 
 // ============================================================================
-// PLATFORM: TIKTOK  (tikwm.com — no key, returns direct mp4 + mp3)
+// PLATFORM: TIKTOK  (tikwm.com)
 // ============================================================================
 async function downloadTikTok({ url, from, safeSend, helpers }) {
   const card = await makeProgressCard(safeSend, from, 'TikTok');
@@ -298,18 +271,24 @@ async function downloadTikTok({ url, from, safeSend, helpers }) {
     await card.update(15, 'fetching metadata');
 
     const apiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
-    const res = await httpGet(apiUrl, { timeout: 30000 });
+    const res = await httpGet(apiUrl, {
+      timeout: 30000,
+      headers: { Accept: 'application/json' }
+    });
     if (!res.ok) throw new Error(`tikwm HTTP ${res.status}`);
-    const j = await res.json();
+    const raw = await res.text();
+    let j;
+    try { j = JSON.parse(raw); }
+    catch { throw new Error(`tikwm non-JSON response: ${raw.slice(0, 120)}`); }
     if (j.code !== 0 || !j.data) throw new Error(j.msg || 'tikwm returned no data');
 
     const d = j.data;
     const title = (d.title || 'TikTok').slice(0, 80);
     const author = d.author?.unique_id ? `@${d.author.unique_id}` : '';
-    const videoUrl = d.hdplay || d.play;
+    // Prefer no-watermark `play` over `hdplay` (hdplay sometimes 403s)
+    const videoUrl = d.play || d.hdplay || d.wmplay;
     const audioUrl = d.music;
-
-    if (!videoUrl) throw new Error('No video URL returned.');
+    if (!videoUrl) throw new Error('tikwm returned no playable video URL.');
 
     await card.update(50, 'downloading video');
     const buf = await downloadToBuffer(videoUrl, { timeout: 120000 });
@@ -328,15 +307,16 @@ ${UIkit.row('Size', `${bytesToMB(buf.length).toFixed(2)} MB`)}`;
     await card.update(90, 'sending video');
     await safeSend(from, { video: buf, caption, mimetype: 'video/mp4' });
 
-    // Bonus: audio track as a voice-note style mp3
-    if (audioUrl) {
+    // Bonus: audio track as mp3 (best-effort)
+    if (audioUrl && /^https?:\/\//i.test(audioUrl)) {
       try {
         const mp3 = await downloadToBuffer(audioUrl, { timeout: 60000 });
-        if (bytesToMB(mp3.length) <= CONFIG.MAX_AUDIO_MB) {
+        if (bytesToMB(mp3.length) <= CONFIG.MAX_AUDIO_MB && mp3.length > 1024) {
           await safeSend(from, {
             audio: mp3,
             mimetype: 'audio/mpeg',
-            fileName: 'tiktok-audio.mp3'
+            fileName: 'tiktok-audio.mp3',
+            ptt: false
           });
         }
       } catch (e) {
@@ -359,17 +339,20 @@ async function downloadYouTube({ url, from, safeSend, args = [] }) {
   const card = await makeProgressCard(safeSend, from, 'YouTube');
   try {
     if (!(await hasYtDlp())) {
-      throw new Error('yt-dlp is not installed on the server. Install it with `pip install yt-dlp` or `apt install yt-dlp`.');
+      throw new Error('yt-dlp is not installed on the server. Install with `pip install yt-dlp`.');
     }
 
     await card.update(10, 'fetching info');
     const info = await ytDlpInfo(url).catch(() => null);
     const title = (info?.title || 'YouTube').slice(0, 80);
     const uploader = info?.uploader || info?.channel || '';
-    const duration = info?.duration ? `${Math.floor(info.duration / 60)}m ${info.duration % 60}s` : '—';
+    const duration = info?.duration
+      ? `${Math.floor(info.duration / 60)}m ${info.duration % 60}s`
+      : '—';
 
-    // If user asked for audio-only (`yt a <url>` or `yt mp3 <url>`)
-    const audioOnly = args.some((a) => ['a', 'audio', 'mp3', 'music'].includes(String(a).toLowerCase()));
+    const audioOnly = args.some((a) =>
+      ['a', 'audio', 'mp3', 'music'].includes(String(a).toLowerCase())
+    );
 
     if (audioOnly) {
       await card.update(35, 'downloading audio');
@@ -488,7 +471,7 @@ ${UIkit.row('Size', `${bytesToMB(size).toFixed(2)} MB`)}`;
 }
 
 // ============================================================================
-// PLATFORM: SPOTIFY  (oEmbed for metadata, yt-dlp for the actual track)
+// PLATFORM: SPOTIFY (oEmbed metadata + yt-dlp audio search)
 // ============================================================================
 async function downloadSpotify({ url, from, safeSend }) {
   const card = await makeProgressCard(safeSend, from, 'Spotify');
@@ -510,7 +493,6 @@ async function downloadSpotify({ url, from, safeSend }) {
     }
 
     await card.update(35, 'searching for the song');
-    // Search YouTube for "<artist> - <title>" and grab the first result's audio
     const query = `ytsearch1:${artist} ${title} audio`;
     const dir = tmpDir();
     const outTpl = path.join(dir, 'spotify.%(ext)s');
@@ -551,7 +533,7 @@ ${UIkit.row('Size', `${bytesToMB(size).toFixed(2)} MB`)}`;
       fileName: `${title.replace(/[\\/:*?"<>|]/g, '_')}.mp3`,
       ptt: false
     });
-    // Send cover separately if we have it
+
     if (meta?.thumbnail_url) {
       try {
         await safeSend(from, { image: { url: meta.thumbnail_url }, caption });
@@ -641,43 +623,45 @@ async function downloadPinterest({ url, from, safeSend }) {
 // MASTER DISPATCHER
 // ============================================================================
 const HANDLERS = {
-  tiktok:   downloadTikTok,
-  tt:       downloadTikTok,
+  tiktok: downloadTikTok,
+  tt: downloadTikTok,
 
-  yt:       downloadYouTube,
-  youtube:  downloadYouTube,
+  yt: downloadYouTube,
+  youtube: downloadYouTube,
 
-  ig:       downloadInstagram,
-  instagram:downloadInstagram,
+  ig: downloadInstagram,
+  instagram: downloadInstagram,
 
-  fb:       downloadFacebook,
+  fb: downloadFacebook,
   facebook: downloadFacebook,
 
-  spotify:  downloadSpotify,
-  sp:       downloadSpotify,
+  spotify: downloadSpotify,
+  sp: downloadSpotify,
 
-  x:        downloadTwitter,
-  twitter:  downloadTwitter,
+  x: downloadTwitter,
+  twitter: downloadTwitter,
 
   pinterest: downloadPinterest,
-  pin:       downloadPinterest
+  pin: downloadPinterest
 };
 
 async function handleDownload({ platform, url, from, state, helpers, safeSend, args = [] }) {
   if (!platform || platform === 'unknown') return false;
 
-  const handler = HANDLERS[platform];
-  if (!handler) return false;
+  const key = String(platform).toLowerCase().trim();
+  const handler = HANDLERS[key];
+  if (!handler) {
+    console.warn('[transformer] no handler for platform:', key);
+    return false;
+  }
 
-  // Normalise args for handlers that care (only YouTube currently)
   const passArgs = { url, from, state, helpers, safeSend, args };
-
   await handler(passArgs);
   return true;
 }
 
 // ============================================================================
-// HEALTHCHECK (call once on startup)
+// HEALTHCHECK
 // ============================================================================
 async function selfTest() {
   const ok = await hasYtDlp();
@@ -688,7 +672,6 @@ async function selfTest() {
 module.exports = {
   handleDownload,
   selfTest,
-  // exposed for testing
   downloadTikTok,
   downloadYouTube,
   downloadInstagram,
