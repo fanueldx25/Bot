@@ -35,16 +35,6 @@
 //       but NEVER blocks the very first command in a chat.
 // ============================================================================
 
-// handlers.js — PANDA WhatsApp Bot (complete)
-// ---------------------------------------------------------------------------
-// Requires:
-//   ./state      → getters, UI, isAdmin, withTyping, withRecording, saveState…
-//   ./engine     → command installer, rate-limit, send() bridge
-//   ./ui         → PANDA block-letter banners + reusable blocks  (NEW)
-//   @whiskeysockets/baileys
-//   pino, fs, path, os
-// ---------------------------------------------------------------------------
-
 const state = require('./state');
 const {
   UI,
@@ -55,8 +45,6 @@ const {
   pausedChats,
   saveState
 } = state;
-
-const UIkit = require('./ui');
 
 // ⚠️ Do NOT destructure sock / botJid / currentNumber here.
 // They are getters that resolve at load time → null. Always use state.sock.
@@ -84,85 +72,6 @@ setInterval(() => {
     if (now > s.expiresAt) TRIVIA_STATE.delete(chat);
   }
 }, 60_000).unref();
-
-// ============================================================================
-// AUTO VIEW/LIKE-STATUS TRACKER
-// ---------------------------------------------------------------------------
-// When the bot posts to status@broadcast we schedule 3-min and 5-min
-// "views" (and a like) of the freshly posted status, using the same socket.
-// This mimics WhatsApp's own behaviour where a user opens the status and
-// taps ❤️. It is tracked by status message-id → timers, so multiple posts
-// at once are handled independently.
-// ============================================================================
-const STATUS_TIMERS = new Map(); // msgId → { t3: Timeout, t5: Timeout }
-
-function scheduleStatusEngagement(msgId) {
-  if (!msgId) return;
-  cancelStatusEngagement(msgId);
-
-  const sock = state.sock;
-  if (!sock) return;
-
-  const t3 = setTimeout(() => {
-    viewStatus(msgId).catch((e) =>
-      console.error('[status-view 3m]', e.message)
-    );
-  }, 3 * 60 * 1000);
-
-  const t5 = setTimeout(() => {
-    viewStatus(msgId).catch((e) =>
-      console.error('[status-view 5m]', e.message)
-    );
-    likeStatus(msgId).catch((e) =>
-      console.error('[status-like 5m]', e.message)
-    );
-  }, 5 * 60 * 1000);
-
-  STATUS_TIMERS.set(msgId, { t3, t5 });
-}
-
-function cancelStatusEngagement(msgId) {
-  const cur = STATUS_TIMERS.get(msgId);
-  if (!cur) return;
-  clearTimeout(cur.t3);
-  clearTimeout(cur.t5);
-  STATUS_TIMERS.delete(msgId);
-}
-
-// Send a read receipt to status@broadcast for a given message id.
-async function viewStatus(msgId) {
-  const sock = state.sock;
-  if (!sock) return;
-  try {
-    // Baileys accepts an array of { remoteJid, id, participant } keys.
-    await sock.readMessages([
-      {
-        remoteJid: 'status@broadcast',
-        id: msgId,
-        participant: state.botJid || undefined
-      }
-    ]);
-    console.log('[status] viewed', msgId);
-  } catch (e) {
-    console.error('[status] view failed', e.message);
-  }
-}
-
-// Send a reaction (❤️) to a status message.
-async function likeStatus(msgId) {
-  const sock = state.sock;
-  if (!sock) return;
-  try {
-    await sock.sendMessage(
-      'status@broadcast',
-      { react: { text: '❤️', key: { remoteJid: 'status@broadcast', id: msgId, fromMe: true } } },
-      { statusJidList: [] }
-    );
-    console.log('[status] liked', msgId);
-  } catch (e) {
-    console.error('[status] like failed', e.message);
-  }
-}
 
 // ============================================================================
 // SENDER RESOLVER
@@ -226,10 +135,14 @@ function unwrapMessage(message) {
 // ============================================================================
 // SAFE SEND BRIDGE
 // ============================================================================
+// All outgoing sends go through engine.send(), which prefers
+// connection.safeSend (retries transient E2EE errors and caches the outgoing
+// message for retry receipts) and falls back to state.sock.sendMessage.
 async function safeSend(from, content, opts = {}) {
   try {
     return await engine.send(from, content, opts);
   } catch (e) {
+    // Fallback if engine.send throws (e.g. no socket).
     const sock = state.sock;
     if (!sock) throw e;
     return sock.sendMessage(from, content, opts);
@@ -237,7 +150,7 @@ async function safeSend(from, content, opts = {}) {
 }
 
 // ============================================================================
-// SHARED HELPERS
+// SHARED HELPERS (used by every command)
 // ============================================================================
 const helpers = {
   async reply(from, text, opts = {}) {
@@ -256,8 +169,15 @@ const helpers = {
     console.log('[replyWithBanner] →', from);
     try {
       const sock = state.sock;
-      if (!sock) return helpers.reply(from, text);
-      if (!state.BANNER_BUFFER) return await safeSend(from, { text });
+      if (!sock) {
+        return helpers.reply(from, text);
+      }
+      if (!state.BANNER_BUFFER) {
+        // No banner — send text via safeSend and be done.
+        return await safeSend(from, { text });
+      }
+      // sendWithBanner is defined in state.js and uses state.sock directly.
+      // Wrap it in a try so transient E2EE errors don't break the command.
       try {
         return await sendWithBanner(from, text);
       } catch (e) {
@@ -277,7 +197,7 @@ const helpers = {
   async denied(from) {
     return helpers.replyTyping(
       from,
-      `${UIkit.box('ACCESS DENIED', '🔒')}\n\nSorry, this command is restricted to the admin.`
+      `${UI.box('ACCESS DENIED', '🔒')}\n\nSorry, this command is restricted to the admin.`
     );
   },
 
@@ -291,6 +211,7 @@ const helpers = {
     if (!from.endsWith('@g.us')) helpers.fail('❌ This command only works in groups.');
   },
 
+  // Resolve any user JID to a routable @s.whatsapp.net JID.
   resolveJid(jid) {
     if (!jid) return jid;
     if (jid.endsWith('@s.whatsapp.net')) return jid;
@@ -342,7 +263,7 @@ const helpers = {
 };
 
 // ============================================================================
-// FEATURE HANDLERS (event-driven)
+// FEATURE HANDLERS (non-command, event-driven)
 // ============================================================================
 
 async function tryCaptureViewOnce(msg, from) {
@@ -401,7 +322,11 @@ async function tryCaptureViewOnce(msg, from) {
 }
 
 // ============================================================================
-// POST TO STATUS
+// POST TO STATUS — fully rebuilt
+// ============================================================================
+// `quotedMsg` here is the *reconstructed* message shape:
+//   { key: { remoteJid, id, fromMe, participant }, message: <quotedMessage> }
+// We extract the correct content type and post to status@broadcast.
 // ============================================================================
 async function postToStatus(quotedMsg) {
   const sockInstance = state.sock;
@@ -420,11 +345,19 @@ async function postToStatus(quotedMsg) {
     if (type === 'conversation') {
       const text = inner.conversation || '';
       if (!text) return false;
-      payload = { text, backgroundColor: '#1F2C33', font: 2 };
+      payload = {
+        text,
+        backgroundColor: '#1F2C33',
+        font: 2
+      };
     } else if (type === 'extendedTextMessage') {
       const text = inner.extendedTextMessage?.text || '';
       if (!text) return false;
-      payload = { text, backgroundColor: '#1F2C33', font: 2 };
+      payload = {
+        text,
+        backgroundColor: '#1F2C33',
+        font: 2
+      };
     } else if (type === 'imageMessage') {
       const buf = await downloadMediaMessage(
         { key: quotedMsg.key, message: { imageMessage: inner.imageMessage } },
@@ -452,18 +385,12 @@ async function postToStatus(quotedMsg) {
       return false;
     }
 
-    const sent = await safeSend('status@broadcast', payload, {
+    // Send to status@broadcast. Some Baileys versions want statusJidList to
+    // contain the contacts who should see it; an empty list means "all".
+    await safeSend('status@broadcast', payload, {
       broadcast: true,
       statusJidList: []
     });
-
-    // 🔥 Auto view + like scheduling (3 min, 5 min after posting)
-    const id = sent?.key?.id;
-    if (id) {
-      scheduleStatusEngagement(id);
-      console.log('[Status] scheduled engagement for', id);
-    }
-
     console.log('[Status] posted ✅');
     return true;
   } catch (e) {
@@ -484,7 +411,11 @@ async function sendWelcome(groupJid, participants) {
       try {
         await safeSend(groupJid, {
           image: state.BANNER_BUFFER,
-          caption: `${UIkit.pandaBanner('NEW MEMBER')}\n\n_Welcome to the family!_`
+          caption: `╭━━━━━━━━━━━━━━━━━━━━╮
+┃   👋  *NEW MEMBER*   ┃
+╰━━━━━━━━━━━━━━━━━━━━╯
+
+_Welcome to the family!_`
         });
       } catch (e) {
         console.error('[Welcome] Banner failed:', e.message);
@@ -496,18 +427,19 @@ async function sendWelcome(groupJid, participants) {
       const custom = state.customWelcome[groupJid];
       const text = custom
         ? custom.replace(/@user/g, `@${num}`).replace(/@group/g, groupName)
-        : `${UIkit.section('WELCOME', '👋')}
-│ 📌 ${groupName}
+        : `╭────────────────────
+│ 📌 *${groupName}*
+╰────────────────────
 
 Hello @${num}!
 You've joined the group.
 
-${UIkit.section('RULES', '📋')}
+*Please:*
 │ ✅ Read the rules
 │ ✅ Be respectful
 │ ✅ No spam or links
 
-${UIkit.divider}
+━━━━━━━━━━━━━━━━━━━━━━━
   _Type *.help* to see commands_`;
 
       await safeSend(groupJid, { text, mentions: [jid] });
@@ -529,19 +461,24 @@ async function sendGoodbye(groupJid, participants) {
       try {
         await safeSend(groupJid, {
           image: state.BANNER_BUFFER,
-          caption: `${UIkit.pandaBanner('MEMBER LEFT')}\n\n_We'll miss you._`
+          caption: `╭━━━━━━━━━━━━━━━━━━━━╮
+┃   👋  *MEMBER LEFT*   ┃
+╰━━━━━━━━━━━━━━━━━━━━╯
+
+_We'll miss you._`
         });
       } catch (e) {}
     }
 
     for (const jid of participants) {
       const num = jid.split('@')[0];
-      const text = `${UIkit.section('GOODBYE', '👋')}
-│ 📌 ${groupName}
+      const text = `╭────────────────────
+│ 📌 *${groupName}*
+╰────────────────────
 
 @${num} has left the group.
 
-${UIkit.divider}
+━━━━━━━━━━━━━━━━━━━━━━━
   _Wishing you the best!_`;
 
       await safeSend(groupJid, { text, mentions: [jid] });
@@ -552,7 +489,7 @@ ${UIkit.divider}
 }
 
 // ============================================================================
-// TEXT-TO-STICKER RENDERER
+// TEXT-TO-STICKER RENDERER (SVG → PNG → WEBP)
 // ============================================================================
 async function renderTextSticker(text, opts = {}) {
   let {
@@ -572,7 +509,7 @@ async function renderTextSticker(text, opts = {}) {
     Verdana: 'Verdana, Geneva, sans-serif'
   };
 
-  const COLORS = ['white','black','red','green','blue','yellow','pink','orange','purple','cyan'];
+  const COLORS = ['white', 'black', 'red', 'green', 'blue', 'yellow', 'pink', 'orange', 'purple', 'cyan'];
 
   if (random) {
     const fontKeys = Object.keys(FONTS);
@@ -660,20 +597,23 @@ async function renderTextSticker(text, opts = {}) {
 }
 
 // ============================================================================
-// PRE-COMMAND HOOKS
+// PRE-COMMAND HOOKS: trivia answer + auto-correct + anti-mention
 // ============================================================================
 async function preCommandHooks(msg, from, senderJid, rawText) {
   if (!rawText || !rawText.trim()) return false;
   const sock = state.sock;
   if (!sock) return false;
 
+  // ---------- 🔧 FIX 14: AUTO-REGISTER (never blocks) ----------
+  // engine.autoRegister() learns the LID → PN mapping and logs first contact,
+  // but its return value is diagnostic only. We do NOT gate on `.known`.
   try {
     engine.autoRegister(msg, from, senderJid);
   } catch (e) {
     console.error('[engine.autoRegister]', e.message);
   }
 
-  // ---------- TRIVIA ----------
+  // ---------- TRIVIA ANSWER INTERCEPTION ----------
   const trivia = TRIVIA_STATE.get(from);
   if (trivia) {
     if (Date.now() > trivia.expiresAt) {
@@ -722,6 +662,7 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
   // ---------- ANTI-MENTION ----------
   if (from.endsWith('@g.us') && state.antimentionGroups.has(from)) {
     const mentioned = helpers.mentions(msg);
+
     const mentionsGroupJid = mentioned.includes(from);
     const massMention = mentioned.length >= 5;
 
@@ -734,7 +675,9 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
       state.antimentionWarnings.set(from, groupWarns);
       saveState();
 
-      try { await sock.sendMessage(from, { delete: msg.key }); } catch (e) {
+      try {
+        await sock.sendMessage(from, { delete: msg.key });
+      } catch (e) {
         console.error('[antimention] delete failed:', e.message);
       }
 
@@ -773,7 +716,8 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
     }
   }
 
-  // ---------- RATE LIMIT ----------
+  // ---------- RATE LIMIT (per chat+user, never blocks first contact) ----------
+  // Only rate-limit actual commands — not plain chatter.
   if (engine.isCommand(rawText)) {
     const r = engine.checkRate(from, senderJid || from);
     if (!r.ok) {
@@ -793,8 +737,8 @@ async function preCommandHooks(msg, from, senderJid, rawText) {
 // ============================================================================
 // COMMAND REGISTRY
 // ============================================================================
-const COMMANDS = [
 
+const COMMANDS = [
   // ========================================================================
   // GENERAL
   // ========================================================================
@@ -815,12 +759,11 @@ const COMMANDS = [
     desc: 'Check bot alive',
     handler: async ({ from }) => {
       const start = Date.now();
-      const txt = `${UIkit.pandaBanner('PONG')}
+      const txt = `${UI.box('PONG', '🏓')}
 
-${UIkit.section('LATENCY', '🏓')}
-${UIkit.row('Status', '✅ online')}
-${UIkit.row('Latency', `${Date.now() - start} ms`)}
-${UIkit.row('Uptime', `${Math.floor(process.uptime())} s`)}`;
+│ Status  : ✅ online
+│ Latency : ${Date.now() - start} ms
+│ Uptime  : ${Math.floor(process.uptime())} s`;
       await helpers.replyTyping(from, txt);
     }
   },
@@ -833,12 +776,11 @@ ${UIkit.row('Uptime', `${Math.floor(process.uptime())} s`)}`;
       const num = (senderJid || '').split('@')[0].split(':')[0];
       await helpers.replyTyping(
         from,
-        `${UIkit.pandaBanner('YOUR INFO')}
+        `${UI.box('YOUR INFO', '🆔')}
 
-${UIkit.section('IDENTITY', '🆔')}
-${UIkit.row('Number', `+${num}`)}
-${UIkit.row('User JID', senderJid)}
-${UIkit.row('Chat JID', from)}`
+│ Number   : +${num}
+│ User JID : ${senderJid}
+│ Chat JID : ${from}`
       );
     }
   },
@@ -853,16 +795,15 @@ ${UIkit.row('Chat JID', from)}`
       const ppn = msg.key.participantPn || 'none';
       await helpers.reply(
         from,
-        `${UIkit.pandaBanner('WHO AM I')}
+        `${UI.box('WHO AM I', '👤')}
 
-${UIkit.section('DEBUG', '👤')}
-${UIkit.row('Your number', `+${num}`)}
-${UIkit.row('Resolved JID', senderJid)}
-${UIkit.row('Raw participant', raw)}
-${UIkit.row('senderPn', pn)}
-${UIkit.row('participantPn', ppn)}
-${UIkit.row('Admin number', ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'NOT SET')}
-${UIkit.row('You are admin', admin ? '✅ YES' : '❌ NO')}`
+│ Your number    : +${num}
+│ Resolved JID   : ${senderJid}
+│ Raw participant: ${raw}
+│ senderPn       : ${pn}
+│ participantPn  : ${ppn}
+│ Admin number   : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'NOT SET'}
+│ You are admin  : ${admin ? '✅ YES' : '❌ NO'}`
       );
     }
   },
@@ -871,10 +812,7 @@ ${UIkit.row('You are admin', admin ? '✅ YES' : '❌ NO')}`
     category: 'general',
     desc: 'Server time',
     handler: async ({ from }) => {
-      await helpers.replyTyping(
-        from,
-        `${UIkit.pandaBanner('SERVER TIME')}\n\n│ ${new Date().toUTCString()}`
-      );
+      await helpers.replyTyping(from, `${UI.box('SERVER TIME', '🕐')}\n\n│ ${new Date().toUTCString()}`);
     }
   },
   {
@@ -887,11 +825,10 @@ ${UIkit.row('You are admin', admin ? '✅ YES' : '❌ NO')}`
       const m = Math.floor((s % 3600) / 60);
       await helpers.replyTyping(
         from,
-        `${UIkit.pandaBanner('UPTIME')}
+        `${UI.box('UPTIME', '⏱️')}
 
-${UIkit.section('RUNTIME', '⏱️')}
-${UIkit.row('Running', `${h}h ${m}m`)}
-${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
+│ Running : ${h}h ${m}m
+│ Status  : ${state.botJid ? '✅ connected' : '❌ offline'}`
       );
     }
   },
@@ -1056,7 +993,9 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
       const mentioned = helpers.mentions(msg);
       if (mentioned.length) {
         target = helpers.resolveJid(mentioned[0]);
-        if (!target) helpers.fail('❌ Cannot resolve this user — their LID is not in LID_MAP.');
+        if (!target) {
+          helpers.fail('❌ Cannot resolve this user — their LID is not in LID_MAP.');
+        }
       }
       try {
         const url = await state.sock.profilePictureUrl(target, 'image');
@@ -1155,118 +1094,6 @@ ${UIkit.row('Status', state.botJid ? '✅ connected' : '❌ offline')}`
   },
 
   // ========================================================================
-  // 🆕 DOWNLOADER — TikTok / YT / IG / FB / Spotify / X
-  // ========================================================================
-  {
-    name: '.dl',
-    aliases: ['.download', '.dlmedia'],
-    category: 'media',
-    desc: 'Download media from TikTok / YT / IG / FB / Spotify / X',
-    usage: '.dl <url>  |  .dl help',
-    handler: async ({ from, args }) => {
-      const raw = args.join(' ').trim();
-
-      // ---------- HELP ----------
-      if (!raw || raw === 'help') {
-        await helpers.replyWithBanner(
-          from,
-          `${UIkit.pandaBanner('MEDIA DOWNLOADER')}
-
-${UIkit.section('SUPPORTED', '🌐')}
-${UIkit.row('TikTok',    '🎵  videos / no-watermark')}
-${UIkit.row('YouTube',   '▶️  video / audio / shorts')}
-${UIkit.row('Instagram', '📸  reels / posts / stories')}
-${UIkit.row('Facebook',  '📘  videos / reels')}
-${UIkit.row('Spotify',   '🎧  track / album / playlist')}
-${UIkit.row('Twitter/X', '🐦  videos / GIFs')}
-
-${UIkit.section('HOW TO USE', '📖')}
-│ .dl <url>            — auto-detects platform
-│ .dl tiktok <url>
-│ .dl yt <url>
-│ .dl ig <url>
-│ .dl fb <url>
-│ .dl spotify <url>
-│ .dl x <url>
-
-${UIkit.section('NOTES', '💡')}
-│ ⏳ Large files may take a while
-│ 📦 Video + audio merged automatically
-│ 🚫 Private / login-walled links are not supported`
-        );
-        return;
-      }
-
-      // ---------- PARSE ----------
-      const KNOWN = ['tiktok','tt','yt','youtube','ig','instagram','fb','facebook','spotify','sp','x','twitter'];
-      let platform = null;
-      let url = raw;
-
-      const first = raw.split(/\s+/)[0].toLowerCase();
-      if (KNOWN.includes(first)) {
-        platform = first;
-        url = raw.split(/\s+/).slice(1).join(' ').trim();
-      }
-
-      if (!/^https?:\/\//i.test(url)) {
-        helpers.fail('❌ Provide a valid URL, e.g. `.dl https://vt.tiktok.com/xxxx`');
-      }
-
-      if (!platform) {
-        if (/tiktok\.com/i.test(url)) platform = 'tiktok';
-        else if (/(youtube\.com|youtu\.be)/i.test(url)) platform = 'yt';
-        else if (/instagram\.com/i.test(url)) platform = 'ig';
-        else if (/(facebook\.com|fb\.watch)/i.test(url)) platform = 'fb';
-        else if (/spotify\.com/i.test(url)) platform = 'spotify';
-        else if (/(twitter\.com|x\.com)/i.test(url)) platform = 'x';
-        else platform = 'unknown';
-      }
-
-      const PRETTY = {
-        tiktok: '🎵 TikTok', tt: '🎵 TikTok',
-        yt: '▶️ YouTube', youtube: '▶️ YouTube',
-        ig: '📸 Instagram', instagram: '📸 Instagram',
-        fb: '📘 Facebook', facebook: '📘 Facebook',
-        spotify: '🎧 Spotify', sp: '🎧 Spotify',
-        x: '🐦 Twitter/X', twitter: '🐦 Twitter/X',
-        unknown: '🌐 Unknown'
-      }[platform];
-
-      await helpers.reply(
-        from,
-        `${UIkit.box('DOWNLOAD REQUEST', '⏳')}
-
-${UIkit.section('JOB', '📥')}
-${UIkit.row('Platform', PRETTY)}
-${UIkit.row('URL', url.slice(0, 42) + (url.length > 42 ? '…' : ''))}
-${UIkit.row('Status', 'fetching…')}`
-      );
-
-      try {
-        // Prefer the transformer-based downloader if available
-        const transformer = require('./transformer');
-        const handled = await transformer.handleDownload({
-          platform,
-          url,
-          from,
-          state,
-          helpers,
-          safeSend
-        });
-        if (handled) return;
-
-        helpers.fail(
-          `❌ No handler found for platform *${PRETTY}*.\n` +
-          `📌 The transformer module must export handleDownload().`
-        );
-      } catch (e) {
-        console.error('[.dl]', e);
-        helpers.fail(`❌ Download failed: ${e.message}`);
-      }
-    }
-  },
-
-  // ========================================================================
   // FUN
   // ========================================================================
   {
@@ -1303,8 +1130,8 @@ ${UIkit.row('Status', 'fetching…')}`
     usage: '.8ball <question>',
     handler: async ({ from }) => {
       const answers = [
-        'Yes.','No.','Maybe.','Ask again later.','Definitely.',
-        'Absolutely not.',"I wouldn't bet on it.",'Signs point to yes.'
+        'Yes.', 'No.', 'Maybe.', 'Ask again later.', 'Definitely.',
+        'Absolutely not.', 'I wouldn\'t bet on it.', 'Signs point to yes.'
       ];
       await helpers.reply(from, '🎱 ' + answers[Math.floor(Math.random() * answers.length)]);
     }
@@ -1315,9 +1142,9 @@ ${UIkit.row('Status', 'fetching…')}`
     desc: 'Random joke',
     handler: async ({ from }) => {
       const jokes = [
-        "Why don't scientists trust atoms? They make up everything.",
-        "I told my Wi-Fi we needed space. Now it won't connect.",
-        "Why did the developer go broke? He used up all his cache."
+        'Why don\'t scientists trust atoms? They make up everything.',
+        'I told my Wi-Fi we needed space. Now it won\'t connect.',
+        'Why did the developer go broke? He used up all his cache.'
       ];
       await helpers.reply(from, '😂 ' + jokes[Math.floor(Math.random() * jokes.length)]);
     }
@@ -1343,10 +1170,10 @@ ${UIkit.row('Status', 'fetching…')}`
     handler: async ({ from }) => {
       const QUESTIONS = [
         { q: 'What is the capital of Australia?', a: ['canberra'] },
-        { q: 'How many continents are there?', a: ['7','seven'] },
+        { q: 'How many continents are there?', a: ['7', 'seven'] },
         { q: 'What planet is known as the Red Planet?', a: ['mars'] },
-        { q: 'What is the largest ocean on Earth?', a: ['pacific','pacific ocean'] },
-        { q: 'Who wrote "Romeo and Juliet"?', a: ['shakespeare','william shakespeare'] }
+        { q: 'What is the largest ocean on Earth?', a: ['pacific', 'pacific ocean'] },
+        { q: 'Who wrote "Romeo and Juliet"?', a: ['shakespeare', 'william shakespeare'] }
       ];
       const pick = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
       TRIVIA_STATE.set(from, {
@@ -1355,7 +1182,7 @@ ${UIkit.row('Status', 'fetching…')}`
       });
       await helpers.reply(
         from,
-        `${UIkit.pandaBanner('TRIVIA')}\n\n${pick.q}\n\n_Reply with your answer — you have 30s._`
+        `${UI.box('TRIVIA', '🧠')}\n\n${pick.q}\n\n_Reply with your answer — you have 30s._`
       );
     }
   },
@@ -1371,7 +1198,7 @@ ${UIkit.row('Status', 'fetching…')}`
         'What is a secret you have never told anyone?'
       ];
       const pick = TRUTHS[Math.floor(Math.random() * TRUTHS.length)];
-      await helpers.reply(from, `${UIkit.pandaBanner('TRUTH')}\n\n${pick}`);
+      await helpers.reply(from, `${UI.box('TRUTH', '🤔')}\n\n${pick}`);
     }
   },
   {
@@ -1386,7 +1213,7 @@ ${UIkit.row('Status', 'fetching…')}`
         'Change your profile picture to a random meme for 1 hour.'
       ];
       const pick = DARES[Math.floor(Math.random() * DARES.length)];
-      await helpers.reply(from, `${UIkit.pandaBanner('DARE')}\n\n${pick}`);
+      await helpers.reply(from, `${UI.box('DARE', '🎯')}\n\n${pick}`);
     }
   },
   {
@@ -1405,15 +1232,11 @@ ${UIkit.row('Status', 'fetching…')}`
       let h = 0;
       for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
       const pct = Math.abs(h) % 101;
-      const bar = UIkit.bar(pct, 10);
+      const filled = Math.round(pct / 10);
+      const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
       await helpers.reply(
         from,
-        `${UIkit.pandaBanner('SHIP')}
-
-${UIkit.section('LOVE METER', '💞')}
-${UIkit.row('A', `@${a.split('@')[0]}`)}
-${UIkit.row('B', `@${b.split('@')[0]}`)}
-${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
+        `${UI.box('SHIP', '💞')}\n\n│ @${a.split('@')[0]}  ❤️  @${b.split('@')[0]}\n│ ${bar}  *${pct}%*`,
         { mentions: [aRes, bRes] }
       );
     }
@@ -1512,7 +1335,7 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
           }
           await helpers.reply(
             from,
-            `${UIkit.pandaBanner('LYRICS')}\n\n*${hit.title}* — ${hit.artist.name}\n\n${lyrics}`
+            `${UI.box('LYRICS', '🎵')}\n\n*${hit.title}* — ${hit.artist.name}\n\n${lyrics}`
           );
         } catch (e) {
           console.error('[lyrics]', e.message);
@@ -1535,7 +1358,7 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
         if (!wrong || !right) helpers.fail('Usage: .dict add <wrong> <right>');
         state.dictionary.set(wrong, right);
         saveState();
-        await helpers.reply(from, `${UIkit.box('DICT ADDED', '📖')}\n\n│ ${wrong} → ${right}`);
+        await helpers.reply(from, `${UI.box('DICT ADDED', '📖')}\n\n${wrong} → ${right}`);
       } else if (sub === 'del' || sub === 'remove') {
         const wrong = (args[1] || '').toLowerCase();
         if (!wrong) helpers.fail('Usage: .dict del <wrong>');
@@ -1543,7 +1366,7 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
         saveState();
         await helpers.reply(
           from,
-          existed ? `${UIkit.box('DICT REMOVED', '🗑️')}` : '❌ Not in dictionary.'
+          existed ? `${UI.box('DICT REMOVED', '🗑️')}` : '❌ Not in dictionary.'
         );
       } else if (sub === 'list') {
         const entries = [...state.dictionary.entries()];
@@ -1551,11 +1374,14 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
           await helpers.reply(from, '📖 Dictionary is empty.');
           return;
         }
-        const body = entries.slice(0, 100).map(([w, r]) => `│ ${w} → ${r}`).join('\n');
+        const body = entries
+          .slice(0, 100)
+          .map(([w, r]) => `│ ${w} → ${r}`)
+          .join('\n');
         const more = entries.length > 100 ? `\n… and ${entries.length - 100} more.` : '';
         await helpers.reply(
           from,
-          `${UIkit.pandaBanner('DICTIONARY')}\n\n${body}${more}\n\n_${entries.length} entries_`
+          `${UI.box('DICTIONARY', '📖')}\n\n${body}${more}\n\n_${entries.length} entries_`
         );
       } else {
         helpers.fail('Usage: .dict add|del|list');
@@ -1597,28 +1423,32 @@ ${UIkit.row('Score', `${bar}  *${pct}%*`)}`,
       const s = process.uptime();
       const h = Math.floor(s / 3600);
       const m = Math.floor((s % 3600) / 60);
-      const txt = `${UIkit.pandaBanner('BOT STATUS')}
+      const txt = `${UI.box('BOT STATUS', '📊')}
 
-${UIkit.section('CONNECTION', '🔌')}
-${UIkit.row('Status', state.botJid ? '✅ online' : '❌ offline')}
-${UIkit.row('Number', '+' + (state.currentNumber || 'N/A'))}
-${UIkit.row('Uptime', `${h}h ${m}m`)}
+━━━━━━━━━━━━━━━━━━━━━━━
+  🔌  *CONNECTION*
+━━━━━━━━━━━━━━━━━━━━━━━
+│ Status   : ${state.botJid ? '✅ online' : '❌ offline'}
+│ Number   : +${state.currentNumber || 'N/A'}
+│ Uptime   : ${h}h ${m}m
 
-${UIkit.section('FEATURES', '⚙️')}
-${UIkit.row('Paused', pausedChats.size + ' chat(s)')}
-${UIkit.row('View-once', state.viewOnceEnabled ? '✅ ON' : '❌ OFF')}
-${UIkit.row('Auto-DL', state.autoDownload ? '✅ ON' : '❌ OFF')}
-${UIkit.row('Welcome', state.welcomeEnabled.size + ' group(s)')}
-${UIkit.row('Anti-link', state.antilinkGroups.size + ' group(s)')}
-${UIkit.row('Auto-corr.', state.autoCorrectEnabled.size + ' chat(s)')}
-${UIkit.row('Anti-ment.', state.antimentionGroups.size + ' group(s)')}
-${UIkit.row('Dict words', state.dictionary.size)}
-${UIkit.row('Reactions', state.reactionsGlobal ? '✅ global' : state.reactionsEnabled.size + ' chat(s)')}
-${UIkit.row('Schedules', state.schedules.size)}
-${UIkit.row('Status auto', `${STATUS_TIMERS.size} pending`)}
+━━━━━━━━━━━━━━━━━━━━━━━
+  ⚙️  *FEATURES*
+━━━━━━━━━━━━━━━━━━━━━━━
+│ Paused     : ${pausedChats.size} chat(s)
+│ View-once  : ${state.viewOnceEnabled ? '✅ ON' : '❌ OFF'}
+│ Auto-DL    : ${state.autoDownload ? '✅ ON' : '❌ OFF'}
+│ Welcome    : ${state.welcomeEnabled.size} group(s)
+│ Anti-link  : ${state.antilinkGroups.size} group(s)
+│ Auto-corr. : ${state.autoCorrectEnabled.size} chat(s)
+│ Anti-ment. : ${state.antimentionGroups.size} group(s)
+│ Dict words : ${state.dictionary.size}
+│ Reactions  : ${state.reactionsGlobal ? '✅ global' : state.reactionsEnabled.size + ' chat(s)'}
+│ Schedules  : ${state.schedules.size}
 
-${UIkit.section('REPORT', '🕐')}
-│ ${new Date().toUTCString()}`;
+━━━━━━━━━━━━━━━━━━━━━━━
+  🕐  _Reported at_
+  ${new Date().toUTCString()}`;
       await helpers.replyWithBanner(from, txt);
     }
   },
@@ -1675,7 +1505,7 @@ ${UIkit.section('REPORT', '🕐')}
         added.push(num);
       }
       saveState();
-      await helpers.reply(from, `${UIkit.box('ADMIN ADDED', '✅')}\n\n${added.join('\n')}`);
+      await helpers.reply(from, `${UI.box('ADMIN ADDED', '✅')}\n\n${added.join('\n')}`);
     }
   },
   {
@@ -1691,7 +1521,7 @@ ${UIkit.section('REPORT', '🕐')}
         state.extraAdmins.delete(num);
       }
       saveState();
-      await helpers.reply(from, `${UIkit.box('ADMIN REMOVED', '✅')}`);
+      await helpers.reply(from, `${UI.box('ADMIN REMOVED', '✅')}`);
     }
   },
 
@@ -1708,12 +1538,12 @@ ${UIkit.section('REPORT', '🕐')}
       if (args[0] === 'all') {
         pausedChats.add('ALL');
         saveState();
-        await helpers.reply(from, `${UIkit.box('GLOBAL PAUSE', '⏸️')}\n\nBot is now silent everywhere.`);
+        await helpers.reply(from, `${UI.box('GLOBAL PAUSE', '⏸️')}\n\nBot is now silent everywhere.`);
         return;
       }
       pausedChats.add(from);
       saveState();
-      await helpers.reply(from, `${UIkit.box('PAUSED', '⏸️')}\n\nBot is silent in this chat.`);
+      await helpers.reply(from, `${UI.box('PAUSED', '⏸️')}\n\nBot is silent in this chat.`);
     }
   },
   {
@@ -1726,12 +1556,12 @@ ${UIkit.section('REPORT', '🕐')}
       if (args[0] === 'all') {
         pausedChats.delete('ALL');
         saveState();
-        await helpers.reply(from, `${UIkit.box('RESUMED', '▶️')}\n\nBot is active everywhere.`);
+        await helpers.reply(from, `${UI.box('RESUMED', '▶️')}\n\nBot is active everywhere.`);
         return;
       }
       pausedChats.delete(from);
       saveState();
-      await helpers.reply(from, `${UIkit.box('RESUMED', '▶️')}\n\nBot is active in this chat.`);
+      await helpers.reply(from, `${UI.box('RESUMED', '▶️')}\n\nBot is active in this chat.`);
     }
   },
   {
@@ -1743,7 +1573,7 @@ ${UIkit.section('REPORT', '🕐')}
       const g = pausedChats.has('ALL');
       const l = pausedChats.has(from);
       const status = g ? '🌍 Global pause ON' : l ? '⏸️ This chat paused' : '▶️ Active';
-      await helpers.reply(from, `${UIkit.box('PAUSE STATUS', '📋')}\n\n│ ${status}`);
+      await helpers.reply(from, `${UI.box('PAUSE STATUS', '📋')}\n\n│ ${status}`);
     }
   },
 
@@ -1761,11 +1591,11 @@ ${UIkit.section('REPORT', '🕐')}
       if (args[0] === 'on') {
         state.welcomeEnabled.add(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('WELCOME ON', '✅')}`);
+        await helpers.reply(from, `${UI.box('WELCOME ON', '✅')}`);
       } else if (args[0] === 'off') {
         state.welcomeEnabled.delete(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('WELCOME OFF', '❌')}`);
+        await helpers.reply(from, `${UI.box('WELCOME OFF', '❌')}`);
       } else {
         helpers.fail('Usage: .welcome on/off');
       }
@@ -1782,11 +1612,11 @@ ${UIkit.section('REPORT', '🕐')}
       if (args[0] === 'on') {
         state.goodbyeEnabled.add(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('GOODBYE ON', '✅')}`);
+        await helpers.reply(from, `${UI.box('GOODBYE ON', '✅')}`);
       } else if (args[0] === 'off') {
         state.goodbyeEnabled.delete(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('GOODBYE OFF', '❌')}`);
+        await helpers.reply(from, `${UI.box('GOODBYE OFF', '❌')}`);
       } else {
         helpers.fail('Usage: .goodbye on/off');
       }
@@ -1804,7 +1634,7 @@ ${UIkit.section('REPORT', '🕐')}
       if (!custom) helpers.fail('Usage: .setwelcome <text>  (@user, @group)');
       state.customWelcome[from] = custom;
       saveState();
-      await helpers.reply(from, `${UIkit.box('SAVED', '✅')}\n\nCustom welcome message set.`);
+      await helpers.reply(from, `${UI.box('SAVED', '✅')}\n\nCustom welcome message set.`);
     }
   },
   {
@@ -1818,13 +1648,13 @@ ${UIkit.section('REPORT', '🕐')}
       const mentions = meta.participants.map((p) => p.id);
       const msgText = args.join(' ') || '📢 Attention everyone!';
       const list = mentions.map((j) => `│ @${j.split('@')[0]}`).join('\n');
-      const txt = `${UIkit.pandaBanner('ANNOUNCEMENT')}
+      const txt = `${UI.box('ANNOUNCEMENT', '📢')}
 
 ${msgText}
 
-${UIkit.divider}
+━━━━━━━━━━━━━━━━━━━━━━━
 ${list}
-${UIkit.divider}`;
+╰━━━━━━━━━━━━━━━━━━━━╯`;
       await safeSend(from, { text: txt, mentions });
     }
   },
@@ -1855,7 +1685,7 @@ ${UIkit.divider}`;
         helpers.fail('❌ Cannot resolve any mentioned user — their LIDs are not in LID_MAP.');
       }
       await state.sock.groupParticipantsUpdate(from, resolved, 'remove');
-      await helpers.reply(from, `${UIkit.box('KICKED', '✅')}`);
+      await helpers.reply(from, `${UI.box('KICKED', '✅')}`);
     }
   },
   {
@@ -1872,7 +1702,7 @@ ${UIkit.divider}`;
         helpers.fail('❌ Cannot resolve mentioned user — add their LID to LID_MAP.');
       }
       await state.sock.groupParticipantsUpdate(from, resolved, 'promote');
-      await helpers.reply(from, `${UIkit.box('PROMOTED', '✅')}`);
+      await helpers.reply(from, `${UI.box('PROMOTED', '✅')}`);
     }
   },
   {
@@ -1889,7 +1719,7 @@ ${UIkit.divider}`;
         helpers.fail('❌ Cannot resolve mentioned user — add their LID to LID_MAP.');
       }
       await state.sock.groupParticipantsUpdate(from, resolved, 'demote');
-      await helpers.reply(from, `${UIkit.box('DEMOTED', '✅')}`);
+      await helpers.reply(from, `${UI.box('DEMOTED', '✅')}`);
     }
   },
   {
@@ -1926,135 +1756,19 @@ ${UIkit.divider}`;
         .filter((p) => p.admin)
         .map((p) => `│ +${p.id.split('@')[0]}`)
         .join('\n');
-      const txt = `${UIkit.pandaBanner('GROUP INFO')}
+      const txt = `${UI.box('GROUP INFO', '📋')}
 
-${UIkit.section('OVERVIEW', '📋')}
-${UIkit.row('Name', meta.subject)}
-${UIkit.row('ID', meta.id)}
-${UIkit.row('Members', meta.participants.length)}
-${UIkit.row('Admins', meta.participants.filter((p) => p.admin).length)}
-${UIkit.row('Created', new Date(meta.creation * 1000).toUTCString().split(',')[0])}
+│ Name    : ${meta.subject}
+│ ID      : ${meta.id}
+│ Members : ${meta.participants.length}
+│ Admins  : ${meta.participants.filter((p) => p.admin).length}
+│ Created : ${new Date(meta.creation * 1000).toUTCString().split(',')[0]}
 
-${UIkit.section('ADMINS', '👑')}
+━━━━━━━━━━━━━━━━━━━━━━━
+  👑  *ADMINS*
+━━━━━━━━━━━━━━━━━━━━━━━
 ${admins}`;
       await helpers.reply(from, txt);
-    }
-  },
-
-  // ========================================================================
-  // 🆕 GROUP BRANDING — .setgroup
-  // ========================================================================
-  {
-    name: '.setgroup',
-    aliases: ['.gset'],
-    admin: true,
-    category: 'group',
-    desc: 'Update group name / description / picture',
-    usage: '.setgroup name <text> | desc <text> | pic (reply to image) | info',
-    handler: async ({ msg, from, args }) => {
-      helpers.requireGroup(from);
-
-      const sub = (args[0] || '').toLowerCase();
-      const sock = state.sock;
-
-      // ---------- INFO ----------
-      if (!sub || sub === 'info') {
-        const meta = await sock.groupMetadata(from);
-        await helpers.replyWithBanner(
-          from,
-          `${UIkit.pandaBanner('GROUP BRANDING')}
-
-${UIkit.section('CURRENT', '📋')}
-${UIkit.row('Name', meta.subject)}
-${UIkit.row('Desc', (meta.desc || '—').slice(0, 40))}
-${UIkit.row('Members', meta.participants.length)}
-${UIkit.row('ID', meta.id)}
-
-${UIkit.section('COMMANDS', '🛠️')}
-${UIkit.row('.setgroup name', '<new name>')}
-${UIkit.row('.setgroup desc', '<new description>')}
-${UIkit.row('.setgroup pic', '(reply to image)')}
-${UIkit.row('.setgroup info', 'show this panel')}`
-        );
-        return;
-      }
-
-      // ---------- NAME ----------
-      if (sub === 'name') {
-        const newName = args.slice(1).join(' ').trim();
-        if (!newName) helpers.fail('❌ Usage: .setgroup name <new name>');
-        if (newName.length > 100) helpers.fail('❌ Name too long (max 100).');
-
-        await withTyping(from, async () => {
-          await sock.groupUpdateSubject(from, newName);
-          await helpers.reply(
-            from,
-            `${UIkit.box('NAME UPDATED', '🏷️')}
-
-${UIkit.section('NEW NAME', '✅')}
-${UIkit.row('Name', newName)}`
-          );
-        });
-        return;
-      }
-
-      // ---------- DESCRIPTION ----------
-      if (sub === 'desc' || sub === 'description') {
-        const newDesc = args.slice(1).join(' ').trim();
-        if (!newDesc) helpers.fail('❌ Usage: .setgroup desc <new description>');
-        if (newDesc.length > 512) helpers.fail('❌ Description too long (max 512).');
-
-        await withTyping(from, async () => {
-          await sock.groupUpdateDescription(from, newDesc);
-          await helpers.reply(
-            from,
-            `${UIkit.box('DESCRIPTION UPDATED', '📝')}
-
-${UIkit.section('NEW DESCRIPTION', '✅')}
-│ ${newDesc}`
-          );
-        });
-        return;
-      }
-
-      // ---------- PICTURE ----------
-      if (sub === 'pic' || sub === 'icon' || sub === 'photo') {
-        const quoted = helpers.quoted(msg);
-        const img = quoted?.imageMessage;
-        if (!img) {
-          helpers.fail(
-            '❌ Reply to an *image* with `.setgroup pic` to change the group icon.\n' +
-            '📌 Tip: square images look best (min 192×192).'
-          );
-        }
-
-        await withTyping(from, async () => {
-          const ctx = helpers.contextInfo(msg);
-          const fakeMsg = {
-            key: { remoteJid: from, id: ctx.stanzaId, fromMe: false },
-            message: { imageMessage: img }
-          };
-          const buf = await downloadMediaMessage(fakeMsg, 'buffer', {}, {
-            logger: pino({ level: 'silent' }),
-            reuploadRequest: sock.updateMediaMessage
-          });
-          await sock.updateProfilePicture(from, buf);
-          await helpers.reply(
-            from,
-            `${UIkit.box('PICTURE UPDATED', '🖼️')}
-
-${UIkit.section('STATUS', '✅')}
-${UIkit.row('Group', 'icon refreshed')}
-${UIkit.row('Size', `${(buf.length / 1024).toFixed(1)} KB`)}`
-          );
-        });
-        return;
-      }
-
-      helpers.fail(
-        `❌ Unknown sub-command *${sub}*.\n` +
-        `📖 Try: .setgroup name | desc | pic | info`
-      );
     }
   },
 
@@ -2074,12 +1788,12 @@ ${UIkit.row('Size', `${(buf.length / 1024).toFixed(1)} KB`)}`
         saveState();
         await helpers.reply(
           from,
-          `${UIkit.box('ANTILINK ON', '🛡️')}\n\n│ Action : ${state.antilinkAction.get(from) || 'delete'}`
+          `${UI.box('ANTILINK ON', '🛡️')}\n\n│ Action : ${state.antilinkAction.get(from) || 'delete'}`
         );
       } else if (sub === 'off') {
         state.antilinkGroups.delete(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('ANTILINK OFF', '🚫')}`);
+        await helpers.reply(from, `${UI.box('ANTILINK OFF', '🚫')}`);
       } else if (sub === 'action') {
         const a = args[1];
         if (!['delete', 'warn', 'kick'].includes(a)) {
@@ -2087,18 +1801,17 @@ ${UIkit.row('Size', `${(buf.length / 1024).toFixed(1)} KB`)}`
         }
         state.antilinkAction.set(from, a);
         saveState();
-        await helpers.reply(from, `${UIkit.box('ANTILINK ACTION', '⚙️')}\n\n│ ${a}`);
+        await helpers.reply(from, `${UI.box('ANTILINK ACTION', '⚙️')}\n\n│ ${a}`);
       } else {
         const enabled = state.antilinkGroups.has(from);
         await helpers.reply(
           from,
-          `${UIkit.pandaBanner('ANTILINK')}
+          `${UI.box('ANTILINK', '🛡️')}
 
-${UIkit.section('STATUS', '🛡️')}
-${UIkit.row('Enabled', enabled ? '✅ ON' : '❌ OFF')}
-${UIkit.row('Action', state.antilinkAction.get(from) || 'delete')}
+│ Status : ${enabled ? '✅ ON' : '❌ OFF'}
+│ Action : ${state.antilinkAction.get(from) || 'delete'}
 
-${UIkit.section('USAGE', '📖')}
+Usage:
 │ .antilink on|off
 │ .antilink action delete|warn|kick`
         );
@@ -2117,12 +1830,12 @@ ${UIkit.section('USAGE', '📖')}
         saveState();
         await helpers.reply(
           from,
-          `${UIkit.box('AUTO-CORRECT ON', '✍️')}\n\nBot will reply with corrections.`
+          `${UI.box('AUTO-CORRECT ON', '✍️')}\n\nBot will reply with corrections.`
         );
       } else if (args[0] === 'off') {
         state.autoCorrectEnabled.delete(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('AUTO-CORRECT OFF', '🚫')}`);
+        await helpers.reply(from, `${UI.box('AUTO-CORRECT OFF', '🚫')}`);
       } else {
         helpers.fail('Usage: .auto on|off');
       }
@@ -2142,29 +1855,28 @@ ${UIkit.section('USAGE', '📖')}
         saveState();
         await helpers.reply(
           from,
-          `${UIkit.box('ANTI-MENTION ON', '🛡️')}\n\nAction: ${state.antimentionAction.get(from) || 'warn'}`
+          `${UI.box('ANTI-MENTION ON', '🛡️')}\n\nAction: ${state.antimentionAction.get(from) || 'warn'}`
         );
       } else if (sub === 'off') {
         state.antimentionGroups.delete(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('ANTI-MENTION OFF', '🚫')}`);
+        await helpers.reply(from, `${UI.box('ANTI-MENTION OFF', '🚫')}`);
       } else if (sub === 'action') {
         const a = args[1];
         if (!['warn', 'kick'].includes(a)) helpers.fail('Usage: .antimention action warn|kick');
         state.antimentionAction.set(from, a);
         saveState();
-        await helpers.reply(from, `${UIkit.box('ANTI-MENTION ACTION', '⚙️')}\n\n${a}`);
+        await helpers.reply(from, `${UI.box('ANTI-MENTION ACTION', '⚙️')}\n\n${a}`);
       } else {
         const enabled = state.antimentionGroups.has(from);
         await helpers.reply(
           from,
-          `${UIkit.pandaBanner('ANTI-MENTION')}
+          `${UI.box('ANTI-MENTION', '🛡️')}
 
-${UIkit.section('STATUS', '🛡️')}
-${UIkit.row('Enabled', enabled ? '✅ ON' : '❌ OFF')}
-${UIkit.row('Action', state.antimentionAction.get(from) || 'warn')}
+│ Status : ${enabled ? '✅ ON' : '❌ OFF'}
+│ Action : ${state.antimentionAction.get(from) || 'warn'}
 
-${UIkit.section('USAGE', '📖')}
+Usage:
 │ .antimention on|off
 │ .antimention action warn|kick`
         );
@@ -2183,23 +1895,23 @@ ${UIkit.section('USAGE', '📖')}
         if (mode === 'global') {
           state.reactionsGlobal = true;
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS GLOBAL ON', '😄')}`);
+          await helpers.reply(from, `${UI.box('REACTIONS GLOBAL ON', '😄')}`);
         } else {
           state.reactionsEnabled.add(from);
           state.reactionsDisabled.delete(from);
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS ON HERE', '😄')}`);
+          await helpers.reply(from, `${UI.box('REACTIONS ON HERE', '😄')}`);
         }
       } else if (scope === 'off') {
         if (mode === 'global') {
           state.reactionsGlobal = false;
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS GLOBAL OFF', '🚫')}`);
+          await helpers.reply(from, `${UI.box('REACTIONS GLOBAL OFF', '🚫')}`);
         } else {
           state.reactionsDisabled.add(from);
           state.reactionsEnabled.delete(from);
           saveState();
-          await helpers.reply(from, `${UIkit.box('REACTIONS OFF HERE', '🚫')}`);
+          await helpers.reply(from, `${UI.box('REACTIONS OFF HERE', '🚫')}`);
         }
       } else {
         const local = state.reactionsEnabled.has(from)
@@ -2209,11 +1921,10 @@ ${UIkit.section('USAGE', '📖')}
           : 'inherit';
         await helpers.reply(
           from,
-          `${UIkit.pandaBanner('REACTIONS')}
+          `${UI.box('REACTIONS STATUS', '📋')}
 
-${UIkit.section('STATUS', '📋')}
-${UIkit.row('This chat', local)}
-${UIkit.row('Global', state.reactionsGlobal ? 'ON' : 'OFF')}
+│ This chat : ${local}
+│ Global    : ${state.reactionsGlobal ? 'ON' : 'OFF'}
 
 Usage: .reactions on|off [global]`
         );
@@ -2243,14 +1954,14 @@ Usage: .reactions on|off [global]`
             return `│ ${s.action.toUpperCase()} @ ${t} UTC (${s.repeat || 'once'})`;
           })
           .join('\n');
-        await helpers.reply(from, `${UIkit.pandaBanner('SCHEDULES')}\n\n${txt}`);
+        await helpers.reply(from, `${UI.box('SCHEDULES', '🕒')}\n\n${txt}`);
         return;
       }
 
       if (action === 'cancel') {
         state.schedules.delete(from);
         saveState();
-        await helpers.reply(from, `${UIkit.box('SCHEDULE CLEARED', '🗑️')}`);
+        await helpers.reply(from, `${UI.box('SCHEDULE CLEARED', '🗑️')}`);
         return;
       }
 
@@ -2283,12 +1994,7 @@ Usage: .reactions on|off [global]`
       const when = new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
       await helpers.reply(
         from,
-        `${UIkit.box('SCHEDULED', '🕒')}
-
-${UIkit.section('JOB', '📅')}
-${UIkit.row('Action', action.toUpperCase())}
-${UIkit.row('At', when)}
-${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
+        `${UI.box('SCHEDULED', '🕒')}\n\n│ Action : ${action.toUpperCase()}\n│ At     : ${when}\n│ Repeat : ${repeat === 'daily' ? 'daily' : 'once'}`
       );
     }
   },
@@ -2346,7 +2052,7 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       const groupWarns = state.warnings.get(from) || {};
       const list = groupWarns[target] || [];
       await safeSend(from, {
-        text: `${UIkit.box('WARNINGS', '📋')}\n\n@${target.split('@')[0]} has *${list.length}/3* warnings.\n\n${
+        text: `${UI.box('WARNINGS', '📋')}\n\n@${target.split('@')[0]} has *${list.length}/3* warnings.\n\n${
           list.map((r, i) => `${i + 1}. ${r}`).join('\n') || '—'
         }`,
         mentions: [target]
@@ -2387,16 +2093,13 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       if (args[0] === 'on') {
         state.viewOnceEnabled = true;
         saveState();
-        await helpers.reply(from, `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ✅ ON`);
+        await helpers.reply(from, `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ✅ ON`);
       } else if (args[0] === 'off') {
         state.viewOnceEnabled = false;
         saveState();
-        await helpers.reply(from, `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ❌ OFF`);
+        await helpers.reply(from, `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ❌ OFF`);
       } else {
-        await helpers.reply(
-          from,
-          `${UIkit.box('VO CAPTURE', '📸')}\n\n│ Status : ${state.viewOnceEnabled ? '✅ ON' : '❌ OFF'}\n\nUsage: .vo on|off`
-        );
+        await helpers.reply(from, `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ${state.viewOnceEnabled ? '✅ ON' : '❌ OFF'}\n\nUsage: .vo on|off`);
       }
     }
   },
@@ -2409,24 +2112,22 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       if (args[0] === 'on') {
         state.autoDownload = true;
         saveState();
-        await helpers.reply(from, `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ✅ ON`);
+        await helpers.reply(from, `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ✅ ON`);
       } else if (args[0] === 'off') {
         state.autoDownload = false;
         saveState();
-        await helpers.reply(from, `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ❌ OFF`);
+        await helpers.reply(from, `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ❌ OFF`);
       } else {
-        await helpers.reply(
-          from,
-          `${UIkit.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ${state.autoDownload ? '✅ ON' : '❌ OFF'}\n\nUsage: .autodl on|off`
-        );
+        await helpers.reply(from, `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ${state.autoDownload ? '✅ ON' : '❌ OFF'}\n\nUsage: .autodl on|off`);
       }
     }
   },
   {
+    // 🔧 FIX 18: fully rebuilt .poststatus
     name: '.poststatus',
     admin: true,
     category: 'special',
-    desc: 'Post the replied message to your WhatsApp status (auto-viewed + liked)',
+    desc: 'Post the replied message to your WhatsApp status',
     usage: '.poststatus (reply to a text / image / video)',
     handler: async ({ msg, from }) => {
       const quoted = helpers.quoted(msg);
@@ -2435,23 +2136,19 @@ ${UIkit.row('Repeat', repeat === 'daily' ? 'daily' : 'once')}`
       if (!quoted || !ctx) {
         await helpers.replyTyping(
           from,
-          `${UIkit.pandaBanner('POST STATUS')}
+          `${UI.box('POST STATUS', '📤')}
 
 Reply to a *text*, *image*, or *video* message with .poststatus to publish it to your WhatsApp status.
 
-${UIkit.section('SUPPORTED', '✅')}
-│ text
-│ image
-│ video
-
-${UIkit.section('AUTO-ENGAGE', '❤️')}
-│ 👁️  auto view after 3 minutes
-│ 👁️  auto view after 5 minutes
-│ ❤️  auto like after 5 minutes`
+Supported:
+│ ✅ text
+│ ✅ image
+│ ✅ video`
         );
         return;
       }
 
+      // Reconstruct the quoted message in the shape postToStatus expects.
       const sender =
         helpers.resolveJid(ctx.participant || '') ||
         ctx.participant ||
@@ -2472,13 +2169,7 @@ ${UIkit.section('AUTO-ENGAGE', '❤️')}
         if (ok) {
           await helpers.replyTyping(
             from,
-            `${UIkit.box('POSTED', '✅')}
-
-${UIkit.section('LIVE', '📡')}
-│ Visible on your status for 24h
-│ 👁️  view at +3 min
-│ 👁️  view at +5 min
-│ ❤️  like at +5 min`
+            `${UI.box('POSTED', '✅')}\n\nVisible on your status for the next 24 hours.`
           );
         } else {
           await helpers.replyTyping(
@@ -2495,7 +2186,7 @@ ${UIkit.section('LIVE', '📡')}
 ];
 
 // ============================================================================
-// BUILD LOOKUP TABLES
+// 🔧 FIX 15: BUILD LOOKUP TABLES — as a function, after engine.install
 // ============================================================================
 const COMMAND_LOOKUP = new Map();
 const ADMIN_TRIGGERS = new Set();
@@ -2515,14 +2206,19 @@ function buildLookup() {
   console.log(`[handlers] lookup built with ${COMMAND_LOOKUP.size} trigger(s)`);
 }
 
+// Build the initial lookup for core commands.
 buildLookup();
 
+// 🔧 FIX 15: install engine BEFORE rebuilding the lookup, so engine-pushed
+// commands (!topdf, !format, !add, !remove) end up in COMMAND_LOOKUP.
 try {
   engine.install({
     COMMANDS,
-    helpers
+    helpers,
+    // Give engine access to the same exports handlers.js exposes.
+    // (engine.js only reads COMMANDS and helpers at install time.)
   });
-  buildLookup();
+  buildLookup(); // rebuild so engine commands are reachable
 } catch (e) {
   console.error('[handlers] engine.install failed:', e.message);
 }
@@ -2543,40 +2239,50 @@ function buildMenu(uptimeMin) {
     special:    { emoji: '📸', title: 'SPECIAL' }
   };
 
-  const ORDER = ['general','media','fun','tools','admin','pause','group','moderation','special'];
+  const ORDER = ['general', 'media', 'fun', 'tools', 'admin', 'pause', 'group', 'moderation', 'special'];
 
   const byCat = {};
   for (const cmd of COMMANDS) {
     if (!cmd.category) continue;
-    (byCat[cmd.category] ||= []).push(cmd);
+    if (!byCat[cmd.category]) byCat[cmd.category] = [];
+    byCat[cmd.category].push(cmd);
   }
 
-  let menu = `${UIkit.pandaBanner('COMMAND CENTER')}
+  let menu = `${UI.box('COMMAND CENTER', '🤖')}
 
-${UIkit.section('BOT INFO', 'ℹ️')}
-${UIkit.row('Version', 'v1.0.0')}
-${UIkit.row('Prefix',  '.  or  !')}
-${UIkit.row('Uptime',  `${uptimeMin} min`)}
-${UIkit.row('Admin',   ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set')}
+╭───────────────────────╮
+│  *WhatsApp Bot*  •  v1
+│  Prefix: \`.\` or \`!\`
+│  Uptime: ${uptimeMin}m
+╰───────────────────────╯
 `;
 
   for (const cat of ORDER) {
     const meta = CATEGORY_META[cat];
     const cmds = byCat[cat];
-    if (!meta || !cmds?.length) continue;
+    if (!meta || !cmds || !cmds.length) continue;
 
-    menu += `\n${UIkit.section(meta.title, meta.emoji)}\n`;
+    menu += `\n┌─ ${meta.emoji} *${meta.title}* ─────────\n`;
     for (const c of cmds) {
-      menu += `│ ${c.name.padEnd(16, ' ')} ${c.desc || ''}\n`;
+      const name = c.name.padEnd(16, ' ');
+      menu += `│ ${name} ${c.desc || ''}\n`;
     }
+    menu += `└───────────────────────\n`;
   }
 
-  menu += `\n${UIkit.divider}\n  🐼  _PANDA • powered by Fanuels DX_`;
+  menu += `
+╭───────────────────────╮
+│ Admin  : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'not set'}
+│ Uptime : ${uptimeMin} min
+│ Prefix : . or !
+╰───────────────────────╯
+  _Powered by Fanuels DX_`;
+
   return menu;
 }
 
 // ============================================================================
-// COMMAND ROUTER
+// 🔧 FIX 16: COMMAND ROUTER — accepts '.' and '!' prefixes via engine
 // ============================================================================
 async function handleCommand(msg, from, senderJid, rawText) {
   const sockInstance = state.sock;
@@ -2589,7 +2295,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
   if (!engine.isCommand(text)) return;
 
   const parts = text.split(' ');
-  const base = parts[0].toLowerCase();
+  const base = parts[0].toLowerCase();       // e.g. '.help' or '!help'
   const args = parts.slice(1);
 
   const admin = isAdmin(senderJid);
@@ -2597,10 +2303,11 @@ async function handleCommand(msg, from, senderJid, rawText) {
 
   const command = COMMAND_LOOKUP.get(base);
   if (!command) {
+    // Only nag for '.'-prefixed unknown commands to avoid spamming on '!foo' typos.
     if (base.startsWith('.')) {
       await withTyping(from, () =>
         safeSend(from, {
-          text: `${UIkit.box('UNKNOWN', '❓')}\n\nCommand *${base}* not found.\nType *.help* to see the menu.`
+          text: `${UI.box('UNKNOWN', '❓')}\n\nCommand *${base}* not found.\nType *.help* to see the menu.`
         })
       );
     }
@@ -2637,9 +2344,6 @@ async function handleCommand(msg, from, senderJid, rawText) {
   }
 }
 
-// ============================================================================
-// EXPORTS
-// ============================================================================
 module.exports = {
   tryCaptureViewOnce,
   postToStatus,
@@ -2651,10 +2355,5 @@ module.exports = {
   COMMANDS,
   preCommandHooks,
   renderTextSticker,
-  buildLookup,
-  // 🔥 expose status-engagement internals for testing / external triggers
-  scheduleStatusEngagement,
-  cancelStatusEngagement,
-  viewStatus,
-  likeStatus
+  buildLookup,   // exposed so engine can trigger a rebuild if needed
 };
