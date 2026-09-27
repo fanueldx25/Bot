@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><title>Login</title>
+<style>
+body{font-family:system-ui;background:#0b0f17;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}
+form{background:#111827;padding:2rem;border-radius:12px;width:320px}
+input{width:100%;padding:.7rem;margin:.4rem 0;border-radius:8px;border:1px solid #2d3748;background:#0f172a;color:#fff}
+button{width:100%;padding:.7rem;background:#2563eb;color:#fff;border:0;border-radius:8px;cursor:pointer}
+.error{color:#f87171;font-size:.9rem}
+</style></head>
+<body>
+<form method="POST" action="/login">
+  <h2>🛡️ Bot Dashboard</h2>
+  <% if (error) { %><p class="error"><%= error %></p><% } %>
+  <input name="username" placeholder="Username" required />
+  <input name="password" type="password" placeholder="Password" required />
+  <button>Sign in</button>
+</form>
+</body></html>

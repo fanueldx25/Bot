@@ -1,0 +1,67 @@
+<!doctype html>
+<html><head><title>Dashboard</title>
+<style>
+body{font-family:system-ui;background:#0b0f17;color:#e6edf3;margin:0;padding:2rem}
+.card{background:#111827;padding:1.2rem;border-radius:12px;margin-bottom:1rem}
+.pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;font-size:.8rem;background:#1f2937;margin-right:.3rem}
+.on{background:#065f46;color:#a7f3d0}.off{background:#7f1d1d;color:#fecaca}
+input,button{padding:.6rem;border-radius:8px;border:1px solid #2d3748;background:#0f172a;color:#fff}
+button{background:#2563eb;border:0;cursor:pointer}
+pre{background:#0f172a;padding:1rem;border-radius:8px;overflow:auto;max-height:300px}
+</style></head>
+<body>
+  <h1>🤖 <%= botName %> Dashboard</h1>
+  <div class="card">
+    <span class="pill <%= connected ? 'on' : 'off' %>"><%= connected ? 'Connected' : 'Disconnected' %></span>
+    <span class="pill">User: <%= user || '—' %></span>
+    <span class="pill">Uptime: <%= uptime %>s</span>
+    <span class="pill">Commands: <%= commandCount %></span>
+    <span class="pill">Prefix: <%= prefixes %></span>
+  </div>
+
+  <div class="card">
+    <h3>📲 Pair a Number</h3>
+    <form id="pairForm">
+      <input id="phone" placeholder="237651858408" required />
+      <button>Request pairing code</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>⚙️ Actions</h3>
+    <button onclick="api('/api/restart')">Restart bot</button>
+    <button onclick="api('/api/logout')">Logout session</button>
+  </div>
+
+  <div class="card">
+    <h3>📡 Live Feed</h3>
+    <pre id="log">Waiting…</pre>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const log = (m) => document.getElementById('log').textContent += '\n' + m;
+    const io = io();
+    io.on('state', s => log('State: ' + JSON.stringify(s)));
+    io.on('pairing', p => log(p.code ? '🔐 PAIRING CODE: ' + p.code : '⚠️ ' + p.error));
+    io.on('open', i => log('✅ Connected: ' + JSON.stringify(i)));
+    io.on('close', i => log('❌ Closed: ' + JSON.stringify(i)));
+
+    document.getElementById('pairForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const phone = document.getElementById('phone').value.trim();
+      log('Requesting pairing for ' + phone);
+      const r = await fetch('/api/pair', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ phone }),
+      });
+      log('Server: ' + JSON.stringify(await r.json()));
+    });
+
+    async function api(path) {
+      const r = await fetch(path, { method: 'POST' });
+      log(path + ' → ' + JSON.stringify(await r.json()));
+    }
+  </script>
+</body></html>
