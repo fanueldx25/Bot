@@ -38,6 +38,34 @@ const schedules = new Map();
 // ---------- Extra admins ----------
 const extraAdmins = new Set();
 
+// ============================================================================
+// LID → PN MAPPING
+// (WhatsApp sends @lid identifiers; we map them to real phone numbers)
+// ============================================================================
+const lidToPn = new Map();
+
+// 🔧 TEMPORARY MANUAL MAPPING
+// Remove this line once Baileys 6.7.18+ auto-resolves LIDs for your account
+lidToPn.set('219683986915532', '237678899829');
+
+function registerLidMapping(lidJid, pnJid) {
+  if (!lidJid || !pnJid) return;
+  const lidNum = String(lidJid).split('@')[0].split(':')[0];
+  const pnNum = String(pnJid).split('@')[0].split(':')[0];
+  if (!lidNum || !pnNum) return;
+  if (lidNum === pnNum) return;
+  if (!/^\d{7,15}$/.test(lidNum) || !/^\d{7,15}$/.test(pnNum)) return;
+  if (lidToPn.get(lidNum) === pnNum) return; // already mapped
+  lidToPn.set(lidNum, pnNum);
+  console.log(`[LID] mapped ${lidNum} → ${pnNum}`);
+  saveState();
+}
+
+function resolveLid(num) {
+  const clean = String(num || '').split('@')[0].split(':')[0];
+  return lidToPn.get(clean) || null;
+}
+
 // ---------- Admin number (digits only) ----------
 const ADMIN_NUMBER = (process.env.ADMIN_NUMBER || '').replace(/\D/g, '');
 
@@ -61,7 +89,8 @@ function saveState() {
       antilinkGroups: [...antilinkGroups],
       antilinkAction: Object.fromEntries(antilinkAction),
       schedules: Object.fromEntries(schedules),
-      extraAdmins: [...extraAdmins]
+      extraAdmins: [...extraAdmins],
+      lidMappings: Object.fromEntries(lidToPn)
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
@@ -91,6 +120,7 @@ function loadState() {
     Object.entries(data.antilinkAction || {}).forEach(([k, v]) => antilinkAction.set(k, v));
     Object.entries(data.schedules || {}).forEach(([k, v]) => schedules.set(k, v));
     (data.extraAdmins || []).forEach((x) => extraAdmins.add(x));
+    Object.entries(data.lidMappings || {}).forEach(([k, v]) => lidToPn.set(k, v));
     
     console.log('[State] loaded from disk');
   } catch (e) {
@@ -126,13 +156,26 @@ function isAdmin(jid) {
   const num = String(jid).split('@')[0].split(':')[0];
   if (!num) return false;
   
+  // 1. exact match
   if (ADMIN_NUMBER && num === ADMIN_NUMBER) return true;
   
+  // 2. last-10-digit fallback
   if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 && num.length >= 10) {
     if (num.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
   }
   
+  // 3. LID → PN mapping
+  const pn = lidToPn.get(num);
+  if (pn) {
+    if (pn === ADMIN_NUMBER) return true;
+    if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 && pn.length >= 10) {
+      if (pn.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
+    }
+  }
+  
+  // 4. extra admins
   if (extraAdmins.has(num)) return true;
+  if (pn && extraAdmins.has(pn)) return true;
   
   return false;
 }
@@ -211,6 +254,7 @@ module.exports = {
   antilinkAction,
   schedules,
   extraAdmins,
+  lidToPn,
   
   get sock() { return sock; },
   set sock(v) { sock = v; },
@@ -243,5 +287,9 @@ module.exports = {
   emit,
   setState,
   generateSessionCode,
-  verifySessionCode
+  verifySessionCode,
+  
+  // LID helpers
+  registerLidMapping,
+  resolveLid
 };

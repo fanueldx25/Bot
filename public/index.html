@@ -193,6 +193,35 @@
       </div>
       <div class="text-[12px] text-wa-muted text-center">Rotates every 60s. Use this to reconnect without re-pairing.</div>
     </div>
+    <!-- Session backup panel -->
+<div id="sessionBackupPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
+  <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">💾 Session Backup</div>
+
+  <div class="text-[12.5px] text-wa-muted mb-3 leading-snug">
+    Save this file and upload it after a redeploy to reconnect without pairing again.
+  </div>
+
+  <!-- Status line -->
+  <div id="sessionStatus" class="text-[12px] text-wa-muted mb-3">
+    Checking session status…
+  </div>
+
+  <!-- Download button -->
+  <button id="downloadSessionBtn"
+    class="w-full py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] transition hover:from-[#0ee2a8] hover:to-wa-green active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
+    ⬇ Download Session File
+  </button>
+
+  <!-- Upload form -->
+  <input type="file" id="uploadSessionInput" accept="application/json,.json" class="hidden" />
+  <button id="uploadSessionBtn"
+    class="w-full mt-2 py-2.5 rounded-[10px] text-[13px] font-semibold cursor-pointer bg-wa-panel text-wa-text border border-wa-border transition hover:bg-[#2a3942] active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed">
+    ⬆ Upload Session File
+  </button>
+
+  <!-- Progress / result -->
+  <div id="sessionProgress" class="hidden text-[12px] text-wa-muted mt-2.5 leading-snug"></div>
+</div>
 
     <!-- Error panel -->
     <div id="errorPanel" class="panel hidden mt-4 p-4 rounded-[14px] border animate-slidein"
@@ -383,6 +412,141 @@ function renderState(data) {
     disconnectBtn.classList.add('hidden');
   }
 }
+// ============================================================================
+// SESSION BACKUP / RESTORE
+// ============================================================================
+const sessionBackupPanel = $('sessionBackupPanel');
+const sessionStatus = $('sessionStatus');
+const downloadSessionBtn = $('downloadSessionBtn');
+const uploadSessionBtn = $('uploadSessionBtn');
+const uploadSessionInput = $('uploadSessionInput');
+const sessionProgress = $('sessionProgress');
+
+async function refreshSessionStatus() {
+try {
+const r = await fetch('/api/session/status');
+if (r.status === 401) return;
+const d = await r.json();
+if (!d.ok) return;
+
+// Show panel always
+sessionBackupPanel.classList.remove('hidden');
+
+if (d.hasSession) {
+sessionStatus.innerHTML = `✅ Session on disk: <b class="text-wa-text">${d.number ? '+' + d.number : 'unknown'}</b> · ${d.state}`;
+downloadSessionBtn.disabled = false;
+} else {
+sessionStatus.innerHTML = `⚠️ No session on disk. Pair first, then download.`;
+downloadSessionBtn.disabled = true;
+}
+} catch {}
+}
+
+async function downloadSession() {
+downloadSessionBtn.disabled = true;
+sessionProgress.classList.remove('hidden');
+sessionProgress.textContent = 'Preparing download…';
+
+try {
+const r = await fetch('/api/session/download');
+if (r.status === 401) { showLogin(); return; }
+
+if (!r.ok) {
+const err = await r.json().catch(() => ({ error: 'Download failed' }));
+sessionProgress.textContent = '❌ ' + (err.error || 'Download failed');
+downloadSessionBtn.disabled = false;
+return;
+}
+
+// Get filename from Content-Disposition header
+const cd = r.headers.get('Content-Disposition') || '';
+const match = cd.match(/filename="([^"]+)"/);
+const filename = match ? match[1] : `wa-session-${Date.now()}.json`;
+
+const blob = await r.blob();
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = filename;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
+
+sessionProgress.textContent = `✅ Downloaded ${filename} — save this file somewhere safe!`;
+toast('Session downloaded', 'ok');
+} catch (e) {
+sessionProgress.textContent = '❌ ' + e.message;
+} finally {
+downloadSessionBtn.disabled = false;
+}
+}
+
+async function uploadSession(file) {
+if (!file) return;
+
+if (!file.name.endsWith('.json')) {
+toast('Please select a .json session file', 'err');
+return;
+}
+
+if (file.size > 2 * 1024 * 1024) {
+toast('File too large (max 2MB)', 'err');
+return;
+}
+
+sessionProgress.classList.remove('hidden');
+sessionProgress.textContent = `Reading ${file.name}…`;
+uploadSessionBtn.disabled = true;
+
+try {
+const text = await file.text();
+const parsed = JSON.parse(text);
+
+if (!parsed || typeof parsed !== 'object') {
+throw new Error('Invalid session file.');
+}
+
+sessionProgress.textContent = 'Uploading session…';
+
+const r = await fetch('/api/session/upload', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify(parsed)
+});
+
+if (r.status === 401) { showLogin(); return; }
+
+const d = await r.json();
+
+if (!d.ok) {
+sessionProgress.textContent = '❌ ' + (d.error || 'Upload failed');
+toast(d.error || 'Upload failed', 'err');
+return;
+}
+
+sessionProgress.textContent = `✅ Session restored (${d.written} file${d.written === 1 ? '' : 's'}). Bot is restarting…`;
+toast('Session restored — reconnecting…', 'ok');
+} catch (e) {
+sessionProgress.textContent = '❌ ' + e.message;
+toast('Upload failed: ' + e.message, 'err');
+} finally {
+uploadSessionBtn.disabled = false;
+uploadSessionInput.value = '';
+}
+}
+
+downloadSessionBtn?.addEventListener('click', downloadSession);
+uploadSessionBtn?.addEventListener('click', () => uploadSessionInput.click());
+uploadSessionInput?.addEventListener('change', (e) => {
+const file = e.target.files?.[0];
+if (file) uploadSession(file);
+});
+
+// Refresh when we enter the app
+setInterval(() => {
+if (!app.classList.contains('hidden')) refreshSessionStatus();
+}, 15000);
 
 // ============================================================================
 // AUTH GATE

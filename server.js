@@ -160,6 +160,96 @@ app.get('/api/commands', requireAuth, (req, res) => {
   res.json(collection.all());
 });
 
+
+// ============================================================================
+// SESSION BACKUP / RESTORE
+// ============================================================================
+
+// Check if a session exists
+app.get('/api/session/status', requireAuth, (req, res) => {
+  res.json({
+    ok: true,
+    hasSession: connection.hasStoredSession(),
+    number: state.currentNumber || null,
+    jid: state.botJid || null,
+    state: state.connectionState
+  });
+});
+
+// Download the current session as a JSON file
+app.get('/api/session/download', requireAuth, (req, res) => {
+  const result = connection.exportSession();
+  if (!result.ok) {
+    return res.status(400).json({ ok: false, error: result.error });
+  }
+  
+  // Return as a downloadable JSON file
+  const file = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    number: state.currentNumber,
+    jid: state.botJid,
+    payload: result.payload
+  };
+  
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${result.filename}"`
+  );
+  res.send(JSON.stringify(file, null, 2));
+});
+
+// Upload a session file (JSON body with payload or files)
+app.post('/api/session/upload', requireAuth, async (req, res) => {
+  try {
+    // Accept either { payload: "base64..." } or a full JSON body
+    const raw = JSON.stringify(req.body);
+    const result = connection.importSession(raw);
+    
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.error });
+    }
+    
+    // Restart the bot to pick up the restored session
+    setTimeout(() => {
+      try {
+        connection.stopBot();
+        setTimeout(() => {
+          connection.startBot(result.number || state.currentNumber);
+        }, 1500);
+      } catch (e) {
+        console.error('[Session] restart error:', e.message);
+      }
+    }, 1000);
+    
+    res.json({
+      ok: true,
+      written: result.written,
+      number: result.number,
+      message: 'Session imported. Bot is restarting...'
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Delete the current session (logout from disk)
+app.post('/api/session/delete', requireAuth, (req, res) => {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
+    if (fs.existsSync(AUTH_DIR)) {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    }
+    connection.stopBot();
+    res.json({ ok: true, message: 'Session deleted.' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ============================================================================
 // SOCKET.IO WITH AUTH
 // ============================================================================

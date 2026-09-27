@@ -20,7 +20,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.9",
+    "@whiskeysockets/baileys": "^6.7.18",
     "express": "^4.21.2",
     "pino": "^9.5.0",
     "qrcode-terminal": "^0.12.0",
