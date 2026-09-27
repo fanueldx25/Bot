@@ -1,9 +1,9 @@
 // ============================================================================
 // state.js — shared mutable state (prevents circular imports)
 // ============================================================================
-// This module owns all cross-cutting state: sets/maps for feature toggles,
-// the live Baileys socket reference, and the Socket.IO handle. Both server.js
-// and connection.js require it, so it must NOT require either of them back.
+// Owns all cross-cutting state: feature toggles, the live socket ref, the
+// Socket.IO handle, and the LID → PN mapping. Both server.js and
+// connection.js require this, so it must NOT require either of them back.
 // ============================================================================
 
 const fs = require('fs');
@@ -18,7 +18,7 @@ const welcomeEnabled = new Set();
 const goodbyeEnabled = new Set();
 const customWelcome = {};
 
-// Live runtime refs — the single source of truth for "which socket is alive".
+// Live runtime refs
 let sock = null;
 let botJid = null;
 let currentNumber = null;
@@ -42,7 +42,7 @@ const antilinkAction = new Map();
 // Schedules
 const schedules = new Map();
 
-// Extra admins (JIDs without @server)
+// Extra admins (JIDs without @server, digits only)
 const extraAdmins = new Set();
 
 // Warnings
@@ -60,19 +60,64 @@ const antimentionWarnings = new Map();  // groupJid → { userJid: [reason, ...]
 // ============================================================================
 // LID → PN MAPPING
 // ============================================================================
-// WhatsApp now hands out @lid JIDs (linked-device identifiers) for many
-// senders instead of @s.whatsapp.net phone-number JIDs. We keep a map so
-// we can translate an @lid back to a real number when we need to check
-// admin status, mention someone, etc.
+// WhatsApp now hands out @lid (linked-device identifier) JIDs for many
+// senders instead of phone-number JIDs. Replying to an unmapped @lid silently
+// fails (typing shows, message never arrives) and admin checks can't match.
 //
-// 🔧 NOTE: remove the hardcoded seed below once you no longer need it.
-//    It was there to work around an old Baileys bug. If it's still here,
-//    it will get persisted into bot_state.json on every save — you'd need
-//    to remove the "lidMappings" entry too, or it comes back on next boot.
+// We keep a map from LID digits → phone digits, populated from three sources:
+//   1. LID_MAP env var at boot  (authoritative, survives redeploys)
+//   2. EXTRA_ADMINS env var     (admins get mapped to themselves)
+//   3. automatic learning when Baileys shows us both JIDs in one message
+//      (this is the fallback; it only fires in groups)
 // ============================================================================
 const lidToPn = new Map();
-lidToPn.set('219683986915532', '237678899829');  // 🔧 TODO: remove when not needed
 
+// 🔧 Parse LID_MAP env var. Format: "lid:phone,lid:phone,..."
+// Example: LID_MAP=232057586356242:237651858408,219683986915532:237678899829
+(function loadLidMapFromEnv() {
+  const raw = (process.env.LID_MAP || '').trim();
+  if (!raw) {
+    console.log('[LID] LID_MAP env not set — using only learned mappings');
+    return;
+  }
+  let count = 0;
+  for (const pair of raw.split(',')) {
+    const [lid, pn] = pair.split(':').map((s) => (s || '').trim());
+    const lidDigits = (lid || '').replace(/\D/g, '');
+    const pnDigits = (pn || '').replace(/\D/g, '');
+    if (!lidDigits || !pnDigits) continue;
+    lidToPn.set(lidDigits, pnDigits);
+    count++;
+  }
+  console.log(`[LID] loaded ${count} mapping(s) from LID_MAP env`);
+})();
+
+// ---------------------------------------------------------------------------
+// Admin numbers
+// ---------------------------------------------------------------------------
+// ADMIN_NUMBER = the primary admin (env: ADMIN_NUMBER)
+// extraAdmins  = additional admins (env: EXTRA_ADMINS + learned at runtime
+//                via .addadmin)
+// ---------------------------------------------------------------------------
+const ADMIN_NUMBER = (process.env.ADMIN_NUMBER || '').replace(/\D/g, '');
+
+(function loadExtraAdminsFromEnv() {
+  const raw = (process.env.EXTRA_ADMINS || '').trim();
+  if (!raw) return;
+  let count = 0;
+  for (const n of raw.split(',')) {
+    const digits = (n || '').replace(/\D/g, '');
+    if (digits) {
+      extraAdmins.add(digits);
+      count++;
+    }
+  }
+  if (count) console.log(`[Admins] loaded ${count} extra admin(s) from env`);
+})();
+
+// ---------------------------------------------------------------------------
+// LID helpers
+// ---------------------------------------------------------------------------
 function registerLidMapping(lidJid, pnJid) {
   if (!lidJid || !pnJid) return;
   const lidNum = String(lidJid).split('@')[0].split(':')[0];
@@ -90,11 +135,6 @@ function resolveLid(num) {
   const clean = String(num || '').split('@')[0].split(':')[0];
   return lidToPn.get(clean) || null;
 }
-
-// ---------------------------------------------------------------------------
-// Admin number (digits only)
-// ---------------------------------------------------------------------------
-const ADMIN_NUMBER = (process.env.ADMIN_NUMBER || '').replace(/\D/g, '');
 
 // ============================================================================
 // PERSISTENCE
@@ -161,7 +201,11 @@ function loadState() {
 
     (data.extraAdmins || []).forEach((x) => extraAdmins.add(x));
 
-    Object.entries(data.lidMappings || {}).forEach(([k, v]) => lidToPn.set(k, v));
+    // Learned LID mappings merge with env-loaded ones.
+    // Env wins if there's a conflict (already set from LID_MAP).
+    Object.entries(data.lidMappings || {}).forEach(([k, v]) => {
+      if (!lidToPn.has(k)) lidToPn.set(k, v);
+    });
 
     Object.entries(data.warnings || {}).forEach(([g, users]) => {
       warnings.set(g, users || {});
@@ -176,7 +220,9 @@ function loadState() {
       antimentionWarnings.set(g, users || {});
     });
 
-    console.log('[State] loaded from disk');
+    console.log(
+      `[State] loaded from disk (${lidToPn.size} LID mappings, ${extraAdmins.size} extra admins)`
+    );
   } catch (e) {
     console.error('[State] load failed:', e.message);
   }
@@ -189,18 +235,6 @@ function emit(event, data) {
   if (io) io.emit(event, data);
 }
 
-// ---------------------------------------------------------------------------
-// setState — the ONLY way connection state should be changed.
-// ---------------------------------------------------------------------------
-// 🔧 FIX: guard against null/undefined state. In the old code a stray
-// setState(undefined) would set connectionState = undefined and confuse
-// the dashboard.
-//
-// 🔧 FIX: dedupe repeated identical transitions. During reconnect storms
-// you can get 'disconnected' → 'disconnected' → 'disconnected' in quick
-// succession. The dashboard re-renders on each one and looks like a
-// flicker. Emitting only on change (unless there's extra payload data)
-// smooths that out.
 function setState(newState, extra = {}) {
   if (!newState) return;
 
@@ -209,8 +243,7 @@ function setState(newState, extra = {}) {
 
   connectionState = newState;
 
-  // Always emit if there's extra info (e.g. pairing code, error message).
-  // Skip the emit only when it's a no-op transition with no payload.
+  // Always emit if there's extra info; skip no-op transitions.
   if (!same || hasExtra) {
     emit('state', { state: newState, ...extra });
   }
@@ -227,8 +260,8 @@ const UI = {
 // ============================================================================
 // ADMIN CHECK
 // ============================================================================
-// Matches on full number OR last-10-digits (handles country-code prefix
-// variations like 237... vs 00237... vs 0...).
+// Matches on full digits OR last 10 digits (handles country-code variations).
+// Also resolves via the LID map so users whose JID is @lid still work.
 function isAdmin(jid) {
   if (!jid) return false;
   const num = String(jid).split('@')[0].split(':')[0];
@@ -257,8 +290,6 @@ function isAdmin(jid) {
 // ============================================================================
 // PRESENCE WRAPPERS
 // ============================================================================
-// These are safe to call in both groups and DMs. sendPresenceUpdate to a
-// DM JID works fine; if it doesn't, we swallow the error and run fn anyway.
 async function withTyping(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('composing', jid);
@@ -298,8 +329,8 @@ async function sendWithBanner(jid, text) {
 // ============================================================================
 // SESSION CODES (HMAC-based, time-windowed)
 // ============================================================================
-// NOTE: this is a UI-level code. It has nothing to do with WhatsApp pairing.
-// Don't confuse it with `pairingCode`, which comes from Baileys.
+// UI-level code, unrelated to WhatsApp pairing. Don't confuse with
+// `pairingCode`, which comes from Baileys.
 function generateSessionCodeForSlot(slot) {
   const secret = process.env.SESSION_SECRET || 'default-session-secret';
   return crypto
@@ -350,7 +381,7 @@ module.exports = {
   antimentionAction,
   antimentionWarnings,
 
-  // getters/setters for primitives (can't export `let` bindings directly)
+  // getters/setters for primitives
   get sock() { return sock; },
   set sock(v) { sock = v; },
   get botJid() { return botJid; },
