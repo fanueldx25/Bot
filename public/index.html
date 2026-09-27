@@ -4,602 +4,243 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 <title>WhatsApp Bot · Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          wa: {
+            bg: '#0b141a',
+            panel: '#111b21',
+            panel2: '#202c33',
+            border: '#2a3942',
+            text: '#e9edef',
+            muted: '#8696a0',
+            green: '#00a884',
+            green2: '#06cf9c',
+            red: '#f15c6d',
+            yellow: '#f0b232',
+            blue: '#53bdeb'
+          }
+        },
+        keyframes: {
+          pulseRing: {
+            '0%': { boxShadow: '0 0 0 0 currentColor' },
+            '70%': { boxShadow: '0 0 0 8px rgba(0,0,0,0)' },
+            '100%': { boxShadow: '0 0 0 0 rgba(0,0,0,0)' }
+          },
+          blink: {
+            '0%,100%': { opacity: '1' },
+            '50%': { opacity: '0.35' }
+          },
+          slidein: {
+            from: { opacity: '0', transform: 'translateY(6px)' },
+            to: { opacity: '1', transform: 'translateY(0)' }
+          },
+          spin: {
+            to: { transform: 'rotate(360deg)' }
+          },
+          indeterminate: {
+            '0%': { marginLeft: '-30%' },
+            '100%': { marginLeft: '100%' }
+          }
+        },
+        animation: {
+          pulseRing: 'pulseRing 1.2s infinite',
+          blink: 'blink 1s infinite',
+          slidein: 'slidein 0.25s ease',
+          spin: 'spin 0.7s linear infinite',
+          indeterminate: 'indeterminate 1.4s infinite ease-in-out'
+        }
+      }
+    }
+  };
+</script>
 <style>
-  :root {
-    --bg: #0b141a;
-    --panel: #111b21;
-    --panel-2: #202c33;
-    --border: #2a3942;
-    --text: #e9edef;
-    --muted: #8696a0;
-    --green: #00a884;
-    --green-2: #06cf9c;
-    --red: #f15c6d;
-    --yellow: #f0b232;
-    --blue: #53bdeb;
-    --radius: 14px;
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-
   html, body {
-    background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, var(--bg) 60%);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 18px;
-    font-size: 15px;
-    line-height: 1.5;
+    background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, #0b141a 60%);
   }
-
-  /* ---------- LOGIN SCREEN ---------- */
-  #loginScreen {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, var(--bg) 60%);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  #loginScreen.show { display: flex; }
-
-  .login-card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    padding: 28px 22px;
-    width: 100%;
-    max-width: 380px;
-    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.7);
-    animation: slidein 0.3s ease;
-  }
-
-  .login-head {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 22px;
-  }
-
-  .login-logo {
-    width: 46px;
-    height: 46px;
-    border-radius: 13px;
-    background: linear-gradient(135deg, #00a884, #017d63);
-    display: grid;
-    place-items: center;
-    font-size: 24px;
-    box-shadow: 0 8px 24px -6px rgba(0,168,132,0.6);
-    flex-shrink: 0;
-  }
-
-  .login-title {
-    font-size: 17px;
-    font-weight: 600;
-    letter-spacing: -0.2px;
-  }
-  .login-sub {
-    font-size: 12.5px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-
-  .login-input {
-    width: 100%;
-    padding: 13px 14px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: var(--panel-2);
-    color: var(--text);
-    font-size: 15px;
-    outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .login-input:focus {
-    border-color: var(--green);
-    box-shadow: 0 0 0 3px rgba(0,168,132,0.15);
-  }
-
-  .login-btn {
-    width: 100%;
-    margin-top: 14px;
-    padding: 14px;
-    border: none;
-    border-radius: 12px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    background: linear-gradient(180deg, var(--green-2), var(--green));
-    color: #06231c;
-    box-shadow: 0 10px 25px -10px rgba(0,168,132,0.8);
-    transition: transform 0.08s, background 0.2s;
-  }
-  .login-btn:active { transform: scale(0.985); }
-  .login-btn:disabled {
-    background: var(--panel-2);
-    color: var(--muted);
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-
-  .login-error {
-    color: var(--red);
-    font-size: 13px;
-    margin-top: 10px;
-    display: none;
-  }
-  .login-error.show { display: block; }
-
-  /* ---------- MAIN DASHBOARD ---------- */
-  .wrap {
-    width: 100%;
-    max-width: 440px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    padding: 26px 22px 22px;
-    box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255,255,255,0.02) inset;
-    position: relative;
-    overflow: hidden;
-  }
-  .wrap::before {
-    content: "";
-    position: absolute;
-    inset: -2px;
-    background: linear-gradient(135deg, rgba(0,168,132,0.15), transparent 40%, transparent 60%, rgba(83,189,235,0.12));
-    z-index: 0;
-    pointer-events: none;
-  }
-  .wrap > * { position: relative; z-index: 1; }
-
-  .header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 4px;
-  }
-
-  .logo {
-    width: 46px;
-    height: 46px;
-    border-radius: 13px;
-    background: linear-gradient(135deg, #00a884, #017d63);
-    display: grid;
-    place-items: center;
-    font-size: 24px;
-    box-shadow: 0 8px 24px -6px rgba(0,168,132,0.6);
-    flex-shrink: 0;
-  }
-
-  h1 {
-    font-size: 18px;
-    font-weight: 600;
-    letter-spacing: -0.2px;
-  }
-  .sub {
-    font-size: 12.5px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-
-  .logout-btn {
-    margin-left: auto;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    width: auto;
-    padding: 6px 10px;
-    border-radius: 9px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  .logout-btn:hover { background: var(--panel-2); color: var(--text); }
-
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin: 18px 0 20px;
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    font-size: 12.5px;
-    color: var(--muted);
-  }
-
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--muted);
-    box-shadow: 0 0 0 0 currentColor;
-  }
-  .dot.disconnected { background: var(--red); }
-  .dot.connecting { background: var(--yellow); animation: pulse 1.2s infinite; }
-  .dot.code_ready { background: var(--blue); animation: pulse 1.4s infinite; }
-  .dot.connected { background: var(--green); }
-  .dot.error { background: var(--red); animation: blink 1s infinite; }
-
-  @keyframes pulse {
-    0% { box-shadow: 0 0 0 0 currentColor; }
-    70% { box-shadow: 0 0 0 8px rgba(0,0,0,0); }
-    100% { box-shadow: 0 0 0 0 rgba(0,0,0,0); }
-  }
-  @keyframes blink {
-    0%,100% { opacity: 1; }
-    50% { opacity: 0.35; }
-  }
-
-  label {
-    display: block;
-    font-size: 12.5px;
-    color: var(--muted);
-    margin-bottom: 7px;
-    letter-spacing: 0.2px;
-  }
-
-  .input-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .input-wrap:focus-within {
-    border-color: var(--green);
-    box-shadow: 0 0 0 3px rgba(0,168,132,0.15);
-  }
-  .input-wrap .prefix {
-    padding: 0 4px 0 14px;
-    color: var(--muted);
-    font-size: 14px;
-    user-select: none;
-  }
-  .input-wrap input {
-    flex: 1;
-    padding: 13px 14px 13px 4px;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font-size: 15px;
-    letter-spacing: 0.5px;
-    font-variant-numeric: tabular-nums;
-    min-width: 0;
-  }
-  .input-wrap input::placeholder { color: #5c6b73; letter-spacing: normal; }
-
-  .hint {
-    font-size: 11.5px;
-    color: var(--muted);
-    margin-top: 8px;
-    display: flex;
-    gap: 6px;
-    align-items: flex-start;
-    line-height: 1.4;
-  }
-  .hint b { color: #c3ced3; font-weight: 600; }
-
-  button {
-    width: 100%;
-    margin-top: 16px;
-    padding: 14px;
-    border: none;
-    border-radius: var(--radius);
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    cursor: pointer;
-    transition: transform 0.08s, background 0.2s, box-shadow 0.2s;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 9px;
-  }
-  button:active { transform: scale(0.985); }
-
-  .btn-primary {
-    background: linear-gradient(180deg, var(--green-2), var(--green));
-    color: #06231c;
-    box-shadow: 0 10px 25px -10px rgba(0,168,132,0.8);
-  }
-  .btn-primary:hover { background: linear-gradient(180deg, #0ee2a8, #00a884); }
-  .btn-primary:disabled {
-    background: var(--panel-2);
-    color: var(--muted);
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-
-  .btn-secondary {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    margin-top: 10px;
-  }
-  .btn-secondary:hover { background: #2a3942; }
-
-  .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid rgba(6,35,28,0.25);
-    border-top-color: #06231c;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    display: none;
-  }
-  button.loading .spinner { display: inline-block; }
-  button.loading .btn-label { opacity: 0.8; }
-
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .panel {
-    margin-top: 18px;
-    padding: 16px;
-    border-radius: var(--radius);
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    display: none;
-    animation: slidein 0.25s ease;
-  }
-  .panel.show { display: block; }
-  @keyframes slidein {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .panel.error {
-    background: rgba(241,92,109,0.08);
-    border-color: rgba(241,92,109,0.35);
-  }
-  .panel.error .panel-title { color: var(--red); }
-
-  .panel-title {
-    font-size: 12.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--green);
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .error-msg {
-    font-size: 14px;
-    color: #ffd7db;
-    line-height: 1.5;
-    word-break: break-word;
-  }
-  .error-hint {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px dashed rgba(241,92,109,0.25);
-    line-height: 1.5;
-  }
-
-  .code-box {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    background: #0b141a;
-    border: 1.5px dashed var(--green);
-    border-radius: var(--radius);
-    padding: 14px;
-    margin-bottom: 12px;
-  }
-  .code {
-    font-family: "SF Mono", "Courier New", monospace;
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: 4px;
-    color: var(--green);
-    user-select: all;
-    word-break: break-all;
-  }
-  .copy-btn {
-    width: auto;
-    margin: 0;
-    padding: 8px 12px;
-    font-size: 12px;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    flex-shrink: 0;
-  }
-  .copy-btn:hover { background: #2a3942; }
-
-  .steps {
-    list-style: none;
-    font-size: 13px;
-    color: var(--muted);
-    line-height: 1.9;
-  }
-  .steps li {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-  }
-  .steps .n {
-    flex-shrink: 0;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    display: grid;
-    place-items: center;
-    font-size: 11px;
-    color: var(--text);
-    font-weight: 600;
-    margin-top: 3px;
-  }
-  .steps b { color: #c3ced3; font-weight: 600; }
-
-  .progress-bar {
-    height: 4px;
-    background: var(--panel);
-    border-radius: 999px;
-    overflow: hidden;
-    margin-top: 10px;
-  }
-  .progress-bar > div {
-    height: 100%;
-    width: 30%;
-    background: linear-gradient(90deg, var(--green), var(--blue));
-    border-radius: 999px;
-    animation: indeterminate 1.4s infinite ease-in-out;
-  }
-  @keyframes indeterminate {
-    0% { margin-left: -30%; }
-    100% { margin-left: 100%; }
-  }
-
-  .toast {
-    position: fixed;
-    left: 50%;
-    bottom: 24px;
-    transform: translateX(-50%) translateY(20px);
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    padding: 10px 16px;
-    border-radius: 999px;
-    font-size: 13px;
-    opacity: 0;
-    transition: opacity 0.25s, transform 0.25s;
-    pointer-events: none;
-    z-index: 200;
-  }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast.err { background: rgba(241,92,109,0.15); border-color: rgba(241,92,109,0.4); color: #ffd7db; }
-  .toast.ok { background: rgba(0,168,132,0.15); border-color: rgba(0,168,132,0.4); color: #c6f5e5; }
-
-  .footer {
-    text-align: center;
-    font-size: 11px;
-    color: #5c6b73;
-    margin-top: 18px;
-    letter-spacing: 0.3px;
-  }
-
-  .hidden { display: none !important; }
+  /* hide browser default spinner on tel inputs */
+  input[type="tel"]::-webkit-outer-spin-button,
+  input[type="tel"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 </style>
 </head>
-<body>
+<body class="text-wa-text font-sans min-h-screen flex items-center justify-center p-4 text-[15px] leading-relaxed">
 
 <!-- ============================================================ -->
 <!-- LOGIN SCREEN                                                  -->
 <!-- ============================================================ -->
-<div id="loginScreen">
-  <div class="login-card">
-    <div class="login-head">
-      <div class="login-logo">🔐</div>
+<div id="loginScreen" class="fixed inset-0 z-[100] hidden items-center justify-center p-5"
+     style="background: radial-gradient(1200px 600px at 50% -10%, #0f2a24 0%, #0b141a 60%);">
+  <div class="bg-wa-panel border border-wa-border rounded-[22px] p-7 w-full max-w-[380px] shadow-2xl animate-slidein">
+    <div class="flex items-center gap-3 mb-6">
+      <div class="w-12 h-12 rounded-[13px] bg-gradient-to-br from-wa-green to-[#017d63] grid place-items-center text-2xl shadow-lg shrink-0">🔐</div>
       <div>
-        <div class="login-title">Bot Dashboard</div>
-        <div class="login-sub">Enter password to continue</div>
+        <div class="text-[17px] font-semibold tracking-tight">Bot Dashboard</div>
+        <div class="text-[12.5px] text-wa-muted mt-0.5">Enter password to continue</div>
       </div>
     </div>
-    <input id="pwInput" class="login-input" type="password" placeholder="Password" autocomplete="current-password" />
-    <button id="pwBtn" class="login-btn">Unlock</button>
-    <div id="pwError" class="login-error"></div>
+    <input id="pwInput" type="password" placeholder="Password" autocomplete="current-password"
+      class="w-full px-3.5 py-3 rounded-xl border border-wa-border bg-wa-panel2 text-wa-text text-[15px] outline-none transition focus:border-wa-green focus:ring-[3px] focus:ring-wa-green/15" />
+    <button id="pwBtn"
+      class="w-full mt-3.5 py-3.5 rounded-xl text-[15px] font-semibold cursor-pointer bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] shadow-lg transition active:scale-[0.985] disabled:bg-wa-panel2 disabled:text-wa-muted disabled:cursor-not-allowed disabled:shadow-none">
+      Unlock
+    </button>
+    <div id="pwError" class="text-wa-red text-[13px] mt-2.5 hidden"></div>
   </div>
 </div>
 
 <!-- ============================================================ -->
 <!-- MAIN DASHBOARD                                                -->
 <!-- ============================================================ -->
-<div id="app" class="wrap hidden">
-  <div class="header">
-    <div class="logo">🤖</div>
-    <div>
-      <h1>WhatsApp Bot</h1>
-      <div class="sub">Pair with a code — no QR needed</div>
+<div id="app" class="hidden w-full max-w-[440px] bg-wa-panel border border-wa-border rounded-[22px] p-6 pb-5 shadow-2xl relative overflow-hidden">
+  <div class="absolute -inset-0.5 pointer-events-none z-0"
+       style="background: linear-gradient(135deg, rgba(0,168,132,0.15), transparent 40%, transparent 60%, rgba(83,189,235,0.12));"></div>
+
+  <div class="relative z-10">
+    <!-- Header -->
+    <div class="flex items-center gap-3">
+      <div class="w-12 h-12 rounded-[13px] bg-gradient-to-br from-wa-green to-[#017d63] grid place-items-center text-2xl shadow-lg shrink-0">🤖</div>
+      <div>
+        <h1 class="text-lg font-semibold tracking-tight">WhatsApp Bot</h1>
+        <div class="text-[12.5px] text-wa-muted mt-0.5">Pair with a code — no QR needed</div>
+      </div>
+      <button id="logoutBtn"
+        class="ml-auto bg-transparent border border-wa-border text-wa-muted px-2.5 py-1.5 rounded-[9px] text-xs cursor-pointer transition hover:bg-wa-panel2 hover:text-wa-text">
+        Logout
+      </button>
     </div>
-    <button id="logoutBtn" class="logout-btn">Logout</button>
-  </div>
 
-  <div class="pill">
-    <span id="dot" class="dot disconnected"></span>
-    <span id="stateText">Disconnected</span>
-  </div>
-
-  <label for="number">Phone number (with country code)</label>
-  <div class="input-wrap">
-    <span class="prefix">+</span>
-    <input id="number" type="tel" inputmode="numeric" placeholder="237612345678" autocomplete="off" />
-  </div>
-  <div class="hint">
-    <span>ℹ️</span>
-    <div>Include country code, <b>without</b> the + sign or leading zero.</div>
-  </div>
-
-  <button id="connectBtn" class="btn-primary">
-    <span class="spinner"></span>
-    <span class="btn-label">Request Pairing Code</span>
-  </button>
-
-  <button id="disconnectBtn" class="btn-secondary hidden">
-    Disconnect
-  </button>
-
-  <!-- Connecting -->
-  <div id="progressPanel" class="panel">
-    <div class="panel-title">⏳ Working…</div>
-    <div id="progressMsg" style="font-size:13px;color:var(--muted);">Opening channel…</div>
-    <div class="progress-bar"><div></div></div>
-  </div>
-
-  <!-- Pairing code -->
-  <div id="codePanel" class="panel">
-    <div class="panel-title">🔑 Pairing Code</div>
-    <div class="code-box">
-      <div id="code" class="code">----</div>
-      <button id="copyBtn" class="copy-btn">Copy</button>
+    <!-- Status pill -->
+    <div class="inline-flex items-center gap-2 mt-4 mb-5 px-3 py-1.5 rounded-full bg-wa-panel2 border border-wa-border text-[12.5px] text-wa-muted">
+      <span id="dot" class="dot w-2 h-2 rounded-full bg-wa-muted"></span>
+      <span id="stateText">Disconnected</span>
     </div>
-    <ul class="steps">
-      <li><span class="n">1</span><div>Open <b>WhatsApp</b> on your phone</div></li>
-      <li><span class="n">2</span><div>Go to <b>Settings → Linked Devices</b></div></li>
-      <li><span class="n">3</span><div>Tap <b>Link a Device</b></div></li>
-      <li><span class="n">4</span><div>Choose <b>Link with phone number</b></div></li>
-      <li><span class="n">5</span><div>Enter the code shown above</div></li>
-    </ul>
-  </div>
 
-  <!-- Connected -->
-  <div id="connectedPanel" class="panel">
-    <div class="panel-title">✅ Connected</div>
-    <div id="connectedInfo" style="font-size:14px;color:var(--text);"></div>
-  </div>
+    <!-- Phone input -->
+    <label for="number" class="block text-[12.5px] text-wa-muted mb-2 tracking-wide">Phone number (with country code)</label>
+    <div class="flex items-center bg-wa-panel2 border border-wa-border rounded-[14px] transition focus-within:border-wa-green focus-within:ring-[3px] focus-within:ring-wa-green/15">
+      <span class="pl-3.5 pr-1 text-wa-muted text-sm select-none">+</span>
+      <input id="number" type="tel" inputmode="numeric" placeholder="237612345678" autocomplete="off"
+        class="flex-1 min-w-0 px-3.5 py-3 bg-transparent border-none outline-none text-wa-text text-[15px] tracking-wide tabular-nums placeholder:text-[#5c6b73] placeholder:tracking-normal" />
+    </div>
+    <div class="text-[11.5px] text-wa-muted mt-2 flex gap-1.5 items-start leading-snug">
+      <span>ℹ️</span>
+      <div>Include country code, <b class="text-[#c3ced3] font-semibold">without</b> the + sign or leading zero.</div>
+    </div>
 
-  <!-- Error -->
-  <div id="errorPanel" class="panel error">
-    <div class="panel-title">⚠️ Problem</div>
-    <div id="errorMsg" class="error-msg"></div>
-    <div id="errorHint" class="error-hint hidden"></div>
-  </div>
+    <!-- Connect button -->
+    <button id="connectBtn"
+      class="w-full mt-4 py-3.5 rounded-[14px] text-[15px] font-semibold tracking-wide cursor-pointer inline-flex items-center justify-center gap-2.5 transition active:scale-[0.985]
+             bg-gradient-to-b from-wa-green2 to-wa-green text-[#06231c] shadow-lg
+             hover:from-[#0ee2a8] hover:to-wa-green
+             disabled:bg-wa-panel2 disabled:text-wa-muted disabled:cursor-not-allowed disabled:shadow-none disabled:bg-none">
+      <span class="spinner hidden w-4 h-4 rounded-full border-2 border-[#06231c]/25 border-t-[#06231c] animate-spin"></span>
+      <span class="btn-label">Request Pairing Code</span>
+    </button>
 
-  <div class="footer">Powered by Baileys · Multi-device</div>
+    <!-- Disconnect -->
+    <button id="disconnectBtn"
+      class="hidden w-full mt-2.5 py-3.5 rounded-[14px] text-[15px] font-semibold cursor-pointer bg-wa-panel2 text-wa-text border border-wa-border transition hover:bg-[#2a3942] active:scale-[0.985]">
+      Disconnect
+    </button>
+
+    <!-- Connecting panel -->
+    <div id="progressPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
+      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">⏳ Working…</div>
+      <div id="progressMsg" class="text-[13px] text-wa-muted">Opening channel…</div>
+      <div class="h-1 bg-wa-panel rounded-full overflow-hidden mt-2.5">
+        <div class="h-full w-[30%] rounded-full animate-indeterminate"
+             style="background: linear-gradient(90deg, #00a884, #53bdeb);"></div>
+      </div>
+    </div>
+
+    <!-- Pairing code panel -->
+    <div id="codePanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
+      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">🔑 Pairing Code</div>
+      <div class="flex items-center justify-between gap-2.5 bg-wa-bg border-[1.5px] border-dashed border-wa-green rounded-[14px] p-3.5 mb-3">
+        <div id="code" class="font-mono text-2xl font-bold tracking-[4px] text-wa-green select-all break-all">----</div>
+        <button id="copyBtn"
+          class="shrink-0 px-3 py-2 text-xs bg-wa-panel2 text-wa-text border border-wa-border rounded-[9px] cursor-pointer transition hover:bg-[#2a3942]">
+          Copy
+        </button>
+      </div>
+      <ul class="list-none text-[13px] text-wa-muted leading-[1.9] space-y-0.5">
+        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">1</span><div>Open <b class="text-[#c3ced3] font-semibold">WhatsApp</b> on your phone</div></li>
+        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">2</span><div>Go to <b class="text-[#c3ced3] font-semibold">Settings → Linked Devices</b></div></li>
+        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">3</span><div>Tap <b class="text-[#c3ced3] font-semibold">Link a Device</b></div></li>
+        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">4</span><div>Choose <b class="text-[#c3ced3] font-semibold">Link with phone number</b></div></li>
+        <li class="flex gap-2.5 items-start"><span class="shrink-0 w-5 h-5 rounded-full bg-wa-panel border border-wa-border grid place-items-center text-[11px] text-wa-text font-semibold mt-0.5">5</span><div>Enter the code shown above</div></li>
+      </ul>
+    </div>
+
+    <!-- Connected panel -->
+    <div id="connectedPanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
+      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">✅ Connected</div>
+      <div id="connectedInfo" class="text-[14px] text-wa-text"></div>
+    </div>
+
+    <!-- Session code panel -->
+    <div id="sessionCodePanel" class="panel hidden mt-4 p-4 rounded-[14px] bg-wa-panel2 border border-wa-border animate-slidein">
+      <div class="text-[12.5px] font-bold uppercase tracking-widest text-wa-green mb-2.5 flex items-center gap-2">🔑 Seasonal Reconnect Code</div>
+      <div class="flex items-center justify-between gap-2.5 bg-wa-bg border-[1.5px] border-dashed border-wa-green rounded-[14px] p-3.5 mb-2.5">
+        <div id="sessionCode" class="font-mono text-2xl font-bold tracking-[4px] text-wa-green select-all break-all">------</div>
+        <button id="sessionCodeRefresh"
+          class="shrink-0 px-3 py-2 text-xs bg-wa-panel2 text-wa-text border border-wa-border rounded-[9px] cursor-pointer transition hover:bg-[#2a3942]">
+          ↻
+        </button>
+      </div>
+      <div class="text-[12px] text-wa-muted text-center">Rotates every 60s. Use this to reconnect without re-pairing.</div>
+    </div>
+
+    <!-- Error panel -->
+    <div id="errorPanel" class="panel hidden mt-4 p-4 rounded-[14px] border animate-slidein"
+         style="background: rgba(241,92,109,0.08); border-color: rgba(241,92,109,0.35);">
+      <div class="text-[12.5px] font-bold uppercase tracking-widest mb-2.5 flex items-center gap-2 text-wa-red">⚠️ Problem</div>
+      <div id="errorMsg" class="text-[14px] text-[#ffd7db] leading-snug break-words"></div>
+      <div id="errorHint" class="hidden text-[12px] text-wa-muted mt-2 pt-2 border-t border-dashed border-wa-red/25 leading-snug"></div>
+    </div>
+
+    <div class="text-center text-[11px] text-[#5c6b73] mt-4 tracking-wide">Powered by Baileys · Multi-device</div>
+  </div>
 </div>
 
-<div id="toast" class="toast"></div>
+<!-- Toast -->
+<div id="toast"
+  class="fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 translate-y-5 pointer-events-none opacity-0 transition-all duration-200
+         bg-wa-panel2 text-wa-text border border-wa-border px-4 py-2.5 rounded-full text-[13px]"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
+// ============================================================================
+// DYNAMIC STYLES FOR STATE DOT (uses JS classes, easiest way)
+// ============================================================================
+const DOT_STYLES = {
+  disconnected: 'bg-wa-red',
+  connecting: 'bg-wa-yellow animate-pulseRing text-wa-yellow',
+  code_ready: 'bg-wa-blue animate-pulseRing text-wa-blue',
+  connected: 'bg-wa-green',
+  error: 'bg-wa-red animate-blink'
+};
+
+// ============================================================================
+// SESSION CODE LOADER
+// ============================================================================
+async function loadSessionCode() {
+  try {
+    const r = await fetch('/api/session-code');
+    if (r.status === 401) return;
+    const d = await r.json();
+    if (d.ok) {
+      document.getElementById('sessionCode').textContent = d.code;
+      document.getElementById('sessionCodePanel').classList.remove('hidden');
+    }
+  } catch {}
+}
+setInterval(loadSessionCode, 30 * 1000);
+loadSessionCode();
+
 // ============================================================================
 // ELEMENT REFS
 // ============================================================================
@@ -637,19 +278,35 @@ let socket = null;
 let toastTimer;
 function toast(msg, kind = '') {
   toastEl.textContent = msg;
-  toastEl.className = 'toast show ' + kind;
+  toastEl.className =
+    'fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 pointer-events-none px-4 py-2.5 rounded-full text-[13px] transition-all duration-200 opacity-100 translate-y-0';
+  if (kind === 'err') {
+    toastEl.className += ' text-[#ffd7db] border';
+    toastEl.style.background = 'rgba(241,92,109,0.15)';
+    toastEl.style.borderColor = 'rgba(241,92,109,0.4)';
+  } else if (kind === 'ok') {
+    toastEl.className += ' text-[#c6f5e5] border';
+    toastEl.style.background = 'rgba(0,168,132,0.15)';
+    toastEl.style.borderColor = 'rgba(0,168,132,0.4)';
+  } else {
+    toastEl.className += ' bg-wa-panel2 text-wa-text border border-wa-border';
+    toastEl.style.background = '';
+    toastEl.style.borderColor = '';
+  }
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (toastEl.className = 'toast'), 2600);
+  toastTimer = setTimeout(() => {
+    toastEl.className =
+      'fixed left-1/2 bottom-6 z-[200] -translate-x-1/2 translate-y-5 pointer-events-none opacity-0 transition-all duration-200 bg-wa-panel2 text-wa-text border border-wa-border px-4 py-2.5 rounded-full text-[13px]';
+  }, 2600);
 }
 
 // ============================================================================
 // PANEL HELPERS
 // ============================================================================
 function hideAllPanels() {
-  progressPanel.classList.remove('show');
-  codePanel.classList.remove('show');
-  connectedPanel.classList.remove('show');
-  errorPanel.classList.remove('show');
+  [progressPanel, codePanel, connectedPanel, errorPanel].forEach((p) =>
+    p.classList.add('hidden')
+  );
 }
 
 function showError(msg, hint) {
@@ -661,12 +318,13 @@ function showError(msg, hint) {
   } else {
     errorHint.classList.add('hidden');
   }
-  errorPanel.classList.add('show');
+  errorPanel.classList.remove('hidden');
 }
 
 function setLoading(loading) {
   connectBtn.disabled = loading;
-  connectBtn.classList.toggle('loading', loading);
+  const spinner = connectBtn.querySelector('.spinner');
+  spinner.classList.toggle('hidden', !loading);
   connectBtn.querySelector('.btn-label').textContent = loading
     ? 'Requesting…'
     : 'Request Pairing Code';
@@ -678,11 +336,18 @@ function formatCode(c) {
 }
 
 // ============================================================================
+// STATE DOT
+// ============================================================================
+function setDot(state) {
+  dot.className = 'dot w-2 h-2 rounded-full ' + (DOT_STYLES[state] || 'bg-wa-muted');
+}
+
+// ============================================================================
 // RENDER STATE
 // ============================================================================
 function renderState(data) {
   const s = data.state || 'disconnected';
-  dot.className = 'dot ' + s;
+  setDot(s);
 
   const labels = {
     disconnected: 'Disconnected',
@@ -696,19 +361,19 @@ function renderState(data) {
   if (s === 'connecting') {
     hideAllPanels();
     progressMsg.textContent = data.message || 'Working…';
-    progressPanel.classList.add('show');
+    progressPanel.classList.remove('hidden');
     disconnectBtn.classList.remove('hidden');
   } else if (s === 'code_ready') {
     hideAllPanels();
     codeEl.textContent = formatCode(data.code);
-    codePanel.classList.add('show');
+    codePanel.classList.remove('hidden');
     disconnectBtn.classList.remove('hidden');
   } else if (s === 'connected') {
     hideAllPanels();
     const num = data.number ? '+' + data.number : '';
     const name = data.name ? ' · ' + data.name : '';
     connectedInfo.textContent = (num + name) || 'Session active.';
-    connectedPanel.classList.add('show');
+    connectedPanel.classList.remove('hidden');
     disconnectBtn.classList.remove('hidden');
   } else if (s === 'error') {
     showError(data.message || 'Something went wrong', data.hint);
@@ -726,30 +391,29 @@ async function checkSession() {
   try {
     const r = await fetch('/api/session');
     const d = await r.json();
-    if (d.authed) {
-      enterApp();
-    } else {
-      showLogin();
-    }
+    if (d.authed) enterApp();
+    else showLogin();
   } catch {
     showLogin();
   }
 }
 
 function showLogin() {
-  loginScreen.classList.add('show');
+  loginScreen.classList.remove('hidden');
+  loginScreen.classList.add('flex');
   app.classList.add('hidden');
   setTimeout(() => pwInput.focus(), 100);
 }
 
 function enterApp() {
-  loginScreen.classList.remove('show');
+  loginScreen.classList.add('hidden');
+  loginScreen.classList.remove('flex');
   app.classList.remove('hidden');
   startSocket();
 }
 
 async function doLogin() {
-  pwError.classList.remove('show');
+  pwError.classList.add('hidden');
   const password = pwInput.value;
   if (!password) return;
 
@@ -769,12 +433,12 @@ async function doLogin() {
       enterApp();
     } else {
       pwError.textContent = d.error || 'Login failed';
-      pwError.classList.add('show');
+      pwError.classList.remove('hidden');
       pwInput.select();
     }
   } catch (e) {
     pwError.textContent = 'Network error — is the server up?';
-    pwError.classList.add('show');
+    pwError.classList.remove('hidden');
   } finally {
     pwBtn.disabled = false;
     pwBtn.textContent = 'Unlock';
@@ -801,9 +465,7 @@ function startSocket() {
   if (socket) socket.disconnect();
   socket = io();
 
-  socket.on('connect', () => {
-    socket.emit('request_state');
-  });
+  socket.on('connect', () => socket.emit('request_state'));
 
   socket.on('connect_error', (err) => {
     console.log('[Socket] error:', err.message);
@@ -817,7 +479,6 @@ function startSocket() {
     }
   });
 
-  // initial fetch in case socket is slow
   fetch('/api/state')
     .then((r) => {
       if (r.status === 401) { showLogin(); return null; }
@@ -843,11 +504,11 @@ connectBtn.addEventListener('click', async () => {
   }
 
   setLoading(true);
-  dot.className = 'dot connecting';
+  setDot('connecting');
   stateText.textContent = 'Connecting…';
   hideAllPanels();
   progressMsg.textContent = 'Sending request…';
-  progressPanel.classList.add('show');
+  progressPanel.classList.remove('hidden');
 
   try {
     const res = await fetch('/api/connect', {
@@ -896,6 +557,9 @@ copyBtn.addEventListener('click', async () => {
     toast('Copy failed — select manually', 'err');
   }
 });
+
+// Session code refresh button
+document.getElementById('sessionCodeRefresh')?.addEventListener('click', loadSessionCode);
 
 // ============================================================================
 // BOOT

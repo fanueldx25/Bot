@@ -235,3 +235,10 @@ process.on('SIGTERM', () => {
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
 });
+
+// ---------- Session code API ----------
+app.get('/api/session-code', requireAuth, (req, res) => {
+  const code = state.generateSessionCode(60);
+  const expiresIn = 60 - (Math.floor(Date.now() / 1000) % 60);
+  res.json({ ok: true, code, expiresIn });
+});

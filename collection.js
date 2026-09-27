@@ -12,6 +12,7 @@ const commands = new Map();
  * @param {string} meta.description
  * @param {boolean} meta.adminOnly
  * @param {string[]} meta.aliases
+ * @param {string} meta.usage
  */
 function register(name, meta = {}) {
   const key = name.toLowerCase();
@@ -46,18 +47,23 @@ function isAdminCommand(name) {
   return c ? c.adminOnly : false;
 }
 
-// ---------- Seed the registry ----------
+// ============================================================================
+// SEED THE REGISTRY
+// ============================================================================
 const seed = [
-  // General
+  // ---------- General ----------
   { name: '.help', category: 'general', description: 'Show menu' },
   { name: '.menu', category: 'general', description: 'Show menu', aliases: ['.help'] },
   { name: '.ping', category: 'general', description: 'Check bot alive' },
   { name: '.id', category: 'general', description: 'Your JID' },
   { name: '.myid', category: 'general', description: 'Your number' },
+  { name: '.whoami', category: 'general', description: 'Check admin status' },
   { name: '.time', category: 'general', description: 'Server time' },
   { name: '.uptime', category: 'general', description: 'Bot uptime' },
+  { name: '.echo', category: 'general', description: 'Repeat text' },
+  { name: '.calc', category: 'general', description: 'Safe calculator' },
   
-  // Media
+  // ---------- Media ----------
   { name: '.sticker', category: 'media', description: 'Image → sticker', aliases: ['.s'] },
   { name: '.s', category: 'media', description: 'Image → sticker' },
   { name: '.toimg', category: 'media', description: 'Sticker → image' },
@@ -65,19 +71,33 @@ const seed = [
   { name: '.voice', category: 'media', description: 'Reply → voice' },
   { name: '.getpp', category: 'media', description: 'Get profile picture' },
   
-  // Admin
+  // ---------- Fun ----------
+  { name: '.roll', category: 'fun', description: 'Roll dice (e.g. 2d6)' },
+  { name: '.flip', category: 'fun', description: 'Flip a coin' },
+  { name: '.8ball', category: 'fun', description: 'Magic 8-ball' },
+  { name: '.joke', category: 'fun', description: 'Random joke' },
+  { name: '.quote', category: 'fun', description: 'Random quote' },
+  
+  // ---------- Tools ----------
+  { name: '.shorten', category: 'tools', description: 'Shorten URL' },
+  { name: '.weather', category: 'tools', description: 'Weather lookup' },
+  
+  // ---------- Admin ----------
   { name: '.status', category: 'admin', description: 'Bot status', adminOnly: true },
   { name: '.restart', category: 'admin', description: 'Restart bot', adminOnly: true },
   { name: '.logout', category: 'admin', description: 'Disconnect session', adminOnly: true },
   { name: '.backup', category: 'admin', description: 'Backup session', adminOnly: true },
   { name: '.restore', category: 'admin', description: 'Restore session', adminOnly: true },
+  { name: '.pair', category: 'admin', description: 'Re-pair bot', adminOnly: true },
+  { name: '.addadmin', category: 'admin', description: 'Promote user to admin', adminOnly: true },
+  { name: '.deladmin', category: 'admin', description: 'Demote admin', adminOnly: true },
   
-  // Pause
+  // ---------- Pause ----------
   { name: '.pause', category: 'pause', description: 'Pause bot', adminOnly: true },
   { name: '.resume', category: 'pause', description: 'Resume bot', adminOnly: true },
   { name: '.pausestatus', category: 'pause', description: 'Pause status', adminOnly: true },
   
-  // Group
+  // ---------- Group ----------
   { name: '.welcome', category: 'group', description: 'Welcome on/off', adminOnly: true },
   { name: '.goodbye', category: 'group', description: 'Goodbye on/off', adminOnly: true },
   { name: '.setwelcome', category: 'group', description: 'Custom welcome', adminOnly: true },
@@ -90,7 +110,12 @@ const seed = [
   { name: '.unmute', category: 'group', description: 'Unmute group', adminOnly: true },
   { name: '.groupinfo', category: 'group', description: 'Group info', adminOnly: true },
   
-  // Special
+  // ---------- Moderation ----------
+  { name: '.antilink', category: 'moderation', description: 'Anti-link on/off/action', adminOnly: true },
+  { name: '.reactions', category: 'moderation', description: 'Toggle bot reactions', adminOnly: true },
+  { name: '.schedule', category: 'moderation', description: 'Schedule group open/close', adminOnly: true },
+  
+  // ---------- Special ----------
   { name: '.vo', category: 'special', description: 'View-once capture', adminOnly: true },
   { name: '.autodl', category: 'special', description: 'Auto download', adminOnly: true },
   { name: '.poststatus', category: 'special', description: 'Post to status', adminOnly: true }

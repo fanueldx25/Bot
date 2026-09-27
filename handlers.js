@@ -1,5 +1,5 @@
 // ============================================================================
-// handlers.js — Feature handlers + command router
+// handlers.js — Feature handlers + command router (full version)
 // ============================================================================
 
 const {
@@ -32,7 +32,7 @@ const path = require('path');
 const os = require('os');
 
 // ============================================================================
-// 6. FEATURE HANDLERS
+// FEATURE HANDLERS
 // ============================================================================
 
 async function tryCaptureViewOnce(msg, from) {
@@ -214,11 +214,12 @@ _We'll miss you._`
 }
 
 // ============================================================================
-// 7. COMMAND HANDLER
+// COMMAND HANDLER
 // ============================================================================
 
 async function handleCommand(msg, from, senderJid, rawText) {
   const sockInstance = require('./state').sock;
+  const st = require('./state');
   const text = rawText.trim();
   const cmd = text.toLowerCase();
   const parts = cmd.split(' ');
@@ -230,7 +231,8 @@ async function handleCommand(msg, from, senderJid, rawText) {
   const adminCmds = [
     '.status', '.backup', '.restore', '.logout', '.pause', '.resume', '.pausestatus',
     '.welcome', '.goodbye', '.setwelcome', '.tagall', '.hidetag', '.kick', '.promote', '.demote',
-    '.mute', '.unmute', '.groupinfo', '.vo', '.admin', '.restart', '.poststatus', '.autodl'
+    '.mute', '.unmute', '.groupinfo', '.vo', '.admin', '.restart', '.poststatus', '.autodl',
+    '.reactions', '.schedule', '.antilink', '.pair', '.addadmin', '.deladmin'
   ];
 
   if (adminCmds.includes(base) && !admin) {
@@ -242,6 +244,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
+  // ---------- MENU ----------
   if (base === '.help' || base === '.menu') {
     const help = `${UI.box('BOT MENU', '🤖')}
 
@@ -252,6 +255,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
 │ .ping      • check alive
 │ .id        • your JID
 │ .myid      • your number
+│ .whoami    • admin check
 │ .time      • server time
 │ .uptime    • bot uptime
 
@@ -265,14 +269,32 @@ async function handleCommand(msg, from, senderJid, rawText) {
 │ .getpp     • profile pic
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+  🎲  *FUN*
+━━━━━━━━━━━━━━━━━━━━━━━
+│ .roll      • dice
+│ .flip      • coin
+│ .8ball     • ask
+│ .joke      • random joke
+│ .quote     • random quote
+
+━━━━━━━━━━━━━━━━━━━━━━━
+  🛠️  *TOOLS*
+━━━━━━━━━━━━━━━━━━━━━━━
+│ .echo      • repeat text
+│ .calc      • calculator
+│ .shorten   • short URL
+│ .weather   • weather
+
+━━━━━━━━━━━━━━━━━━━━━━━
   👮  *ADMIN ONLY*
 ━━━━━━━━━━━━━━━━━━━━━━━
 │ .status    • bot status
 │ .logout    • disconnect
 │ .restart   • reboot bot
+│ .pair      • re-pair
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-  ⏸️  *PAUSE CONTROL*
+  ⏸️  *PAUSE*
 ━━━━━━━━━━━━━━━━━━━━━━━
 │ .pause / .resume / .pausestatus
 
@@ -286,6 +308,14 @@ async function handleCommand(msg, from, senderJid, rawText) {
 │ .kick / .promote / .demote
 │ .mute / .unmute
 │ .groupinfo
+
+━━━━━━━━━━━━━━━━━━━━━━━
+  🛡️  *MODERATION*
+━━━━━━━━━━━━━━━━━━━━━━━
+│ .antilink on/off
+│ .antilink action delete|warn|kick
+│ .reactions on/off [global]
+│ .schedule open|close HH:MM [daily]
 
 ━━━━━━━━━━━━━━━━━━━━━━━
   📸  *SPECIAL*
@@ -308,17 +338,15 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
+  // ---------- BASIC ----------
   if (base === '.ping') {
     const start = Date.now();
     const txt = `${UI.box('PONG', '🏓')}
 
 │ Status  : ✅ online
 │ Latency : ${Date.now() - start} ms
-│ Uptime  : ${Math.floor(process.uptime())} s
-
-╰━━━━━━━━━━━━━━━━━━━━╯
-   _Bot is healthy_`;
-    await withTyping(from, () => sendWithBanner(from, txt));
+│ Uptime  : ${Math.floor(process.uptime())} s`;
+    await withTyping(from, () => sockInstance.sendMessage(from, { text: txt }));
     return;
   }
 
@@ -333,6 +361,18 @@ async function handleCommand(msg, from, senderJid, rawText) {
 │ Chat JID : ${from}`
       })
     );
+    return;
+  }
+
+  if (base === '.whoami') {
+    const num = senderJid.split('@')[0].split(':')[0];
+    await sockInstance.sendMessage(from, {
+      text: `${UI.box('WHO AM I', '👤')}
+
+│ Your number   : +${num}
+│ Admin number  : ${ADMIN_NUMBER ? '+' + ADMIN_NUMBER : 'NOT SET'}
+│ You are admin : ${isAdmin(senderJid) ? '✅ YES' : '❌ NO'}`
+    });
     return;
   }
 
@@ -382,6 +422,9 @@ async function handleCommand(msg, from, senderJid, rawText) {
 │ View-once  : ${require('./state').viewOnceEnabled ? '✅ ON' : '❌ OFF'}
 │ Auto-DL    : ${require('./state').autoDownload ? '✅ ON' : '❌ OFF'}
 │ Welcome    : ${welcomeEnabled.size} group(s)
+│ Anti-link  : ${st.antilinkGroups.size} group(s)
+│ Reactions  : ${st.reactionsGlobal ? '✅ global' : st.reactionsEnabled.size + ' chat(s)'}
+│ Schedules  : ${st.schedules.size}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
   🕐  _Reported at_
@@ -391,7 +434,112 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
-  // ---------- Sticker ----------
+  // ---------- ECHO ----------
+  if (base === '.echo') {
+    const t = args.join(' ');
+    if (!t) { await sockInstance.sendMessage(from, { text: '❌ Usage: .echo <text>' }); return; }
+    await sockInstance.sendMessage(from, { text: t });
+    return;
+  }
+
+  // ---------- FUN ----------
+  if (base === '.roll') {
+    const spec = args[0] || '1d6';
+    const m = spec.match(/^(\d+)d(\d+)$/i);
+    if (!m) { await sockInstance.sendMessage(from, { text: '❌ Usage: .roll 1d6' }); return; }
+    const [, n, faces] = m;
+    const rolls = Array.from({ length: Math.min(+n, 20) }, () =>
+      1 + Math.floor(Math.random() * +faces)
+    );
+    await sockInstance.sendMessage(from, {
+      text: `🎲 *${spec}* → ${rolls.join(' + ')} = *${rolls.reduce((a, b) => a + b, 0)}*`
+    });
+    return;
+  }
+
+  if (base === '.flip') {
+    const r = Math.random() < 0.5 ? '🪙 Heads' : '🪙 Tails';
+    await sockInstance.sendMessage(from, { text: r });
+    return;
+  }
+
+  if (base === '.8ball') {
+    const answers = [
+      'Yes.', 'No.', 'Maybe.', 'Ask again later.', 'Definitely.',
+      'Absolutely not.', 'I wouldn\'t bet on it.', 'Signs point to yes.'
+    ];
+    const a = answers[Math.floor(Math.random() * answers.length)];
+    await sockInstance.sendMessage(from, { text: `🎱 ${a}` });
+    return;
+  }
+
+  if (base === '.joke') {
+    const jokes = [
+      'Why don\'t scientists trust atoms? They make up everything.',
+      'I told my Wi-Fi we needed space. Now it won\'t connect.',
+      'Why did the developer go broke? He used up all his cache.'
+    ];
+    await sockInstance.sendMessage(from, {
+      text: '😂 ' + jokes[Math.floor(Math.random() * jokes.length)]
+    });
+    return;
+  }
+
+  if (base === '.quote') {
+    try {
+      const r = await fetch('https://api.quotable.io/random');
+      const d = await r.json();
+      await sockInstance.sendMessage(from, {
+        text: `💬 _"${d.content}"_\n— ${d.author}`
+      });
+    } catch {
+      await sockInstance.sendMessage(from, { text: '❌ Quote fetch failed.' });
+    }
+    return;
+  }
+
+  // ---------- TOOLS ----------
+  if (base === '.calc') {
+    const expr = text.replace(/^\.calc\s+/i, '').replace(/[^0-9+\-*/(). ]/g, '');
+    try {
+      const result = Function(`"use strict"; return (${expr})`)();
+      await sockInstance.sendMessage(from, { text: `🧮 ${expr} = *${result}*` });
+    } catch {
+      await sockInstance.sendMessage(from, { text: '❌ Invalid expression.' });
+    }
+    return;
+  }
+
+  if (base === '.shorten') {
+    const url = args[0];
+    if (!url || !/^https?:\/\//.test(url)) {
+      await sockInstance.sendMessage(from, { text: '❌ Usage: .shorten https://...' });
+      return;
+    }
+    try {
+      const r = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`);
+      const short = await r.text();
+      await sockInstance.sendMessage(from, { text: `🔗 ${short}` });
+    } catch {
+      await sockInstance.sendMessage(from, { text: '❌ Shorten failed.' });
+    }
+    return;
+  }
+
+  if (base === '.weather') {
+    const city = args.join(' ');
+    if (!city) { await sockInstance.sendMessage(from, { text: '❌ Usage: .weather <city>' }); return; }
+    try {
+      const r = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=3`);
+      const txt = await r.text();
+      await sockInstance.sendMessage(from, { text: `🌤️ ${txt}` });
+    } catch {
+      await sockInstance.sendMessage(from, { text: '❌ Weather lookup failed.' });
+    }
+    return;
+  }
+
+  // ---------- STICKER ----------
   if (base === '.sticker' || base === '.s') {
     const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
     if (!quoted) {
@@ -457,6 +605,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
+  // ---------- TTS ----------
   if (base === '.tts' || base === '.voice') {
     let targetText = args.join(' ');
     if (!targetText) {
@@ -469,23 +618,41 @@ async function handleCommand(msg, from, senderJid, rawText) {
       );
       return;
     }
+
     try {
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
-        targetText
-      )}&tl=en&client=tw-ob`;
-      const res = await fetch(url);
+      const url =
+        'https://translate.google.com/translate_tts?ie=UTF-8' +
+        `&q=${encodeURIComponent(targetText)}` +
+        '&tl=en&client=tw-ob';
+
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://translate.google.com/'
+        }
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const buf = Buffer.from(await res.arrayBuffer());
-      if (!buf || buf.length === 0) throw new Error('Empty audio buffer');
+      if (!buf || buf.length < 100) throw new Error('Empty audio');
+
       await withRecording(from, () =>
-        sockInstance.sendMessage(from, { audio: buf, mimetype: 'audio/mp4', ptt: true })
+        sockInstance.sendMessage(from, {
+          audio: buf,
+          mimetype: 'audio/mpeg',
+          ptt: true
+        })
       );
     } catch (e) {
       console.error('[TTS]', e.message);
-      await sockInstance.sendMessage(from, { text: '❌ TTS failed.' });
+      await sockInstance.sendMessage(from, { text: '❌ TTS failed: ' + e.message });
     }
     return;
   }
 
+  // ---------- GETPP ----------
   if (base === '.getpp') {
     let target = from;
     const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
@@ -499,7 +666,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
-  // ---------- Pause / Resume ----------
+  // ---------- PAUSE / RESUME ----------
   if (base === '.pause') {
     if (args[0] === 'all') {
       pausedChats.add('ALL');
@@ -542,7 +709,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
-  // ---------- Welcome / Goodbye ----------
+  // ---------- WELCOME / GOODBYE ----------
   if (base === '.welcome') {
     if (!isGroup) { await sockInstance.sendMessage(from, { text: '❌ Groups only.' }); return; }
     if (args[0] === 'on') {
@@ -588,7 +755,7 @@ async function handleCommand(msg, from, senderJid, rawText) {
     return;
   }
 
-  // ---------- Tag / Kick ----------
+  // ---------- TAG / KICK ----------
   if (base === '.tagall' || base === '.hidetag') {
     if (!isGroup) { await sockInstance.sendMessage(from, { text: '❌ Groups only.' }); return; }
     try {
@@ -670,17 +837,173 @@ ${admins}`;
     return;
   }
 
-  // ---------- Special ----------
+  // ---------- ANTI-LINK ----------
+  if (base === '.antilink') {
+    if (!isGroup) { await sockInstance.sendMessage(from, { text: '❌ Groups only.' }); return; }
+    const sub = args[0];
+
+    if (sub === 'on') {
+      st.antilinkGroups.add(from);
+      st.saveState();
+      await sockInstance.sendMessage(from, {
+        text: `${UI.box('ANTILINK ON', '🛡️')}\n\n│ Action : ${st.antilinkAction.get(from) || 'delete'}`
+      });
+    } else if (sub === 'off') {
+      st.antilinkGroups.delete(from);
+      st.saveState();
+      await sockInstance.sendMessage(from, { text: `${UI.box('ANTILINK OFF', '🚫')}` });
+    } else if (sub === 'action') {
+      const a = args[1];
+      if (!['delete', 'warn', 'kick'].includes(a)) {
+        await sockInstance.sendMessage(from, { text: '❌ Usage: .antilink action delete|warn|kick' });
+        return;
+      }
+      st.antilinkAction.set(from, a);
+      st.saveState();
+      await sockInstance.sendMessage(from, {
+        text: `${UI.box('ANTILINK ACTION', '⚙️')}\n\n│ ${a}`
+      });
+    } else {
+      const enabled = st.antilinkGroups.has(from);
+      await sockInstance.sendMessage(from, {
+        text: `${UI.box('ANTILINK', '🛡️')}
+
+│ Status : ${enabled ? '✅ ON' : '❌ OFF'}
+│ Action : ${st.antilinkAction.get(from) || 'delete'}
+
+Usage:
+│ .antilink on|off
+│ .antilink action delete|warn|kick`
+      });
+    }
+    return;
+  }
+
+  // ---------- REACTIONS ----------
+  if (base === '.reactions') {
+    const scope = args[0];
+    const mode = args[1];
+
+    if (scope === 'on') {
+      if (mode === 'global') {
+        st.reactionsGlobal = true;
+        st.saveState();
+        await sockInstance.sendMessage(from, { text: `${UI.box('REACTIONS GLOBAL ON', '😄')}` });
+      } else {
+        st.reactionsEnabled.add(from);
+        st.reactionsDisabled.delete(from);
+        st.saveState();
+        await sockInstance.sendMessage(from, { text: `${UI.box('REACTIONS ON HERE', '😄')}` });
+      }
+    } else if (scope === 'off') {
+      if (mode === 'global') {
+        st.reactionsGlobal = false;
+        st.saveState();
+        await sockInstance.sendMessage(from, { text: `${UI.box('REACTIONS GLOBAL OFF', '🚫')}` });
+      } else {
+        st.reactionsDisabled.add(from);
+        st.reactionsEnabled.delete(from);
+        st.saveState();
+        await sockInstance.sendMessage(from, { text: `${UI.box('REACTIONS OFF HERE', '🚫')}` });
+      }
+    } else {
+      const local = st.reactionsEnabled.has(from)
+        ? 'ON'
+        : st.reactionsDisabled.has(from)
+        ? 'OFF'
+        : 'inherit';
+      await sockInstance.sendMessage(from, {
+        text: `${UI.box('REACTIONS STATUS', '📋')}
+
+│ This chat : ${local}
+│ Global    : ${st.reactionsGlobal ? 'ON' : 'OFF'}
+
+Usage: .reactions on|off [global]`
+      });
+    }
+    return;
+  }
+
+  // ---------- SCHEDULE ----------
+  if (base === '.schedule') {
+    const action = args[0];
+    const timeArg = args[1];
+    const repeat = args[2];
+
+    if (!isGroup) { await sockInstance.sendMessage(from, { text: '❌ Groups only.' }); return; }
+
+    if (action === 'list') {
+      const entries = [...st.schedules.entries()].filter(([j]) => j === from);
+      if (!entries.length) {
+        await sockInstance.sendMessage(from, { text: '📋 No schedules for this group.' });
+        return;
+      }
+      const txt = entries
+        .map(([, s]) => {
+          const t = new Date(s.at).toISOString().replace('T', ' ').slice(0, 16);
+          return `│ ${s.action.toUpperCase()} @ ${t} UTC (${s.repeat || 'once'})`;
+        })
+        .join('\n');
+      await sockInstance.sendMessage(from, {
+        text: `${UI.box('SCHEDULES', '🕒')}\n\n${txt}`
+      });
+      return;
+    }
+
+    if (action === 'cancel') {
+      st.schedules.delete(from);
+      st.saveState();
+      await sockInstance.sendMessage(from, { text: `${UI.box('SCHEDULE CLEARED', '🗑️')}` });
+      return;
+    }
+
+    if (action !== 'open' && action !== 'close') {
+      await sockInstance.sendMessage(from, {
+        text: 'Usage: .schedule open|close <HH:MM|30m|2h> [daily]'
+      });
+      return;
+    }
+
+    let at;
+    if (/^\d+m$/.test(timeArg)) {
+      at = Date.now() + parseInt(timeArg) * 60 * 1000;
+    } else if (/^\d+h$/.test(timeArg)) {
+      at = Date.now() + parseInt(timeArg) * 3600 * 1000;
+    } else if (/^\d{1,2}:\d{2}$/.test(timeArg)) {
+      const [h, m] = timeArg.split(':').map(Number);
+      const d = new Date();
+      d.setUTCHours(h, m, 0, 0);
+      if (d.getTime() < Date.now()) d.setUTCDate(d.getUTCDate() + 1);
+      at = d.getTime();
+    } else {
+      await sockInstance.sendMessage(from, { text: '❌ Invalid time. Use HH:MM (UTC) or 30m / 2h.' });
+      return;
+    }
+
+    st.schedules.set(from, {
+      action,
+      at,
+      repeat: repeat === 'daily' ? 'daily' : 'once'
+    });
+    st.saveState();
+
+    const when = new Date(at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+    await sockInstance.sendMessage(from, {
+      text: `${UI.box('SCHEDULED', '🕒')}\n\n│ Action : ${action.toUpperCase()}\n│ At     : ${when}\n│ Repeat : ${repeat === 'daily' ? 'daily' : 'once'}`
+    });
+    return;
+  }
+
+  // ---------- SPECIAL ----------
   if (base === '.vo') {
-    const state = require('./state');
     if (args[0] === 'on') {
-      state.viewOnceEnabled = true;
+      st.viewOnceEnabled = true;
       saveState();
       await sockInstance.sendMessage(from, {
         text: `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ✅ ON`
       });
     } else if (args[0] === 'off') {
-      state.viewOnceEnabled = false;
+      st.viewOnceEnabled = false;
       saveState();
       await sockInstance.sendMessage(from, {
         text: `${UI.box('VO CAPTURE', '📸')}\n\n│ Status : ❌ OFF`
@@ -690,16 +1013,16 @@ ${admins}`;
     }
     return;
   }
+
   if (base === '.autodl') {
-    const state = require('./state');
     if (args[0] === 'on') {
-      state.autoDownload = true;
+      st.autoDownload = true;
       saveState();
       await sockInstance.sendMessage(from, {
         text: `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ✅ ON`
       });
     } else if (args[0] === 'off') {
-      state.autoDownload = false;
+      st.autoDownload = false;
       saveState();
       await sockInstance.sendMessage(from, {
         text: `${UI.box('AUTO-DOWNLOAD', '⬇️')}\n\n│ Status : ❌ OFF`
@@ -709,6 +1032,7 @@ ${admins}`;
     }
     return;
   }
+
   if (base === '.poststatus') {
     const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
     const quotedKey = msg.message.extendedTextMessage?.contextInfo;
@@ -750,16 +1074,56 @@ Reply to a message with *.poststatus* to publish it to your WhatsApp status.`
     }
     return;
   }
+
   if (base === '.logout') {
     await sockInstance.sendMessage(from, { text: '🚪 *Logging out...*' });
     try { await sockInstance.logout(); } catch (e) {}
     return;
   }
+
   if (base === '.restart') {
     await sockInstance.sendMessage(from, { text: '🔄 *Restarting...*' });
     const conn = require('./connection');
     conn.stopBot();
     setTimeout(() => conn.startBot(currentNumber), 2000);
+    return;
+  }
+
+  // ---------- ADD / DEL ADMIN ----------
+  if (base === '.addadmin' || base === '.deladmin') {
+    if (!isAdmin(senderJid)) {
+      await sockInstance.sendMessage(from, { text: '❌ Only root admin can do this.' });
+      return;
+    }
+    const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
+    if (!mentioned?.length) {
+      await sockInstance.sendMessage(from, { text: '❌ Mention someone.' });
+      return;
+    }
+    for (const jid of mentioned) {
+      const num = jid.split('@')[0].split(':')[0];
+      if (base === '.addadmin') st.extraAdmins.add(num);
+      else st.extraAdmins.delete(num);
+    }
+    st.saveState();
+    await sockInstance.sendMessage(from, {
+      text: `${UI.box(base === '.addadmin' ? 'ADMIN ADDED' : 'ADMIN REMOVED', '✅')}`
+    });
+    return;
+  }
+
+  // ---------- PAIR ----------
+  if (base === '.pair') {
+    const num = args[0] || currentNumber;
+    if (!num) { await sockInstance.sendMessage(from, { text: '❌ Usage: .pair <number>' }); return; }
+    await sockInstance.sendMessage(from, { text: `⏳ Requesting code for +${num}...` });
+    const conn = require('./connection');
+    try { if (sockInstance) sockInstance.end(undefined); } catch (e) {}
+    await new Promise((r) => setTimeout(r, 1000));
+    await conn.startBot(num);
+    await sockInstance.sendMessage(from, {
+      text: `📱 Code sent to dashboard. Open the web UI to see it.`
+    });
     return;
   }
 }

@@ -58,6 +58,52 @@ function validateNumber(raw) {
   return { ok: true, clean };
 }
 
+// ---------- Scheduler (runs while socket is up) ----------
+let schedulerTimer = null;
+
+function startScheduler() {
+  if (schedulerTimer) clearInterval(schedulerTimer);
+  schedulerTimer = setInterval(async () => {
+    const sock = state.sock;
+    if (!sock) return;
+
+    const now = Date.now();
+    for (const [jid, s] of state.schedules.entries()) {
+      if (s.at > now) continue;
+      try {
+        await sock.groupSettingUpdate(
+          jid,
+          s.action === 'open' ? 'not_announcement' : 'announcement'
+        );
+        await sock.sendMessage(jid, {
+          text:
+            s.action === 'open'
+              ? '🔓 *Group opened on schedule*'
+              : '🔒 *Group closed on schedule*'
+        });
+        console.log(`[Schedule] ${s.action} → ${jid}`);
+      } catch (e) {
+        console.error('[Schedule]', e.message);
+      }
+
+      if (s.repeat === 'daily') {
+        s.at += 24 * 60 * 60 * 1000;
+      } else {
+        state.schedules.delete(jid);
+      }
+      state.saveState();
+    }
+  }, 30 * 1000);
+  console.log('[Schedule] ticker started');
+}
+
+function stopScheduler() {
+  if (schedulerTimer) {
+    clearInterval(schedulerTimer);
+    schedulerTimer = null;
+  }
+}
+
 // ---------- Start ----------
 async function startBot(rawNumber) {
   // 1. validate
@@ -68,7 +114,8 @@ async function startBot(rawNumber) {
   }
   const phoneNumber = v.clean;
 
-  // 2. stop old socket
+  // 2. stop old socket + scheduler
+  stopScheduler();
   if (state.sock) {
     try { state.sock.end(undefined); } catch (e) {}
     state.sock = null;
@@ -101,7 +148,7 @@ async function startBot(rawNumber) {
     version = vres.version;
   } catch (e) {
     console.error('[Version] fetch failed, using default:', e.message);
-    version = undefined; // Baileys falls back to bundled version
+    version = undefined;
   }
 
   // 4. create socket
@@ -130,8 +177,6 @@ async function startBot(rawNumber) {
   }
 
   state.sock = sock;
-
-  // ✅ FIX: use the actual saveCreds function (was authState.saveCreds before)
   sock.ev.on('creds.update', saveCreds);
 
   // ---------- Pairing code ----------
@@ -189,6 +234,7 @@ async function startBot(rawNumber) {
         message: 'Successfully linked!'
       });
       console.log('✅ Connected as', sock.user.id);
+      startScheduler();
     }
 
     if (connection === 'connecting') {
@@ -205,6 +251,7 @@ async function startBot(rawNumber) {
         statusCode !== DisconnectReason.loggedOut &&
         statusCode !== DisconnectReason.forbidden;
 
+      stopScheduler();
       state.setState('disconnected', { code: statusCode, message: reason });
 
       if (shouldReconnect) {
@@ -251,7 +298,9 @@ async function startBot(rawNumber) {
   return { ok: true };
 }
 
-// ---------- Incoming router ----------
+// ============================================================================
+// INCOMING ROUTER
+// ============================================================================
 async function handleIncoming(msg) {
   if (!msg.message) return;
   const from = msg.key.remoteJid;
@@ -259,13 +308,83 @@ async function handleIncoming(msg) {
 
   const senderJid = msg.key.participant || from;
 
+  // pause check
   if (state.pausedChats.has('ALL') || state.pausedChats.has(from)) return;
 
+  // ---------- Anti-link ----------
+  try {
+    if (
+      state.antilinkGroups.has(from) &&
+      !state.isAdmin(senderJid) &&
+      !msg.key.fromMe
+    ) {
+      const body =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
+        msg.message?.videoMessage?.caption ||
+        '';
+
+      const linkRegex =
+        /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-z0-9-]+\.(com|net|org|io|gg|xyz|me|co|cm|fr|ru)(\/[^\s]*)?)/i;
+
+      if (linkRegex.test(body)) {
+        const action = state.antilinkAction.get(from) || 'delete';
+
+        // delete the offending message
+        try {
+          await state.sock.sendMessage(from, { delete: msg.key });
+        } catch (e) {
+          console.error('[AntiLink delete]', e.message);
+        }
+
+        if (action === 'warn') {
+          await state.sock.sendMessage(from, {
+            text: `⚠️ @${senderJid.split('@')[0]}, links are not allowed here.`,
+            mentions: [senderJid]
+          });
+        } else if (action === 'kick') {
+          try {
+            await state.sock.groupParticipantsUpdate(from, [senderJid], 'remove');
+            await state.sock.sendMessage(from, {
+              text: `🚫 @${senderJid.split('@')[0]} was removed for posting a link.`,
+              mentions: [senderJid]
+            });
+          } catch (e) {
+            console.error('[AntiLink kick]', e.message);
+          }
+        }
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('[AntiLink]', e.message);
+  }
+
+  // ---------- Reactions ----------
+  try {
+    const chatReactions =
+      state.reactionsGlobal || state.reactionsEnabled.has(from);
+    const chatMuted = state.reactionsDisabled.has(from);
+
+    if (chatReactions && !chatMuted && !msg.key.fromMe) {
+      const emojis = ['👍', '❤️', '😂', '🔥', '🎉', '👀', '💯', '🙌'];
+      const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+      await state.sock.sendMessage(from, {
+        react: { text: emoji, key: msg.key }
+      });
+    }
+  } catch (e) {
+    // silent
+  }
+
+  // ---------- View-once capture ----------
   if (state.viewOnceEnabled) {
     const captured = await handlers.tryCaptureViewOnce(msg, from);
     if (captured) return;
   }
 
+  // ---------- Commands ----------
   const text = extractText(msg);
   if (!text || !text.startsWith('.')) return;
 
@@ -285,6 +404,7 @@ function extractText(msg) {
 
 // ---------- Stop ----------
 function stopBot() {
+  stopScheduler();
   if (state.sock) {
     try { state.sock.end(undefined); } catch (e) {}
     state.sock = null;
