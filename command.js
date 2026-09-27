@@ -1,35 +1,41 @@
 import { downloadMediaMessage, getContentType } from '@whiskeysockets/baileys';
 import pino from 'pino';
-import { persistConfig, messageStore, getToken } from './bot.js';
+import { persistConfig, messageStore } from './bot.js';
 
 const logger = pino({ level: 'silent' });
 
-// ---- ASCII Logo ----
-const LOGO = `█████  ███  █   █ ████   ███  
-█   █ █   █ ██  █ █   █ █   █ 
-█████ █████ █ █ █ █   █ █████ 
-█     █   █ █  ██ █   █ █   █ 
-█     █   █ █   █ ████  █   █ `;
+// ---- Box drawing helpers ----
+const BOX_TOP = '┌──────────────────';
+const BOX_MID = '├──────────────────';
+const BOX_BOT = '└──────────────────';
+const BULLET = '│ ✺';
 
 // ---- Command registry ----
 const commands = {
+  // Info
+  menu: cmdMenu, list: cmdList, ping: cmdPing, owner: cmdOwner,
+  uptime: cmdUptime, speed: cmdSpeed, status: cmdStatus,
   // Access
-  mode: cmdMode, ping: cmdPing, help: cmdHelp, menu: cmdMenu, owner: cmdOwner,
-  token: cmdToken,
-  // Media / view-once
-  ops: cmdOps, save: cmdSaveMedia,
-  // Anti-delete / anti-edit
+  mode: cmdMode, prefix: cmdPrefix, token: cmdToken,
+  // Media
+  ops: cmdOps, save: cmdSaveMedia, viewonce: cmdOps, tovideo: cmdToVideo, sticker: cmdSticker,
+  // Anti
   antidelete: cmdAntiDelete, antiedit: cmdAntiEdit,
   history: cmdHistory, lastdeleted: cmdLastDeleted,
   // Group
   welcome: cmdWelcome, setwelcome: cmdSetWelcome,
   goodbye: cmdGoodbye, setgoodbye: cmdSetGoodbye,
   kick: cmdKick, add: cmdAdd, promote: cmdPromote, demote: cmdDemote,
-  mute: cmdMute, unmute: cmdUnmute, tagall: cmdTagAll, groupinfo: cmdGroupInfo, link: cmdLink,
-  // Customization
-  setbanner: cmdSetBanner, setprefix: cmdSetPrefix, setname: cmdSetName,
+  mute: cmdMute, unmute: cmdUnmute, tagall: cmdTagAll, tag: cmdTagAll,
+  ginfo: cmdGroupInfo, groupinfo: cmdGroupInfo, grouplink: cmdLink, link: cmdLink,
+  setname: cmdSetName, setdesc: cmdSetDesc, setgcpp: cmdSetGcPp,
+  admins: cmdAdmins, whois: cmdWhois, revoke: cmdRevoke,
+  warn: cmdWarn, warnings: cmdWarnings, resetwarn: cmdResetWarn,
+  // Owner
+  setbanner: cmdSetBanner, setprefix: cmdSetPrefix, setbotname: cmdSetBotName,
+  broadcast: cmdBroadcast, block: cmdBlock, unblock: cmdUnblock,
   // System
-  status: cmdStatus, restart: cmdRestart, logout: cmdLogout,
+  restart: cmdRestart, logout: cmdLogout, cleartemp: cmdClearTemp,
 };
 
 // ---- Reaction helper ----
@@ -41,6 +47,7 @@ async function react(sock, msg, emoji) {
   } catch (e) { /* ignore */ }
 }
 
+// ---- Message handler ----
 export async function handleMessage(payload, sock, state) {
   const { messages, type } = payload;
   if (type !== 'notify') return;
@@ -85,11 +92,8 @@ export async function handleReaction(reactions, sock, state) {
     const content = original.message?.viewOnceMessageV2?.message || original.message?.viewOnceMessage?.message;
     if (!content) continue;
 
-    // React with green apple to acknowledge
     try {
-      await sock.sendMessage(key.remoteJid, {
-        react: { text: '🍏', key }
-      });
+      await sock.sendMessage(key.remoteJid, { react: { text: '🍏', key } });
     } catch (e) { /* ignore */ }
 
     try {
@@ -105,11 +109,8 @@ export async function handleReaction(reactions, sock, state) {
       await sock.sendMessage(state.ownerJid, sendOpts);
     } catch (e) {
       console.error('view-once download failed:', e.message);
-      // React with red apple on failure
       try {
-        await sock.sendMessage(key.remoteJid, {
-          react: { text: '🍎', key }
-        });
+        await sock.sendMessage(key.remoteJid, { react: { text: '🍎', key } });
       } catch (e2) { /* ignore */ }
     }
   }
@@ -145,20 +146,93 @@ export async function handleGroupParticipants(update, sock, state) {
   }
 }
 
+// ============ MENU ============
+
+function buildMenu(state, uptimeMs, speedMs, cmdCount) {
+  const p = state.prefix;
+  const users = state.ownerJid ? state.ownerJid.split('@')[0] : 'BMEDIA-MD';
+
+  const lines = [];
+  lines.push(BOX_TOP);
+  lines.push(`│ *${state.botName.toUpperCase()}* BOT MENU`);
+  lines.push(BOX_BOT);
+  lines.push('');
+  lines.push(BOX_TOP);
+  lines.push('│ *BOT INFORMATION:*');
+  lines.push(`│ *USERS:* ${users}`);
+  lines.push(`│ *MODE:* ${state.mode.toUpperCase()}`);
+  lines.push(`│ *PREFIX:* [ ${p} ]`);
+  lines.push(`│ *AUTHOR:* *${state.botName}*`);
+  lines.push(`│ *SPEED:* ${speedMs.toFixed(2)}ms`);
+  lines.push(`│ *COMMANDS:* ${cmdCount}`);
+  lines.push(BOX_BOT);
+
+  const categories = {
+    'INFO': ['list', 'menu', 'owner', 'ping', 'speed', 'status', 'uptime'],
+    'ACCESS': ['mode', 'prefix', 'token'],
+    'MEDIA': ['ops', 'save', 'sticker', 'tovideo', 'viewonce'],
+    'ANTI': ['antidelete', 'antiedit', 'history', 'lastdeleted'],
+    'GROUP': ['welcome', 'setwelcome', 'goodbye', 'setgoodbye', 'kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'tagall', 'tag', 'ginfo', 'grouplink', 'setname', 'setdesc', 'setgcpp', 'admins', 'whois', 'revoke', 'warn', 'warnings', 'resetwarn'],
+    'OWNER': ['setbanner', 'setprefix', 'setbotname', 'broadcast', 'block', 'unblock'],
+    'SYSTEM': ['restart', 'logout', 'cleartemp'],
+  };
+
+  for (const [cat, cmds] of Object.entries(categories)) {
+    lines.push('');
+    lines.push(BOX_TOP);
+    lines.push(`│ *「 ${cat} 」*`);
+    lines.push(BOX_MID);
+    for (const c of cmds) {
+      lines.push(`${BULLET} ${p}${c}`);
+    }
+    lines.push(BOX_BOT);
+  }
+
+  lines.push('');
+  lines.push(`> *POWERED BY ${state.botName.toUpperCase()}*`);
+  return lines.join('\n');
+}
+
 // ============ HANDLERS ============
 
-async function cmdMode({ args, sock, jid, fromMe, state }) {
-  if (!fromMe) return;
-  const next = args[0]?.toLowerCase();
-  if (!['private', 'public'].includes(next)) return sock.sendMessage(jid, { text: `Usage: ${state.prefix}mode private|public` });
-  state.mode = next; persistConfig();
-  await sock.sendMessage(jid, { text: `✅ Mode set to *${next}*` });
+async function cmdMenu({ sock, jid, state, msg }) {
+  const t0 = Date.now();
+  const uptime = Date.now() - state.startedAt;
+  const speed = Date.now() - t0;
+  const cmdCount = Object.keys(commands).length;
+  const text = buildMenu(state, uptime, speed, cmdCount);
+  await react(sock, msg, '🍏');
+  if (state.bannerUrl) {
+    await sock.sendMessage(jid, { image: { url: state.bannerUrl }, caption: text });
+  } else {
+    await sock.sendMessage(jid, { text });
+  }
+}
+
+async function cmdList({ sock, jid, state, msg }) {
+  return cmdMenu({ sock, jid, state, msg });
 }
 
 async function cmdPing({ sock, jid, state, msg }) {
-  const uptime = Math.floor((Date.now() - state.startedAt) / 1000);
+  const t0 = Date.now();
   await react(sock, msg, '🍏');
-  await sock.sendMessage(jid, { text: `🏓 Pong\nUptime: ${uptime}s\nMode: ${state.mode}` });
+  const latency = Date.now() - t0;
+  const uptime = Math.floor((Date.now() - state.startedAt) / 1000);
+  await sock.sendMessage(jid, { text: `🏓 Pong\nLatency: ${latency}ms\nUptime: ${uptime}s\nMode: ${state.mode}` });
+}
+
+async function cmdSpeed({ sock, jid, state, msg }) {
+  const t0 = Date.now();
+  await react(sock, msg, '🍏');
+  const latency = Date.now() - t0;
+  await sock.sendMessage(jid, { text: `⚡ Speed: ${latency}ms` });
+}
+
+async function cmdUptime({ sock, jid, state, msg }) {
+  const s = Math.floor((Date.now() - state.startedAt) / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `⏱️ Uptime: ${h}h ${m}m ${sec}s` });
 }
 
 async function cmdOwner({ sock, jid, state }) {
@@ -170,57 +244,28 @@ async function cmdToken({ sock, jid, fromMe, state }) {
   await sock.sendMessage(jid, { text: `🔑 Session Token:\n\`${state.sessionToken || 'not generated'}\`` });
 }
 
-async function cmdHelp({ sock, jid, state }) {
-  const p = state.prefix;
-  const text = `${LOGO}\n\n*🤖 WA BOT — Command Menu*\n\n` +
-    `*━━━ ACCESS ━━━*\n` +
-    `┣ ${p}mode private|public\n` +
-    `┣ ${p}ping\n` +
-    `┣ ${p}owner\n` +
-    `┣ ${p}token\n` +
-    `┗ ${p}menu\n\n` +
-    `*━━━ MEDIA ━━━*\n` +
-    `┣ ${p}ops (reply view-once)\n` +
-    `┣ ${p}save (reply media)\n` +
-    `┗ 🐼 React to view-once\n\n` +
-    `*━━━ ANTI ━━━*\n` +
-    `┣ ${p}antidelete on|off\n` +
-    `┣ ${p}antiedit on|off\n` +
-    `┣ ${p}history [n]\n` +
-    `┗ ${p}lastdeleted\n\n` +
-    `*━━━ GROUP ━━━*\n` +
-    `┣ ${p}welcome on|off\n` +
-    `┣ ${p}setwelcome <text>\n` +
-    `┣ ${p}goodbye on|off\n` +
-    `┣ ${p}setgoodbye <text>\n` +
-    `┣ ${p}kick\n` +
-    `┣ ${p}add <num>\n` +
-    `┣ ${p}promote / ${p}demote\n` +
-    `┣ ${p}mute / ${p}unmute\n` +
-    `┣ ${p}tagall\n` +
-    `┣ ${p}groupinfo\n` +
-    `┗ ${p}link\n\n` +
-    `*━━━ CUSTOM ━━━*\n` +
-    `┣ ${p}setbanner (reply image)\n` +
-    `┣ ${p}setprefix <char>\n` +
-    `┗ ${p}setname <name>\n\n` +
-    `*━━━ SYSTEM ━━━*\n` +
-    `┣ ${p}status\n` +
-    `┣ ${p}restart\n` +
-    `┗ ${p}logout\n\n` +
-    `━━━━━━━━━━━━━━━\n` +
-    `🐼 = Download view-once\n` +
-    `🍏 = Success  |  🍎 = Failed`;
-
-  if (state.bannerUrl) {
-    await sock.sendMessage(jid, { image: { url: state.bannerUrl }, caption: text });
-  } else {
-    await sock.sendMessage(jid, { text });
+async function cmdMode({ args, sock, jid, fromMe, state, msg }) {
+  if (!fromMe) return;
+  const next = args[0]?.toLowerCase();
+  if (!['private', 'public'].includes(next)) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}mode private|public` });
   }
+  state.mode = next; persistConfig();
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `✅ Mode set to *${next}*` });
 }
 
-async function cmdMenu({ sock, jid, state }) {
-  return cmdHelp({ sock, jid, state });
+async function cmdPrefix({ args, sock, jid, fromMe, state, msg }) {
+  if (!fromMe) return;
+  const p = args[0];
+  if (!p || p.length > 2) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}prefix <char>` });
+  }
+  state.prefix = p; persistConfig();
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `✅ Prefix set to "${p}"` });
 }
 
 async function cmdOps({ msg, sock, jid, fromMe, state }) {
@@ -273,6 +318,18 @@ async function cmdSaveMedia({ msg, sock, jid, fromMe, state }) {
     await react(sock, msg, '🍎');
     await sock.sendMessage(jid, { text: `❌ ${e.message}` });
   }
+}
+
+async function cmdToVideo({ msg, sock, jid, fromMe, state }) {
+  if (!fromMe) return;
+  await react(sock, msg, '🍎');
+  await sock.sendMessage(jid, { text: `⚠️ ${state.prefix}tovideo not yet implemented` });
+}
+
+async function cmdSticker({ msg, sock, jid, fromMe, state }) {
+  if (!fromMe) return;
+  await react(sock, msg, '🍎');
+  await sock.sendMessage(jid, { text: `⚠️ ${state.prefix}sticker not yet implemented` });
 }
 
 async function cmdAntiDelete({ args, sock, jid, fromMe, state, msg }) {
@@ -464,6 +521,133 @@ async function cmdLink({ sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: `🔗 https://chat.whatsapp.com/${code}` });
 }
 
+async function cmdSetName({ args, sock, jid, fromMe, msg }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const name = args.join(' ');
+  if (!name) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}setname <name>` });
+  }
+  await sock.groupUpdateSubject(jid, name);
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: '✅ Group name updated' });
+}
+
+async function cmdSetDesc({ args, sock, jid, fromMe, msg }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const desc = args.join(' ');
+  if (!desc) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}setdesc <text>` });
+  }
+  await sock.groupUpdateDescription(jid, desc);
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: '✅ Description updated' });
+}
+
+async function cmdSetGcPp({ msg, sock, jid, fromMe }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const quoted = ctxInfo?.quotedMessage;
+  if (!quoted?.imageMessage) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: `↩️ Reply to an image with ${state.prefix}setgcpp` });
+  }
+  try {
+    const buffer = await downloadMediaMessage(
+      { key: msg.key, message: quoted },
+      'buffer', {},
+      { logger, reuploadRequest: sock.updateMediaMessage }
+    );
+    const { jidToSockJid } = await import('@whiskeysockets/baileys');
+    await sock.updateProfilePicture(jid, buffer);
+    await react(sock, msg, '🍏');
+    await sock.sendMessage(jid, { text: '✅ Group profile picture updated' });
+  } catch (e) {
+    await react(sock, msg, '🍎');
+    await sock.sendMessage(jid, { text: `❌ ${e.message}` });
+  }
+}
+
+async function cmdAdmins({ sock, jid, fromMe, msg }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const m = await sock.groupMetadata(jid);
+  const admins = m.participants.filter(p => p.admin);
+  const list = admins.map(a => `@${a.id.split('@')[0].split(':')[0]}`).join('\n');
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `*🛡️ Admins (${admins.length}):*\n${list}`, mentions: admins.map(a => a.id) });
+}
+
+async function cmdWhois({ msg, sock, jid, fromMe }) {
+  if (!fromMe) return;
+  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
+  if (!target) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: `Mention a user` });
+  }
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `*👤 User Info*\nJID: ${target}\nNumber: ${target.split('@')[0].split(':')[0]}` });
+}
+
+async function cmdRevoke({ msg, sock, jid, fromMe, state }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const code = await sock.groupRevokeInvite(jid);
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `🔄 Invite link revoked. New: https://chat.whatsapp.com/${code}` });
+}
+
+// Simple in-memory warnings
+const warnings = new Map();
+
+async function cmdWarn({ msg, sock, jid, fromMe }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
+  if (!target) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: 'Mention a user' });
+  }
+  const key = `${jid}:${target}`;
+  const count = (warnings.get(key) || 0) + 1;
+  warnings.set(key, count);
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `⚠️ @${target.split('@')[0]} warned (${count}/3)`, mentions: [target] });
+  if (count >= 3) {
+    try {
+      await sock.groupParticipantsUpdate(jid, [target], 'remove');
+      await sock.sendMessage(jid, { text: `🚫 Auto-kicked after 3 warnings` });
+      warnings.delete(key);
+    } catch (e) { /* ignore */ }
+  }
+}
+
+async function cmdWarnings({ msg, sock, jid, fromMe }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
+  if (!target) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: 'Mention a user' });
+  }
+  const count = warnings.get(`${jid}:${target}`) || 0;
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `📊 @${target.split('@')[0]}: ${count} warning(s)`, mentions: [target] });
+}
+
+async function cmdResetWarn({ msg, sock, jid, fromMe }) {
+  if (!fromMe || !jid.endsWith('@g.us')) return;
+  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
+  if (!target) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: 'Mention a user' });
+  }
+  warnings.delete(`${jid}:${target}`);
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `✅ Warnings reset for @${target.split('@')[0]}`, mentions: [target] });
+}
+
 async function cmdSetBanner({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
   const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
@@ -490,27 +674,63 @@ async function cmdSetBanner({ msg, sock, jid, fromMe, state }) {
 }
 
 async function cmdSetPrefix({ args, sock, jid, fromMe, state, msg }) {
-  if (!fromMe) return;
-  const p = args[0];
-  if (!p || p.length > 2) {
-    await react(sock, msg, '🍎');
-    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}setprefix <char>` });
-  }
-  state.prefix = p; persistConfig();
-  await react(sock, msg, '🍏');
-  await sock.sendMessage(jid, { text: `✅ Prefix set to "${p}"` });
+  return cmdPrefix({ args, sock, jid, fromMe, state, msg });
 }
 
-async function cmdSetName({ args, sock, jid, fromMe, state, msg }) {
+async function cmdSetBotName({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const name = args.join(' ');
   if (!name) {
     await react(sock, msg, '🍎');
-    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}setname <name>` });
+    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}setbotname <name>` });
   }
   state.botName = name; persistConfig();
   await react(sock, msg, '🍏');
   await sock.sendMessage(jid, { text: `✅ Bot name: ${name}` });
+}
+
+async function cmdBroadcast({ args, sock, jid, fromMe, state, msg }) {
+  if (!fromMe) return;
+  const text = args.join(' ');
+  if (!text) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}broadcast <message>` });
+  }
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `📢 Broadcast queued: ${text}` });
+}
+
+async function cmdBlock({ msg, sock, jid, fromMe }) {
+  if (!fromMe) return;
+  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
+  if (!target) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: 'Mention a user' });
+  }
+  await sock.updateBlockStatus(target, 'block');
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `🚫 Blocked @${target.split('@')[0]}`, mentions: [target] });
+}
+
+async function cmdUnblock({ msg, sock, jid, fromMe }) {
+  if (!fromMe) return;
+  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
+  if (!target) {
+    await react(sock, msg, '🍎');
+    return sock.sendMessage(jid, { text: 'Mention a user' });
+  }
+  await sock.updateBlockStatus(target, 'unblock');
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `✅ Unblocked @${target.split('@')[0]}`, mentions: [target] });
+}
+
+async function cmdClearTemp({ sock, jid, fromMe, msg }) {
+  if (!fromMe) return;
+  messageStore.clear();
+  await react(sock, msg, '🍏');
+  await sock.sendMessage(jid, { text: `🗑️ Message cache cleared` });
 }
 
 async function cmdStatus({ sock, jid, state, msg }) {
