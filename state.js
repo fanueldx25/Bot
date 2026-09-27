@@ -38,6 +38,9 @@ const schedules = new Map();
 // ---------- Extra admins ----------
 const extraAdmins = new Set();
 
+// ✏️ NEW: warnings store — groupJid → { userJid: [reason, reason, ...] }
+const warnings = new Map();
+
 // ============================================================================
 // LID → PN MAPPING
 // (WhatsApp sends @lid identifiers; we map them to real phone numbers)
@@ -45,7 +48,9 @@ const extraAdmins = new Set();
 const lidToPn = new Map();
 
 // 🔧 TEMPORARY MANUAL MAPPING
-// Remove this line once Baileys 6.7.18+ auto-resolves LIDs for your account
+// Remove this line once Baileys 6.7.18+ auto-resolves LIDs for your account.
+// NOTE: even after removing it here, the mapping will be re-added on boot
+// from bot_state.json → delete its "lidMappings" entry too.
 lidToPn.set('219683986915532', '237678899829');
 
 function registerLidMapping(lidJid, pnJid) {
@@ -90,7 +95,11 @@ function saveState() {
       antilinkAction: Object.fromEntries(antilinkAction),
       schedules: Object.fromEntries(schedules),
       extraAdmins: [...extraAdmins],
-      lidMappings: Object.fromEntries(lidToPn)
+      lidMappings: Object.fromEntries(lidToPn),
+      // ✏️ NEW: persist warnings (nested object → plain object)
+      warnings: Object.fromEntries(
+        [...warnings.entries()].map(([g, u]) => [g, u])
+      )
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
@@ -105,14 +114,14 @@ function loadState() {
       return;
     }
     const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    
+
     (data.pausedChats || []).forEach((x) => pausedChats.add(x));
     (data.welcomeEnabled || []).forEach((x) => welcomeEnabled.add(x));
     (data.goodbyeEnabled || []).forEach((x) => goodbyeEnabled.add(x));
     Object.assign(customWelcome, data.customWelcome || {});
     if (typeof data.viewOnceEnabled === 'boolean') viewOnceEnabled = data.viewOnceEnabled;
     if (typeof data.autoDownload === 'boolean') autoDownload = data.autoDownload;
-    
+
     (data.reactionsEnabled || []).forEach((x) => reactionsEnabled.add(x));
     (data.reactionsDisabled || []).forEach((x) => reactionsDisabled.add(x));
     if (typeof data.reactionsGlobal === 'boolean') reactionsGlobal = data.reactionsGlobal;
@@ -121,7 +130,12 @@ function loadState() {
     Object.entries(data.schedules || {}).forEach(([k, v]) => schedules.set(k, v));
     (data.extraAdmins || []).forEach((x) => extraAdmins.add(x));
     Object.entries(data.lidMappings || {}).forEach(([k, v]) => lidToPn.set(k, v));
-    
+
+    // ✏️ NEW: restore warnings
+    Object.entries(data.warnings || {}).forEach(([g, users]) => {
+      warnings.set(g, users || {});
+    });
+
     console.log('[State] loaded from disk');
   } catch (e) {
     console.error('[State] load failed:', e.message);
@@ -155,15 +169,15 @@ function isAdmin(jid) {
   if (!jid) return false;
   const num = String(jid).split('@')[0].split(':')[0];
   if (!num) return false;
-  
+
   // 1. exact match
   if (ADMIN_NUMBER && num === ADMIN_NUMBER) return true;
-  
+
   // 2. last-10-digit fallback
   if (ADMIN_NUMBER && ADMIN_NUMBER.length >= 10 && num.length >= 10) {
     if (num.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
   }
-  
+
   // 3. LID → PN mapping
   const pn = lidToPn.get(num);
   if (pn) {
@@ -172,34 +186,42 @@ function isAdmin(jid) {
       if (pn.slice(-10) === ADMIN_NUMBER.slice(-10)) return true;
     }
   }
-  
+
   // 4. extra admins
   if (extraAdmins.has(num)) return true;
   if (pn && extraAdmins.has(pn)) return true;
-  
+
   return false;
 }
 
 // ============================================================================
 // PRESENCE WRAPPERS
+// ✏️ FIXED: use try/finally so fn() is called exactly once even if
+// sendPresenceUpdate throws. Previously fn() ran twice on presence errors.
 // ============================================================================
 async function withTyping(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('composing', jid);
-    await fn();
-    if (sock) await sock.sendPresenceUpdate('paused', jid);
-  } catch (e) {
-    await fn();
+  } catch (_) { /* ignore presence errors */ }
+  try {
+    return await fn();
+  } finally {
+    try {
+      if (sock) await sock.sendPresenceUpdate('paused', jid);
+    } catch (_) { /* ignore */ }
   }
 }
 
 async function withRecording(jid, fn) {
   try {
     if (sock) await sock.sendPresenceUpdate('recording', jid);
-    await fn();
-    if (sock) await sock.sendPresenceUpdate('paused', jid);
-  } catch (e) {
-    await fn();
+  } catch (_) { /* ignore presence errors */ }
+  try {
+    return await fn();
+  } finally {
+    try {
+      if (sock) await sock.sendPresenceUpdate('paused', jid);
+    } catch (_) { /* ignore */ }
   }
 }
 
@@ -209,25 +231,27 @@ async function sendWithBanner(jid, text) {
       await sock.sendMessage(jid, { image: BANNER_BUFFER, caption: text });
       return;
     }
-  } catch (e) {}
+  } catch (e) { /* fall through */ }
   if (sock) await sock.sendMessage(jid, { text });
 }
 
 // ============================================================================
 // SEASONAL SESSION CODE
+// ✏️ Cleaned: removed unused windowSeconds param from slot helper
 // ============================================================================
-function generateSessionCodeForSlot(slot, windowSeconds = 60) {
+function generateSessionCodeForSlot(slot) {
   const secret = process.env.SESSION_SECRET || 'default-session-secret';
-  const h = crypto
+  return crypto
     .createHmac('sha256', secret)
     .update(String(slot))
-    .digest('hex');
-  return h.slice(0, 6).toUpperCase();
+    .digest('hex')
+    .slice(0, 6)
+    .toUpperCase();
 }
 
 function generateSessionCode(windowSeconds = 60) {
   const slot = Math.floor(Date.now() / (windowSeconds * 1000));
-  return generateSessionCodeForSlot(slot, windowSeconds);
+  return generateSessionCodeForSlot(slot);
 }
 
 function verifySessionCode(code, windowSeconds = 60) {
@@ -235,8 +259,8 @@ function verifySessionCode(code, windowSeconds = 60) {
   const clean = String(code).trim().toUpperCase();
   const nowSlot = Math.floor(Date.now() / (windowSeconds * 1000));
   return (
-    clean === generateSessionCodeForSlot(nowSlot, windowSeconds) ||
-    clean === generateSessionCodeForSlot(nowSlot - 1, windowSeconds)
+    clean === generateSessionCodeForSlot(nowSlot) ||
+    clean === generateSessionCodeForSlot(nowSlot - 1)
   );
 }
 
@@ -255,7 +279,8 @@ module.exports = {
   schedules,
   extraAdmins,
   lidToPn,
-  
+  warnings,          // ✏️ NEW
+
   get sock() { return sock; },
   set sock(v) { sock = v; },
   get botJid() { return botJid; },
@@ -275,7 +300,7 @@ module.exports = {
   set autoDownload(v) { autoDownload = v; },
   get reactionsGlobal() { return reactionsGlobal; },
   set reactionsGlobal(v) { reactionsGlobal = v; },
-  
+
   ADMIN_NUMBER,
   UI,
   isAdmin,
@@ -288,7 +313,7 @@ module.exports = {
   setState,
   generateSessionCode,
   verifySessionCode,
-  
+
   // LID helpers
   registerLidMapping,
   resolveLid
