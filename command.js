@@ -5,7 +5,11 @@ import { downloadMediaMessage, getContentType } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
-import { HttpsProxyAgent } from 'https-proxy-agent';
+
+// https-proxy-agent is CommonJS → use default import
+import httpsProxyAgentPkg from 'https-proxy-agent';
+const { HttpsProxyAgent } = httpsProxyAgentPkg;
+
 import { persistConfig, messageStore, scheduleAutoDelete } from './bot.js';
 
 // ============================================================================
@@ -17,16 +21,6 @@ try { ytdl = (await import('@distube/ytdl-core')).default; } catch { console.war
 try { yts = (await import('yt-search')).default; } catch { console.warn('⚠️ yt-search not available'); }
 try { const m = await import('wa-sticker-kit'); Sticker = m.Sticker || m.default?.Sticker || m.default; } catch { console.warn('⚠️ wa-sticker-kit not available'); }
 try { sharp = (await import('sharp')).default; } catch { console.warn('⚠️ sharp not available'); }
-
-// ============================================================================
-// CONFIG
-// ============================================================================
-const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '';
-const WEATHER_API_KEY = process.env.WEATHER_API_KEY || '';
-const HARDCODED_BANNER = process.env.DEFAULT_BANNER_URL || '';
-const TTS_MAX_CHARS = 200;
-const logger = pino({ level: 'silent' });
-
 // ============================================================================
 // PROXY CONFIG (Webshare rotating endpoint)
 // ============================================================================
