@@ -5,6 +5,7 @@ import { downloadMediaMessage, getContentType } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { persistConfig, messageStore, scheduleAutoDelete } from './bot.js';
 
 // ============================================================================
@@ -25,6 +26,154 @@ const WEATHER_API_KEY = process.env.WEATHER_API_KEY || '';
 const HARDCODED_BANNER = process.env.DEFAULT_BANNER_URL || '';
 const TTS_MAX_CHARS = 200;
 const logger = pino({ level: 'silent' });
+
+// ============================================================================
+// PROXY CONFIG (Webshare rotating endpoint)
+// ============================================================================
+const PROXY_URL = process.env.PROXY_URL || '';
+const proxyAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : null;
+
+if (proxyAgent) {
+  console.log('🌐 Proxy enabled:', PROXY_URL.replace(/:[^:@]+@/, ':***@'));
+} else {
+  console.log('🌐 Proxy disabled — downloads may hit 429 rate limits');
+}
+
+/**
+ * Fetch with automatic proxy routing (for downloads & APIs that rate-limit)
+ */
+async function proxiedFetch(url, options = {}) {
+  if (proxyAgent) options.agent = proxyAgent;
+  return fetch(url, options);
+}
+
+/**
+ * Plain fetch (no proxy) — for internal APIs (ImgBB, weather, currency, TTS, QR)
+ * We don't waste proxy bandwidth on these.
+ */
+async function plainFetch(url, options = {}) {
+  return fetch(url, options);
+}
+
+// ============================================================================
+// RATE LIMITING
+// ============================================================================
+/**
+ * Per-user cooldown tracking
+ * Key: `${command}:${senderJid}` → timestamp of last use
+ */
+const userCooldowns = new Map();
+
+/**
+ * Global usage tracking (for the !status command)
+ */
+const usage = {
+  commandsRun: 0,
+  downloadsOk: 0,
+  downloadsFail: 0,
+  bytesDownloaded: 0,
+  proxyHits: 0,
+  startedAt: Date.now(),
+};
+
+/**
+ * Rate limit config — per command type (in milliseconds)
+ */
+const RATE_LIMITS = {
+  // Download commands (heavy, use proxy bandwidth)
+  download: 60_000,   // 1 minute between downloads per user
+
+  // Media tools (cheaper)
+  media: 15_000,      // 15 seconds
+
+  // Utility commands (light)
+  utility: 5_000,     // 5 seconds
+
+  // Info commands (very cheap)
+  info: 2_000,        // 2 seconds
+};
+
+/**
+ * Which rate limit each command belongs to
+ */
+const COMMAND_TIERS = {
+  // Info
+  menu: 'info', list: 'info', ping: 'info', owner: 'info',
+  uptime: 'info', speed: 'info', status: 'info', help: 'info',
+  mode: 'info', prefix: 'info', token: 'info',
+
+  // Media
+  ops: 'media', save: 'media', sticker: 'media', s: 'media',
+  toimg: 'media', getpp: 'media', text2img: 'media',
+  txt2img: 'media', timg: 'media',
+
+  // Downloads (heavy)
+  yt: 'download', tiktok: 'download', tt: 'download',
+  ig: 'download', fb: 'download', play: 'download',
+  song: 'download', music: 'download',
+
+  // Utility
+  tourl: 'media', img2url: 'media', url: 'media',
+  tts: 'media', lyrics: 'utility', forward: 'utility',
+  weather: 'utility', w: 'utility',
+  currency: 'utility', convert: 'utility', forex: 'utility',
+  google: 'utility', search: 'utility', g: 'utility',
+  calc: 'utility', qr: 'utility',
+
+  // Anti (info)
+  antidelete: 'info', antiedit: 'info',
+  history: 'utility', lastdeleted: 'utility',
+
+  // Group (utility)
+  welcome: 'info', setwelcome: 'utility',
+  goodbye: 'info', setgoodbye: 'utility',
+  kick: 'utility', add: 'utility',
+  promote: 'utility', demote: 'utility',
+  mute: 'utility', unmute: 'utility',
+  tagall: 'utility', tag: 'utility',
+  ginfo: 'info', groupinfo: 'info',
+  grouplink: 'info', link: 'info',
+  setname: 'utility', setdesc: 'utility', setgcpp: 'utility',
+  admins: 'info', whois: 'info', revoke: 'utility',
+  warn: 'utility', warnings: 'info', resetwarn: 'utility',
+
+  // Owner / System
+  setbanner: 'utility', setprefix: 'utility', setbotname: 'utility',
+  broadcast: 'utility', block: 'utility', unblock: 'utility',
+  restart: 'info', logout: 'info', cleartemp: 'utility',
+};
+
+/**
+ * Check if a user is rate-limited for a given command.
+ * Returns { allowed: bool, remainingMs: number }
+ */
+function checkRateLimit(cmdName, senderJid) {
+  const tier = COMMAND_TIERS[cmdName] || 'utility';
+  const cooldownMs = RATE_LIMITS[tier];
+  const key = `${tier}:${senderJid}`;
+  const lastUsed = userCooldowns.get(key) || 0;
+  const elapsed = Date.now() - lastUsed;
+
+  if (elapsed < cooldownMs) {
+    return { allowed: false, remainingMs: cooldownMs - elapsed, tier };
+  }
+  return { allowed: true, remainingMs: 0, tier };
+}
+
+function markRateLimited(cmdName, senderJid) {
+  const tier = COMMAND_TIERS[cmdName] || 'utility';
+  userCooldowns.set(`${tier}:${senderJid}`, Date.now());
+}
+
+/**
+ * Periodic cleanup of stale cooldown entries (runs every 5 min)
+ */
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, ts] of userCooldowns.entries()) {
+    if (now - ts > 10 * 60_000) userCooldowns.delete(key);
+  }
+}, 5 * 60_000);
 
 // ============================================================================
 // QUOTED MEDIA HELPERS
@@ -101,7 +250,7 @@ async function setReaction(sock, msg, emoji) {
     await sock.sendMessage(msg.key.remoteJid, {
       react: { text: emoji, key: msg.key }
     });
-  } catch (e) { /* ignore */ }
+  } catch (e) {}
 }
 
 async function clearReaction(sock, msg) {
@@ -109,11 +258,11 @@ async function clearReaction(sock, msg) {
     await sock.sendMessage(msg.key.remoteJid, {
       react: { text: '', key: msg.key }
     });
-  } catch (e) { /* ignore */ }
+  } catch (e) {}
 }
 
 // ============================================================================
-// IMGBB UPLOAD
+// IMGBB UPLOAD (uses plainFetch — no proxy needed)
 // ============================================================================
 async function uploadToImgBB(buffer, name = 'image.jpg') {
   if (!IMGBB_API_KEY) throw new Error('IMGBB_API_KEY not configured');
@@ -123,7 +272,7 @@ async function uploadToImgBB(buffer, name = 'image.jpg') {
   form.append('image', base64);
   form.append('name', name);
 
-  const res = await fetch('https://api.imgbb.com/1/upload', {
+  const res = await plainFetch('https://api.imgbb.com/1/upload', {
     method: 'POST',
     body: form,
   });
@@ -179,34 +328,36 @@ async function textToImage(text, width = 1080, height = 1080) {
 }
 
 // ============================================================================
+// BYTE FORMATTER (for status)
+// ============================================================================
+function fmtBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+// ============================================================================
 // COMMAND REGISTRY
 // ============================================================================
 const commands = {
-  // Info
   menu: cmdMenu, list: cmdList, ping: cmdPing, owner: cmdOwner,
   uptime: cmdUptime, speed: cmdSpeed, status: cmdStatus, help: cmdHelp,
-  // Access
   mode: cmdMode, prefix: cmdPrefix, token: cmdToken,
-  // Media / view-once
   ops: cmdOps, save: cmdSaveMedia,
-  // Downloaders
   yt: cmdYt, tiktok: cmdTiktok, tt: cmdTiktok, ig: cmdIg, fb: cmdFb,
   play: cmdPlay, song: cmdSong, music: cmdPlay,
-  // Media tools
   sticker: cmdSticker, s: cmdSticker, toimg: cmdToImg, getpp: cmdGetPp, tts: cmdTts,
   tourl: cmdToUrl, img2url: cmdToUrl, url: cmdToUrl,
   text2img: cmdTextToImg, txt2img: cmdTextToImg, timg: cmdTextToImg,
-  // Utility
   lyrics: cmdLyrics, forward: cmdForward,
   weather: cmdWeather, w: cmdWeather,
   currency: cmdCurrency, convert: cmdCurrency, forex: cmdCurrency,
   google: cmdGoogle, search: cmdGoogle, g: cmdGoogle,
   calc: cmdCalc,
   qr: cmdQr,
-  // Anti
   antidelete: cmdAntiDelete, antiedit: cmdAntiEdit,
   history: cmdHistory, lastdeleted: cmdLastDeleted,
-  // Group
   welcome: cmdWelcome, setwelcome: cmdSetWelcome,
   goodbye: cmdGoodbye, setgoodbye: cmdSetGoodbye,
   kick: cmdKick, add: cmdAdd, promote: cmdPromote, demote: cmdDemote,
@@ -215,15 +366,13 @@ const commands = {
   setname: cmdSetName, setdesc: cmdSetDesc, setgcpp: cmdSetGcPp,
   admins: cmdAdmins, whois: cmdWhois, revoke: cmdRevoke,
   warn: cmdWarn, warnings: cmdWarnings, resetwarn: cmdResetWarn,
-  // Owner
   setbanner: cmdSetBanner, setprefix: cmdSetPrefix, setbotname: cmdSetBotName,
   broadcast: cmdBroadcast, block: cmdBlock, unblock: cmdUnblock,
-  // System
   restart: cmdRestart, logout: cmdLogout, cleartemp: cmdClearTemp,
 };
 
 // ============================================================================
-// MESSAGE HANDLER
+// MESSAGE HANDLER (with rate limiting)
 // ============================================================================
 export async function handleMessage(payload, sock, state) {
   const { messages, type } = payload;
@@ -252,8 +401,25 @@ export async function handleMessage(payload, sock, state) {
 
     if (!text.startsWith(state.prefix)) continue;
     const [rawCmd, ...args] = text.slice(state.prefix.length).trim().split(/\s+/);
-    const handler = commands[rawCmd.toLowerCase()];
+    const cmdName = rawCmd.toLowerCase();
+    const handler = commands[cmdName];
     if (!handler) continue;
+
+    // Rate limit check (skip for owner)
+    if (!isOwner) {
+      const { allowed, remainingMs, tier } = checkRateLimit(cmdName, sender);
+      if (!allowed) {
+        const seconds = Math.ceil(remainingMs / 1000);
+        await setReaction(sock, msg, '⏳');
+        await sock.sendMessage(jid, {
+          text: `⏳ *Rate limited*\n\nYou can use \`${cmdName}\` again in *${seconds}s*.\n\n_Tier: ${tier}_`
+        });
+        continue;
+      }
+      markRateLimited(cmdName, sender);
+    }
+
+    usage.commandsRun++;
 
     try {
       await sock.readMessages([msg.key]);
@@ -263,7 +429,7 @@ export async function handleMessage(payload, sock, state) {
     try {
       await handler({ args, msg, sock, state, jid, sender, fromMe, isGroup });
     } catch (err) {
-      console.error(`Command "${rawCmd}" failed:`, err.message);
+      console.error(`Command "${cmdName}" failed:`, err.message);
       await setReaction(sock, msg, '❌');
       await sock.sendMessage(jid, { text: `❌ *Error:* ${err.message}` });
     }
@@ -472,12 +638,74 @@ async function cmdPrefix({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `✅ Prefix set to *"${p}"*` });
 }
 
+// ============================================================================
+// 📊 STATUS (with usage stats, rate limit info, proxy info)
+// ============================================================================
 async function cmdStatus({ sock, jid, state, msg }) {
-  const uptime = Math.floor((Date.now() - state.startedAt) / 1000);
+  const now = Date.now();
+  const uptime = Math.floor((now - state.startedAt) / 1000);
+  const usageUptime = Math.floor((now - usage.startedAt) / 1000);
+  const h = Math.floor(uptime / 3600);
+  const m = Math.floor((uptime % 3600) / 60);
+  const s = uptime % 60;
+
+  const usageH = Math.floor(usageUptime / 3600);
+  const usageM = Math.floor((usageUptime % 3600) / 60);
+
+  const totalDownloads = usage.downloadsOk + usage.downloadsFail;
+  const successRate = totalDownloads > 0
+    ? ((usage.downloadsOk / totalDownloads) * 100).toFixed(1)
+    : '—';
+
+  const proxyStatus = proxyAgent ? '🟢 enabled (rotate)' : '🔴 disabled';
+
+  // Approx bandwidth cost (Webshare free = 1 GB/month)
+  const GB_LIMIT = 1024 * 1024 * 1024;
+  const percentUsed = ((usage.bytesDownloaded / GB_LIMIT) * 100).toFixed(2);
+
+  const text =
+    `${DIV}\n` +
+    `║  📊 *BOT STATUS*\n` +
+    `${SUB}\n` +
+    `║  🔗 Connected:  ${state.connected ? '✅' : '❌'}\n` +
+    `║  🔒 Mode:       ${state.mode.toUpperCase()}\n` +
+    `║  ⚡ Prefix:     ${state.prefix}\n` +
+    `║  🤖 Bot name:   ${state.botName}\n` +
+    `║  ⏱ Uptime:     ${h}h ${m}m ${s}s\n` +
+    `║  💾 Cache:      ${messageStore.size} msgs\n` +
+    `║  📨 Msgs seen:  ${state.msgCount || 0}\n` +
+    `${DIV}\n` +
+    `║  *「 🛡️ FEATURES 」*\n` +
+    `${SUB}\n` +
+    `║  🛡️ Anti-delete: ${state.antidelete ? '✅' : '❌'}\n` +
+    `║  ✏️ Anti-edit:   ${state.antiedit ? '✅' : '❌'}\n` +
+    `║  👋 Welcome:     ${state.welcome ? '✅' : '❌'}\n` +
+    `║  👋 Goodbye:     ${state.goodbye ? '✅' : '❌'}\n` +
+    `${DIV}\n` +
+    `║  *「 📈 USAGE (since ${usageH}h ${usageM}m ago) 」*\n` +
+    `${SUB}\n` +
+    `║  🎯 Commands run:  ${usage.commandsRun}\n` +
+    `║  ✅ Downloads OK:  ${usage.downloadsOk}\n` +
+    `║  ❌ Downloads bad: ${usage.downloadsFail}\n` +
+    `║  📊 Success rate:  ${successRate}%\n` +
+    `║  📦 Data used:     ${fmtBytes(usage.bytesDownloaded)}\n` +
+    `║  💾 Quota (1 GB):  ${percentUsed}%\n` +
+    `${DIV}\n` +
+    `║  *「 🌐 PROXY 」*\n` +
+    `${SUB}\n` +
+    `║  ${proxyStatus}\n` +
+    `${DIV}\n` +
+    `║  *「 ⏳ RATE LIMITS 」*\n` +
+    `${SUB}\n` +
+    `║  📥 Download: ${RATE_LIMITS.download / 1000}s / user\n` +
+    `║  🎨 Media:    ${RATE_LIMITS.media / 1000}s / user\n` +
+    `║  🔧 Utility:  ${RATE_LIMITS.utility / 1000}s / user\n` +
+    `║  ℹ️ Info:     ${RATE_LIMITS.info / 1000}s / user\n` +
+    `║  👑 Owner:    unlimited\n` +
+    `${DIV}`;
+
   await setReaction(sock, msg, '✅');
-  await sock.sendMessage(jid, {
-    text: `${DIV}\n║  📊 *STATUS*\n${SUB}\n║  🔗 Connected: ${state.connected}\n║  🔒 Mode: ${state.mode}\n║  ⏱ Uptime: ${uptime}s\n║  🛡️ Anti-delete: ${state.antidelete}\n║  ✏️ Anti-edit: ${state.antiedit}\n║  👋 Welcome: ${state.welcome}\n║  💾 Cache: ${messageStore.size} msgs\n║  📨 Messages: ${state.msgCount || 0}\n${DIV}`
-  });
+  await sock.sendMessage(jid, { text });
 }
 
 // ============================================================================
@@ -491,18 +719,18 @@ async function cmdWeather({ args, sock, jid, state, msg }) {
   }
   if (!WEATHER_API_KEY) {
     await setReaction(sock, msg, '🍎');
-    return sock.sendMessage(jid, { text: '⚠️ WEATHER_API_KEY not configured (get one free at openweathermap.org)' });
+    return sock.sendMessage(jid, { text: '⚠️ WEATHER_API_KEY not configured' });
   }
 
   await setReaction(sock, msg, '🔎');
   await sendTyping(sock, jid, 1200);
 
   try {
-    const wRes = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric`);
+    const wRes = await plainFetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric`);
     const w = await wRes.json();
     if (w.cod !== 200) throw new Error(w.message || 'City not found');
 
-    const fRes = await fetch(`https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric&cnt=8`);
+    const fRes = await plainFetch(`https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric&cnt=8`);
     const f = await fRes.json();
 
     const emojiMap = {
@@ -581,7 +809,7 @@ async function cmdCurrency({ args, sock, jid, state, msg }) {
   await sendTyping(sock, jid, 1000);
 
   try {
-    const res = await fetch(`https://api.exchangerate-api.com/v4/latest/${from}`);
+    const res = await plainFetch(`https://api.exchangerate-api.com/v4/latest/${from}`);
     const data = await res.json();
     if (!data.rates) throw new Error('Invalid currency code');
     const rate = data.rates[to];
@@ -610,7 +838,7 @@ async function cmdCurrency({ args, sock, jid, state, msg }) {
 }
 
 // ============================================================================
-// 🔍 GOOGLE SEARCH
+// 🔍 GOOGLE SEARCH (DuckDuckGo Instant Answer)
 // ============================================================================
 async function cmdGoogle({ args, sock, jid, state, msg }) {
   const query = args.join(' ');
@@ -623,7 +851,7 @@ async function cmdGoogle({ args, sock, jid, state, msg }) {
   await sendTyping(sock, jid, 1500);
 
   try {
-    const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+    const res = await plainFetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
     const data = await res.json();
 
     const lines = [];
@@ -717,7 +945,7 @@ async function cmdQr({ args, sock, jid, state, msg }) {
 }
 
 // ============================================================================
-// 🎵 MUSIC — @distube/ytdl-core + yt-search
+// 🎵 MUSIC — @distube/ytdl-core + yt-search + proxy + usage tracking
 // ============================================================================
 async function cmdPlay({ args, sock, jid, state, msg }) {
   const query = args.join(' ').trim();
@@ -739,7 +967,6 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
   await sendRecording(sock, jid, 1200);
 
   try {
-    // 1. Search YouTube
     const results = await yts(query);
     const video = results.videos?.[0];
     if (!video) throw new Error('No results found');
@@ -755,12 +982,14 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
         `${DIV}`
     });
 
-    // 2. Download audio stream
-    const stream = ytdl(video.url, {
+    const streamOpts = {
       quality: 'highestaudio',
       filter: 'audioonly',
       highWaterMark: 1 << 25,
-    });
+    };
+    if (proxyAgent) streamOpts.agent = proxyAgent;
+
+    const stream = ytdl(video.url, streamOpts);
 
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
@@ -768,10 +997,10 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
 
     if (buffer.length > 16 * 1024 * 1024) {
       await setReaction(sock, msg, '❌');
+      usage.downloadsFail++;
       return sock.sendMessage(jid, { text: '❌ Audio too large (max 16MB)' });
     }
 
-    // 3. Send as downloadable audio
     await sock.sendMessage(jid, {
       audio: buffer,
       mimetype: 'audio/mp4',
@@ -779,14 +1008,21 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
       fileName: `${video.title.replace(/[^\w\s]/g, '').slice(0, 60)}.m4a`,
     });
 
+    usage.downloadsOk++;
+    usage.bytesDownloaded += buffer.length;
+    if (proxyAgent) usage.proxyHits++;
+
     await setReaction(sock, msg, '✅');
   } catch (e) {
     console.error('Play error:', e);
+    usage.downloadsFail++;
     await setReaction(sock, msg, '❌');
 
     let friendlyMsg = e.message;
     if (/sign in|bot|cookies/i.test(e.message)) {
       friendlyMsg = 'YouTube is blocking downloads from this server. Try again later or use a different song.';
+    } else if (/429|too many/i.test(e.message)) {
+      friendlyMsg = 'Rate limited. Wait a minute and try again.';
     }
 
     await sock.sendMessage(jid, { text: `❌ Music error: ${friendlyMsg}` });
@@ -822,30 +1058,43 @@ async function cmdYt({ args, sock, jid, fromMe, state, msg }) {
       text: `${DIV}\n║  ⏳ *Processing YouTube video...*\n║  📹 ${v.title}\n║  ⏱ ${Math.floor(v.lengthSeconds / 60)}m ${v.lengthSeconds % 60}s\n${DIV}`
     });
 
-    const stream = ytdl(url, { quality: 'highest', filter: 'audioandvideo' });
+    const streamOpts = { quality: 'highest', filter: 'audioandvideo' };
+    if (proxyAgent) streamOpts.agent = proxyAgent;
+
+    const stream = ytdl(url, streamOpts);
+
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
 
     if (buffer.length > 64 * 1024 * 1024) {
       await setReaction(sock, msg, '❌');
+      usage.downloadsFail++;
       return sock.sendMessage(jid, { text: '❌ Video too large (max 64MB)' });
     }
 
     await sock.sendMessage(jid, { video: buffer, caption: `📹 *${v.title}*` });
+
+    usage.downloadsOk++;
+    usage.bytesDownloaded += buffer.length;
+    if (proxyAgent) usage.proxyHits++;
+
     await setReaction(sock, msg, '✅');
   } catch (e) {
+    usage.downloadsFail++;
     await setReaction(sock, msg, '❌');
     let friendlyMsg = e.message;
     if (/sign in|bot|cookies/i.test(e.message)) {
       friendlyMsg = 'YouTube is blocking downloads. Try again later.';
+    } else if (/429|too many/i.test(e.message)) {
+      friendlyMsg = 'Rate limited. Wait a minute and try again.';
     }
     await sock.sendMessage(jid, { text: `❌ *Download failed:* ${friendlyMsg}` });
   }
 }
 
 // ============================================================================
-// 🎬 TIKTOK DOWNLOADER — multi-API fallback (FIXES "Unexpected end of JSON input")
+// 🎬 TIKTOK — multi-API with proxy
 // ============================================================================
 async function cmdTiktok({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -864,7 +1113,7 @@ async function cmdTiktok({ args, sock, jid, fromMe, state, msg }) {
 
     await setReaction(sock, msg, '⏳');
 
-    const res = await fetch(data.videoUrl, {
+    const res = await proxiedFetch(data.videoUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': 'https://www.tiktok.com/',
@@ -875,6 +1124,7 @@ async function cmdTiktok({ args, sock, jid, fromMe, state, msg }) {
 
     if (buffer.length > 64 * 1024 * 1024) {
       await setReaction(sock, msg, '❌');
+      usage.downloadsFail++;
       return sock.sendMessage(jid, { text: '❌ Video too large (max 64MB)' });
     }
 
@@ -883,27 +1133,33 @@ async function cmdTiktok({ args, sock, jid, fromMe, state, msg }) {
       `║  📹 *${(data.title || 'TikTok video').slice(0, 80)}*\n` +
       `║  👤 ${data.author || 'Unknown'}\n` +
       `║  📊 Source: ${data.source}\n` +
+      `║  🌐 Proxy: ${proxyAgent ? 'rotate' : 'direct'}\n` +
       `${DIV}`;
 
     await sock.sendMessage(jid, { video: buffer, caption });
+
+    usage.downloadsOk++;
+    usage.bytesDownloaded += buffer.length;
+    if (proxyAgent) usage.proxyHits++;
+
     await setReaction(sock, msg, '✅');
   } catch (e) {
     console.error('TikTok error:', e.message);
+    usage.downloadsFail++;
     await setReaction(sock, msg, '❌');
     await sock.sendMessage(jid, {
-      text: `❌ *TikTok download failed:* ${e.message}\n\n💡 Tips:\n• Make sure the URL is public\n• Try a fresh link from the app\n• Some regions are blocked`
+      text: `❌ *TikTok download failed:* ${e.message}\n\n💡 Tips:\n• Check URL is public\n• Verify proxy: ${proxyAgent ? 'enabled' : 'MISSING'}\n• Try a different link`
     });
   }
 }
 
 // ----------------------------------------------------------------------------
-// Multi-API TikTok resolver — tries 4 different endpoints
+// Multi-API TikTok resolver — with proxied fetch
 // ----------------------------------------------------------------------------
 async function fetchTikTokVideo(url) {
   const apis = [
-    // API 1: TikWM (most reliable, returns JSON)
     async () => {
-      const r = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`, {
+      const r = await proxiedFetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
       });
       const j = await r.json();
@@ -916,9 +1172,8 @@ async function fetchTikTokVideo(url) {
       };
     },
 
-    // API 2: Lovetik
     async () => {
-      const r = await fetch(`https://lovetik.com/api/ajax/search?query=${encodeURIComponent(url)}`, {
+      const r = await proxiedFetch(`https://lovetik.com/api/ajax/search?query=${encodeURIComponent(url)}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
       });
       const j = await r.json();
@@ -933,9 +1188,8 @@ async function fetchTikTokVideo(url) {
       };
     },
 
-    // API 3: MusicalDown
     async () => {
-      const r = await fetch('https://musicaldown.com/api/upload', {
+      const r = await proxiedFetch('https://musicaldown.com/api/upload', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -953,7 +1207,6 @@ async function fetchTikTokVideo(url) {
       };
     },
 
-    // API 4: Legacy ttdl (only if available)
     async () => {
       if (!ttdl) throw new Error('ttdl not available');
       const v = await ttdl(url);
@@ -1017,7 +1270,7 @@ async function cmdFb({ args, sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// MEDIA TOOLS — OPS (view-once)
+// MEDIA — OPS (view-once)
 // ============================================================================
 async function cmdOps({ msg, sock, jid, fromMe, state }) {
   if (!fromMe || !state.ownerJid) return;
@@ -1042,7 +1295,7 @@ async function cmdOps({ msg, sock, jid, fromMe, state }) {
 }
 
 // ============================================================================
-// MEDIA TOOLS — SAVE
+// MEDIA — SAVE
 // ============================================================================
 async function cmdSaveMedia({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
@@ -1185,7 +1438,7 @@ async function cmdToUrl({ msg, sock, jid, fromMe, state }) {
   }
   if (!IMGBB_API_KEY) {
     await setReaction(sock, msg, '❌');
-    return sock.sendMessage(jid, { text: '⚠️ IMGBB_API_KEY not configured. Get a free key at api.imgbb.com' });
+    return sock.sendMessage(jid, { text: '⚠️ IMGBB_API_KEY not configured' });
   }
   await setReaction(sock, msg, '⏳');
   await sendTyping(sock, jid, 1000);
@@ -1217,7 +1470,7 @@ async function cmdGetPp({ msg, sock, jid, fromMe, state }) {
   try {
     const url = await sock.profilePictureUrl(target, 'image');
     if (!url) throw new Error('No profile picture');
-    const res = await fetch(url);
+    const res = await plainFetch(url);
     const buffer = Buffer.from(await res.arrayBuffer());
     await sock.sendMessage(jid, { image: buffer, caption: `🖼️ Profile picture of @${target.split('@')[0]}`, mentions: [target] });
     await setReaction(sock, msg, '✅');
@@ -1254,7 +1507,7 @@ async function cmdTts({ args, sock, jid, fromMe, state, msg }) {
   try {
     const encoded = encodeURIComponent(text);
     const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en&client=tw-ob`;
-    const res = await fetch(url, {
+    const res = await plainFetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
@@ -1288,7 +1541,7 @@ async function cmdLyrics({ args, sock, jid, fromMe, state, msg }) {
   }
   await setReaction(sock, msg, '🔎');
   try {
-    const res = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(query.split(' ')[0])}/${encodeURIComponent(query.split(' ').slice(1).join(' '))}`);
+    const res = await plainFetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(query.split(' ')[0])}/${encodeURIComponent(query.split(' ').slice(1).join(' '))}`);
     const data = await res.json();
     if (!data.lyrics) throw new Error('No lyrics found');
     await setReaction(sock, msg, '✅');
@@ -1680,7 +1933,7 @@ async function cmdWarn({ msg, sock, jid, fromMe }) {
       await sock.groupParticipantsUpdate(jid, [target], 'remove');
       await sock.sendMessage(jid, { text: `🚫 Auto-kicked after 3 warnings` });
       warnings.delete(key);
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
   }
 }
 
