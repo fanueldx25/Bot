@@ -23,7 +23,7 @@ if (!ADMIN_PASSWORD) {
   console.warn('⚠️  ADMIN_PASSWORD not set. Set it in Render environment variables.');
 }
 
-// Parse cookies (simple)
+// Parse cookies
 app.use((req, res, next) => {
   req.cookies = {};
   const cookieHeader = req.headers.cookie;
@@ -145,7 +145,17 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- Boot bot (only if no session exists yet; otherwise it will reconnect on its own) ----
+// ---- Health check (for self-ping) ----
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: Math.floor((Date.now() - state.startedAt) / 1000),
+    connected: state.connected,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ---- Boot bot ----
 startBot().catch((err) => console.error('Bot boot failed:', err));
 
 // ---- Protected API routes ----
@@ -163,14 +173,13 @@ app.get('/api/status', (req, res) => {
     antidelete: state.antidelete,
     antiedit: state.antiedit,
     welcome: state.welcome,
-    msgCount: state.msgCount || 0,  // ← NEW: message count
+    msgCount: state.msgCount || 0,
   });
 });
 
 /**
  * Request a pairing code.
  * Body: { phone: "15551234567", force?: boolean }
- * `force` defaults to true → always generates a FRESH code.
  */
 app.post('/api/pair', async (req, res) => {
   try {
@@ -252,16 +261,6 @@ app.post('/api/session/refresh', async (req, res) => {
   }
 });
 
-// ---- Health check endpoint (for self-ping) ----
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    uptime: Math.floor((Date.now() - state.startedAt) / 1000),
-    connected: state.connected,
-    timestamp: new Date().toISOString(),
-  });
-});
-
 // ---- Serve static frontend (protected) ----
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -270,15 +269,11 @@ app.get('*', (req, res) => {
 });
 
 // ============================================================================
-// SELF-PING (keeps Render free tier awake)
+// SELF-PING
 // ============================================================================
 
 const SELF_URL = process.env.SELF_URL;
 
-/**
- * Ping the server's own /health endpoint to prevent Render from
- * spinning down the free instance after 15 minutes of inactivity.
- */
 function selfPing() {
   if (!SELF_URL) return;
 
@@ -286,7 +281,6 @@ function selfPing() {
   const client = url.startsWith('https') ? https : http;
 
   const req = client.get(url, (res) => {
-    // Consume response to free memory
     res.on('data', () => {});
     res.on('end', () => {
       if (res.statusCode === 200) {
@@ -307,12 +301,10 @@ function selfPing() {
   });
 }
 
-// Ping every 14 minutes (Render spins down after 15 min of inactivity)
 const PING_INTERVAL_MS = 14 * 60 * 1000;
 
 if (SELF_URL) {
   console.log(`💓 Self-ping enabled → ${SELF_URL}/health every ${PING_INTERVAL_MS / 60000} min`);
-  // First ping after 30s (let the server fully boot)
   setTimeout(() => {
     selfPing();
     setInterval(selfPing, PING_INTERVAL_MS);

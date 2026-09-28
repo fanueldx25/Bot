@@ -3,7 +3,6 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  Browsers,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -12,7 +11,9 @@ import path from 'path';
 import crypto from 'crypto';
 import { handleMessage, handleReaction, handleGroupParticipants } from './command.js';
 
-// ---- Shared state ----
+// ============================================================================
+// SHARED STATE
+// ============================================================================
 export const state = {
   sock: null,
   connected: false,
@@ -33,10 +34,12 @@ export const state = {
   prefix: '!',
   bannerUrl: null,
   botName: 'WA Bot',
-  msgCount: 0,  // ← NEW: message counter for stats
+  msgCount: 0,
 };
 
-// ---- Paths ----
+// ============================================================================
+// PATHS
+// ============================================================================
 const IS_RENDER = !!process.env.RENDER;
 const PERSISTENT = process.env.PERSISTENT_DISK === 'true';
 const DATA_ROOT = IS_RENDER ? (PERSISTENT ? '/data' : '/tmp') : '.';
@@ -44,7 +47,9 @@ const AUTH_DIR = path.join(DATA_ROOT, 'auth');
 const DATA_DIR = path.join(DATA_ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'bot-data.json');
 
-// ---- In-memory message store ----
+// ============================================================================
+// IN-MEMORY MESSAGE STORE
+// ============================================================================
 export const messageStore = new Map();
 const MAX_STORE = 500;
 
@@ -58,7 +63,9 @@ function addToStore(msg) {
   }
 }
 
-// ---- JSON file storage ----
+// ============================================================================
+// JSON FILE STORAGE
+// ============================================================================
 function ensureDirs() {
   for (const d of [DATA_DIR, AUTH_DIR]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
@@ -85,7 +92,11 @@ function saveData() {
   ];
   fields.forEach(f => { data[f] = state[f]; });
   data.savedAt = new Date().toISOString();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('Failed to save bot-data.json:', e.message);
+  }
 }
 
 function generateToken() {
@@ -179,14 +190,9 @@ export function clearSenderKeyMemory() {
 }
 
 // ============================================================================
-// AUTH FOLDER HELPERS (for fresh pairing requests)
+// AUTH FOLDER HELPERS
 // ============================================================================
 
-/**
- * Wipes the entire auth folder. Used when we need a clean pairing attempt
- * (e.g. user requests a new pairing code with a different number, or the
- * cached code needs to be invalidated).
- */
 function wipeAuthFolder() {
   if (fs.existsSync(AUTH_DIR)) {
     for (const f of fs.readdirSync(AUTH_DIR)) {
@@ -197,16 +203,37 @@ function wipeAuthFolder() {
 }
 
 // ============================================================================
+// SHARED SOCKET OPTIONS
+// ============================================================================
+
+// CANONICAL browser label — fixes WhatsApp rejecting pairing codes
+const BROWSER_LABEL = ['Ubuntu', 'Chrome', '20.0.04'];
+
+function makeSocketOptions(authState) {
+  return {
+    auth: {
+      creds: authState.creds,
+      keys: makeCacheableSignalKeyStore(authState.keys, pino({ level: 'silent' })),
+    },
+    printQRInTerminal: false,
+    logger: pino({ level: 'silent' }),
+    browser: BROWSER_LABEL,
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
+  };
+}
+
+// ============================================================================
 // BOT LIFECYCLE
 // ============================================================================
 
-let activeSocket = null; // separate ref so we always end the right one
+let activeSocket = null;
 
 export async function startBot(options = {}) {
   ensureDirs();
   if (!options.skipLoad) loadData();
 
-  // Always end any previous socket before creating a new one
   if (activeSocket) {
     try { activeSocket.end(undefined); } catch (_) {}
     activeSocket = null;
@@ -217,21 +244,23 @@ export async function startBot(options = {}) {
 
   const sock = makeWASocket({
     version,
-    auth: {
-      creds: authState.creds,
-      keys: makeCacheableSignalKeyStore(authState.keys, pino({ level: 'silent' })),
-    },
-    printQRInTerminal: false,
-    logger: pino({ level: 'silent' }),
-    browser: Browsers.macOS('Chrome'),
-    markOnlineOnConnect: false,
-    syncFullHistory: false,
-    generateHighQualityLinkPreview: false,
+    ...makeSocketOptions(authState),
   });
 
   activeSocket = sock;
   state.sock = sock;
 
+  attachFullHandlers(sock, authState, saveCreds);
+
+  return sock;
+}
+
+// ============================================================================
+// FULL HANDLERS
+// ============================================================================
+
+function attachFullHandlers(sock, authState, saveCreds) {
+  // Message store + counter
   sock.ev.on('messages.upsert', ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
@@ -242,6 +271,7 @@ export async function startBot(options = {}) {
     }
   });
 
+  // Command dispatch
   sock.ev.on('messages.upsert', (payload) => handleMessage(payload, sock, state));
 
   // Anti-delete + anti-edit
@@ -281,10 +311,14 @@ export async function startBot(options = {}) {
     }
   });
 
+  // Reactions & group events
   sock.ev.on('messages.reaction', (reactions) => handleReaction(reactions, sock, state));
   sock.ev.on('group-participants.update', (update) => handleGroupParticipants(update, sock, state));
+
+  // Credentials persistence
   sock.ev.on('creds.update', saveCreds);
 
+  // Connection lifecycle
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
@@ -293,6 +327,7 @@ export async function startBot(options = {}) {
       state.isInitialConnection = false;
       state.pairingCode = null;
       state.pairingPhone = null;
+
       const jid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
       if (!state.ownerJid) {
         state.ownerJid = jid;
@@ -305,39 +340,44 @@ export async function startBot(options = {}) {
     if (connection === 'close') {
       state.connected = false;
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      if (state.isInitialConnection && !authState.creds.registered) return;
+
+      // If we were waiting for pairing and it failed, don't reconnect
+      if (state.isInitialConnection && !authState.creds.registered) {
+        console.log('🔌 Pairing attempt closed (not registered yet)');
+        return;
+      }
+
       if (code !== DisconnectReason.loggedOut) {
         console.log('🔁 Reconnecting...');
         state.isInitialConnection = false;
-        // Small delay to avoid tight reconnect loops
-        setTimeout(() => startBot({ skipLoad: true }).catch(e => console.error('reconnect failed', e)), 2000);
+        setTimeout(
+          () => startBot({ skipLoad: true }).catch(e => console.error('reconnect failed', e)),
+          2000
+        );
+      } else {
+        console.log('🚪 Logged out — not reconnecting');
       }
     }
   });
-
-  return sock;
 }
+
+// ============================================================================
+// PAIRING (FIXED)
+// ============================================================================
 
 /**
  * Request a FRESH pairing code.
  *
- * The key insight: Baileys caches the pairing code per socket. To get a new one
- * you must:
- *   1. End the current socket.
- *   2. Wipe the auth folder (partial creds confuse the next request).
- *   3. Start a brand-new socket.
- *   4. Wait for the socket to be ready, THEN call requestPairingCode.
- *
- * If `force` is true (default), it will always regenerate — even if a code
- * already exists. Pass force=false to reuse an existing code.
+ * CRITICAL: requestPairingCode() must be called AFTER the socket reaches
+ * the 'connecting' state (signalled by the first 'qr' event). Calling it
+ * too early produces codes that WhatsApp rejects.
  */
 export async function requestPairing(phoneNumber, force = true) {
   const cleaned = String(phoneNumber).replace(/\D/g, '');
   if (!cleaned || cleaned.length < 7) {
-    throw new Error('Invalid phone number');
+    throw new Error('Invalid phone number (include country code, digits only)');
   }
 
-  // If same number AND same unexpired code AND not forcing, return cached
   if (!force && state.pairingCode && state.pairingPhone === cleaned) {
     return state.pairingCode;
   }
@@ -354,154 +394,84 @@ export async function requestPairing(phoneNumber, force = true) {
   state.pairingCode = null;
   state.pairingPhone = null;
 
-  // 2. Wipe auth folder so Baileys starts from scratch
+  // 2. Wipe auth folder for a clean slate
   wipeAuthFolder();
 
-  // 3. Build a fresh socket
+  // 3. Build fresh socket
   const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
     version,
-    auth: {
-      creds: authState.creds,
-      keys: makeCacheableSignalKeyStore(authState.keys, pino({ level: 'silent' })),
-    },
-    printQRInTerminal: false,
-    logger: pino({ level: 'silent' }),
-    browser: Browsers.macOS('Chrome'),
-    markOnlineOnConnect: false,
-    syncFullHistory: false,
-    generateHighQualityLinkPreview: false,
+    ...makeSocketOptions(authState),
   });
 
   activeSocket = sock;
   state.sock = sock;
   state.isInitialConnection = true;
 
-  // Re-attach the same event handlers (use startBot for full features;
-  // here we only need creds + connection for pairing).
   sock.ev.on('creds.update', saveCreds);
 
-  // 4. Wait for the socket to be ready to accept a pairing request.
-  //    Baileys emits a QR / connection.update when ready; we poll the ws
-  //    readyState as a fallback.
-  await new Promise((resolve) => {
+  // 4. WAIT for socket readiness — the 'qr' event is the reliable signal.
+  //    Baileys emits 'qr' even in pairing-code mode; it means the socket
+  //    is registered with WhatsApp servers and ready for pairing requests.
+  await new Promise((resolve, reject) => {
     let done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    sock.ev.on('connection.update', (u) => {
-      if (u.qr || u.connection === 'connecting' || u.connection === 'open') finish();
-    });
-    // Fallback timeout — Baileys is usually ready in <1s
-    setTimeout(finish, 4000);
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      err ? reject(err) : resolve();
+    };
+
+    const handler = (u) => {
+      if (u.qr) {
+        console.log('📡 Socket ready (qr event received)');
+        finish();
+      }
+      if (u.connection === 'open') {
+        console.log('📡 Socket already open');
+        finish();
+      }
+      if (u.connection === 'close') {
+        const code = new Boom(u.lastDisconnect?.error)?.output?.statusCode;
+        if (code && code !== DisconnectReason.loggedOut) {
+          finish(new Error(`Connection closed during pairing setup (code ${code})`));
+        }
+      }
+    };
+
+    sock.ev.on('connection.update', handler);
+
+    // Safety timeout — 30s max
+    setTimeout(() => finish(new Error('Timed out waiting for socket readiness (30s)')), 30000);
   });
 
-  // 5. Request the code
+  // 5. Request the code — socket is now guaranteed ready
   let code;
   try {
     code = await sock.requestPairingCode(cleaned);
   } catch (e) {
+    console.error('requestPairingCode error:', e);
     throw new Error(`Pairing request failed: ${e.message}`);
+  }
+
+  if (!code) {
+    throw new Error('WhatsApp returned an empty pairing code');
   }
 
   state.pairingCode = code;
   state.pairingPhone = cleaned;
   console.log(`🔑 Fresh pairing code for ${cleaned}: ${code}`);
 
-  // 6. Keep listening — once the user enters the code on their phone,
-  //    'creds.update' will fire with registered=true, then 'connection: open'.
-  //    We wire up the full bot handlers here so the bot becomes live.
+  // 6. Attach full handlers for when pairing succeeds
   attachFullHandlers(sock, authState, saveCreds);
 
   return code;
 }
 
-/**
- * Attach the full message-handling pipeline to a socket that was created
- * inside requestPairing(). This makes the bot fully functional the moment
- * pairing succeeds.
- */
-function attachFullHandlers(sock, authState, saveCreds) {
-  sock.ev.on('messages.upsert', ({ messages, type }) => {
-    if (type !== 'notify') return;
-    for (const msg of messages) {
-      if (msg.message) {
-        addToStore(msg);
-        state.msgCount = (state.msgCount || 0) + 1;
-      }
-    }
-  });
-
-  sock.ev.on('messages.upsert', (payload) => handleMessage(payload, sock, state));
-
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    for (const msg of messages) {
-      const proto = msg.message?.protocolMessage;
-      if (!proto) continue;
-
-      if (proto.type === 'REVOKE' && state.antidelete && state.ownerJid) {
-        const origKey = proto.key;
-        if (!origKey) continue;
-        const original = messageStore.get(`${origKey.remoteJid}:${origKey.id}`);
-        if (original) {
-          try {
-            await sock.sendMessage(state.ownerJid, {
-              forward: original,
-              text: `⚠️ *Deleted message recovered*\nChat: ${origKey.remoteJid}`,
-            });
-          } catch (e) { console.error('anti-delete failed', e.message); }
-        }
-      }
-
-      if (proto.type === 'MESSAGE_EDIT' && state.antiedit && state.ownerJid) {
-        const origKey = proto.key;
-        const edited = proto.editedMessage;
-        if (!origKey || !edited) continue;
-        const original = messageStore.get(`${origKey.remoteJid}:${origKey.id}`);
-        const editedText = edited.conversation || edited.extendedTextMessage?.text || '[media]';
-        const originalText = original?.message?.conversation || original?.message?.extendedTextMessage?.text || '[media]';
-        try {
-          await sock.sendMessage(state.ownerJid, {
-            text: `✏️ *Message edited*\nChat: ${origKey.remoteJid}\n\n*Original:*\n${originalText}\n\n*Edited:*\n${editedText}`,
-          });
-        } catch (e) { console.error('anti-edit failed', e.message); }
-      }
-    }
-  });
-
-  sock.ev.on('messages.reaction', (reactions) => handleReaction(reactions, sock, state));
-  sock.ev.on('group-participants.update', (update) => handleGroupParticipants(update, sock, state));
-
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-
-    if (connection === 'open') {
-      state.connected = true;
-      state.isInitialConnection = false;
-      state.pairingCode = null;
-      state.pairingPhone = null;
-      const jid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-      if (!state.ownerJid) {
-        state.ownerJid = jid;
-        saveData();
-      }
-      if (!state.sessionToken) generateToken();
-      console.log('✅ Connected as', jid);
-    }
-
-    if (connection === 'close') {
-      state.connected = false;
-      const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      if (state.isInitialConnection && !authState.creds.registered) return;
-      if (code !== DisconnectReason.loggedOut) {
-        console.log('🔁 Reconnecting...');
-        state.isInitialConnection = false;
-        setTimeout(() => startBot({ skipLoad: true }).catch(e => console.error('reconnect failed', e)), 2000);
-      }
-    }
-  });
-}
+// ============================================================================
+// RESTART
+// ============================================================================
 
 export async function restartBot(sessionPkg = null) {
   console.log('🔄 Restarting bot...');
@@ -525,6 +495,10 @@ export async function restartBot(sessionPkg = null) {
   await startBot({ skipLoad: true });
   return true;
 }
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
 
 export function persistConfig() { saveData(); }
 export function getToken() { return state.sessionToken; }
