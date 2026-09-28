@@ -1,9 +1,13 @@
+// ============================================================================
+// IMPORTS
+// ============================================================================
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import https from 'https';
 import http from 'http';
+import fs from 'fs';
 import {
   startBot, requestPairing, state, persistConfig,
   regenerateToken, getBotData, exportSessionPackage,
@@ -14,7 +18,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// ---- Auth configuration ----
+// ============================================================================
+// AUTH CONFIG
+// ============================================================================
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const COOKIE_NAME = 'wa_bot_auth';
@@ -23,7 +29,9 @@ if (!ADMIN_PASSWORD) {
   console.warn('⚠️  ADMIN_PASSWORD not set. Set it in Render environment variables.');
 }
 
-// Parse cookies
+// ============================================================================
+// COOKIE PARSER
+// ============================================================================
 app.use((req, res, next) => {
   req.cookies = {};
   const cookieHeader = req.headers.cookie;
@@ -36,26 +44,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// Auth middleware
-function requireAuth(req, res, next) {
-  if (req.path === '/login' || req.path === '/api/login') return next();
-
-  const token = req.cookies[COOKIE_NAME];
-  if (token && verifyToken(token)) return next();
-
-  if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  return res.redirect('/login');
-}
-
-function generateToken() {
+// ============================================================================
+// AUTH HELPERS
+// ============================================================================
+function generateAuthToken() {
   const payload = `${Date.now()}`;
   const hmac = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
   return `${payload}.${hmac}`;
 }
 
-function verifyToken(token) {
+function verifyAuthToken(token) {
   if (!token || !token.includes('.')) return false;
   const [payload, hmac] = token.split('.');
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
@@ -64,67 +62,34 @@ function verifyToken(token) {
   return age < 7 * 24 * 60 * 60 * 1000;
 }
 
-// ---- Login page ----
-const LOGIN_HTML = `
-<!DOCTYPE html>
-<html lang="en" class="dark">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login — WA Bot</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { darkMode: 'class' }</script>
-</head>
-<body class="bg-neutral-950 text-neutral-100 min-h-screen flex items-center justify-center p-4">
-  <div class="w-full max-w-sm">
-    <div class="rounded-2xl bg-neutral-900 border border-neutral-800 p-6 space-y-4">
-      <div class="text-center">
-        <div class="w-12 h-12 mx-auto rounded-xl bg-emerald-500 flex items-center justify-center text-neutral-900 font-bold text-xl">W</div>
-        <h1 class="text-lg font-semibold mt-3">WhatsApp Bot</h1>
-        <p class="text-xs text-neutral-500 mt-1">Enter password to continue</p>
-      </div>
-      <form id="loginForm" class="space-y-3">
-        <input id="password" type="password" placeholder="Password" required
-          class="w-full px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
-        <button type="submit"
-          class="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-neutral-900 text-sm font-medium transition-colors">
-          Login
-        </button>
-      </form>
-      <p id="error" class="hidden text-xs text-red-400 text-center"></p>
-    </div>
-  </div>
-  <script>
-    document.getElementById('loginForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const password = document.getElementById('password').value;
-      const error = document.getElementById('error');
-      error.classList.add('hidden');
-      try {
-        const r = await fetch('/api/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password }),
-        }).then(r => r.json());
-        if (r.ok) {
-          window.location.href = '/';
-        } else {
-          error.textContent = r.error || 'Invalid password';
-          error.classList.remove('hidden');
-        }
-      } catch (e) {
-        error.textContent = 'Network error';
-        error.classList.remove('hidden');
-      }
-    });
-  </script>
-</body>
-</html>
-`;
+function requireAuth(req, res, next) {
+  // Public assets (needed for login page to work)
+  if (
+    req.path === '/login' ||
+    req.path === '/api/login' ||
+    req.path === '/health' ||
+    req.path === '/manifest.json' ||
+    req.path === '/sw.js' ||
+    req.path.startsWith('/icon-') ||
+    req.path === '/favicon.ico'
+  ) {
+    return next();
+  }
 
-// ---- Login routes ----
+  const token = req.cookies[COOKIE_NAME];
+  if (token && verifyAuthToken(token)) return next();
+
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  return res.redirect('/login');
+}
+
+// ============================================================================
+// LOGIN ROUTES (public)
+// ============================================================================
 app.get('/login', (req, res) => {
-  res.type('html').send(LOGIN_HTML);
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 app.post('/api/login', (req, res) => {
@@ -135,7 +100,7 @@ app.post('/api/login', (req, res) => {
   if (password !== ADMIN_PASSWORD) {
     return res.status(401).json({ error: 'Invalid password' });
   }
-  const token = generateToken();
+  const token = generateAuthToken();
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`);
   res.json({ ok: true });
 });
@@ -145,7 +110,9 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- Health check (for self-ping) ----
+// ============================================================================
+// HEALTH CHECK (public — used by self-ping)
+// ============================================================================
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -155,10 +122,28 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ---- Boot bot ----
+// ============================================================================
+// STATIC ASSETS (public for PWA files)
+// ============================================================================
+app.get('/manifest.json', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
+});
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+app.get('/favicon.ico', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'icon-192.png'));
+});
+
+// ============================================================================
+// BOOT BOT
+// ============================================================================
 startBot().catch((err) => console.error('Bot boot failed:', err));
 
-// ---- Protected API routes ----
+// ============================================================================
+// PROTECTED API ROUTES
+// ============================================================================
 app.use(requireAuth);
 
 app.get('/api/status', (req, res) => {
@@ -166,6 +151,7 @@ app.get('/api/status', (req, res) => {
     connected: state.connected,
     mode: state.mode,
     ownerJid: state.ownerJid,
+    ownerNumber: state.ownerNumber,
     pairingCode: state.pairingCode,
     pairingPhone: state.pairingPhone,
     sessionToken: state.sessionToken,
@@ -173,14 +159,17 @@ app.get('/api/status', (req, res) => {
     antidelete: state.antidelete,
     antiedit: state.antiedit,
     welcome: state.welcome,
+    goodbye: state.goodbye,
+    botName: state.botName,
+    prefix: state.prefix,
     msgCount: state.msgCount || 0,
+    startedAt: state.startedAt,
   });
 });
 
-/**
- * Request a pairing code.
- * Body: { phone: "15551234567", force?: boolean }
- */
+// ---------------------------------------------------------------------------
+// Pairing
+// ---------------------------------------------------------------------------
 app.post('/api/pair', async (req, res) => {
   try {
     const { phone, force } = req.body;
@@ -193,6 +182,9 @@ app.post('/api/pair', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Session token
+// ---------------------------------------------------------------------------
 app.post('/api/token/import', async (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ error: 'Token required' });
@@ -209,6 +201,9 @@ app.post('/api/token/regenerate', (req, res) => {
   res.json({ token });
 });
 
+// ---------------------------------------------------------------------------
+// Mode / toggles
+// ---------------------------------------------------------------------------
 app.post('/api/mode', (req, res) => {
   const { mode } = req.body;
   if (!['private', 'public'].includes(mode)) return res.status(400).json({ error: 'Invalid mode' });
@@ -218,11 +213,26 @@ app.post('/api/mode', (req, res) => {
 
 app.post('/api/toggle', (req, res) => {
   const { key, value } = req.body;
-  if (!['antidelete', 'antiedit', 'welcome'].includes(key)) return res.status(400).json({ error: 'Invalid key' });
+  const allowed = ['antidelete', 'antiedit', 'welcome', 'goodbye'];
+  if (!allowed.includes(key)) return res.status(400).json({ error: 'Invalid key' });
   state[key] = value; persistConfig();
   res.json({ ok: true });
 });
 
+// ---------------------------------------------------------------------------
+// Settings (bot name, prefix)
+// ---------------------------------------------------------------------------
+app.post('/api/settings', (req, res) => {
+  const { botName, prefix } = req.body;
+  if (typeof botName === 'string' && botName.trim()) state.botName = botName.trim();
+  if (typeof prefix === 'string' && prefix.length <= 2) state.prefix = prefix;
+  persistConfig();
+  res.json({ ok: true, botName: state.botName, prefix: state.prefix });
+});
+
+// ---------------------------------------------------------------------------
+// Session export / import / refresh
+// ---------------------------------------------------------------------------
 app.get('/api/session/export', (req, res) => {
   try {
     if (!state.connected) {
@@ -261,63 +271,65 @@ app.post('/api/session/refresh', async (req, res) => {
   }
 });
 
-// ---- Serve static frontend (protected) ----
-app.use(express.static(path.join(__dirname, 'public')));
+// ---------------------------------------------------------------------------
+// Logout device
+// ---------------------------------------------------------------------------
+app.post('/api/logout-device', async (req, res) => {
+  try {
+    if (state.sock) {
+      await state.sock.logout().catch(() => {});
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-app.get('*', (req, res) => {
+// ============================================================================
+// PROTECTED STATIC (the main app)
+// ============================================================================
+app.use(express.static(path.join(__dirname, 'public'), {
+  index: false,       // we serve index manually below
+  extensions: ['html'],
+}));
+
+app.get('*', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ============================================================================
 // SELF-PING
 // ============================================================================
-
 const SELF_URL = process.env.SELF_URL;
 
 function selfPing() {
   if (!SELF_URL) return;
-
   const url = `${SELF_URL.replace(/\/$/, '')}/health`;
   const client = url.startsWith('https') ? https : http;
-
   const req = client.get(url, (res) => {
     res.on('data', () => {});
     res.on('end', () => {
-      if (res.statusCode === 200) {
-        console.log(`💓 Self-ping OK (${res.statusCode})`);
-      } else {
-        console.warn(`💓 Self-ping returned ${res.statusCode}`);
-      }
+      if (res.statusCode === 200) console.log(`💓 Self-ping OK (${res.statusCode})`);
+      else console.warn(`💓 Self-ping returned ${res.statusCode}`);
     });
   });
-
-  req.on('error', (err) => {
-    console.warn(`💓 Self-ping failed: ${err.message}`);
-  });
-
-  req.setTimeout(10000, () => {
-    req.destroy();
-    console.warn('💓 Self-ping timed out');
-  });
+  req.on('error', (err) => console.warn(`💓 Self-ping failed: ${err.message}`));
+  req.setTimeout(10000, () => { req.destroy(); console.warn('💓 Self-ping timed out'); });
 }
 
 const PING_INTERVAL_MS = 14 * 60 * 1000;
-
 if (SELF_URL) {
   console.log(`💓 Self-ping enabled → ${SELF_URL}/health every ${PING_INTERVAL_MS / 60000} min`);
-  setTimeout(() => {
-    selfPing();
-    setInterval(selfPing, PING_INTERVAL_MS);
-  }, 30000);
+  setTimeout(() => { selfPing(); setInterval(selfPing, PING_INTERVAL_MS); }, 30000);
 } else {
   console.log('💓 Self-ping disabled (SELF_URL not set)');
 }
 
-// ---- Start server ----
+// ============================================================================
+// START
+// ============================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🖥️  UI on http://0.0.0.0:${PORT}`);
-  if (SELF_URL) {
-    console.log(`🔗 Public URL: ${SELF_URL}`);
-  }
+  if (SELF_URL) console.log(`🔗 Public URL: ${SELF_URL}`);
 });

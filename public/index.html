@@ -1,359 +1,482 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WA Bot Control</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="WA Bot" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <title>WA Bot Console</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            wa: { green: '#25D366', dark: '#128C7E', deep: '#075E54' }
-          },
-          fontFamily: {
-            mono: ['JetBrains Mono', 'ui-monospace', 'monospace']
-          },
-          animation: {
-            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-            'float': 'float 8s ease-in-out infinite',
-            'float-delayed': 'float 8s ease-in-out 2s infinite',
-            'slide-up': 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
-            'fade-in': 'fadeIn 0.3s ease-out',
-            'shimmer': 'shimmer 2s linear infinite',
-            'spin-slow': 'spin 2s linear infinite',
-            'bounce-in': 'bounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55)',
-          },
-          keyframes: {
-            float: {
-              '0%, 100%': { transform: 'translate(0, 0) scale(1)' },
-              '50%': { transform: 'translate(30px, -30px) scale(1.1)' },
-            },
-            slideUp: {
-              '0%': { opacity: '0', transform: 'translateY(20px)' },
-              '100%': { opacity: '1', transform: 'translateY(0)' },
-            },
-            fadeIn: {
-              '0%': { opacity: '0' },
-              '100%': { opacity: '1' },
-            },
-            shimmer: {
-              '0%': { backgroundPosition: '-1000px 0' },
-              '100%': { backgroundPosition: '1000px 0' },
-            },
-            bounceIn: {
-              '0%': { opacity: '0', transform: 'scale(0.3)' },
-              '50%': { opacity: '1', transform: 'scale(1.05)' },
-              '70%': { transform: 'scale(0.9)' },
-              '100%': { transform: 'scale(1)' },
-            },
-          },
-        },
-      },
-    };
-  </script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
-    body { font-family: 'Inter', system-ui, sans-serif; }
-    .glass {
-      background: rgba(23, 23, 23, 0.6);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
+    * { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    html, body { background: #000; color: #d4d4d4; }
+    body { min-height: 100vh; overflow-x: hidden; }
+
+    /* Green accent palette */
+    :root {
+      --g: #00ff88;
+      --g-dim: rgba(0,255,136,0.5);
+      --g-glow: rgba(0,255,136,0.4);
     }
-    .glow-green { box-shadow: 0 0 20px rgba(37, 211, 102, 0.4), 0 0 40px rgba(37, 211, 102, 0.1); }
-    .glow-green-sm { box-shadow: 0 0 10px rgba(37, 211, 102, 0.5); }
+    .text-g { color: var(--g); }
+    .border-g { border-color: rgba(0,255,136,0.3); }
+    .bg-g-soft { background: rgba(0,255,136,0.08); }
+
+    /* Grid background */
     .grid-bg {
       background-image:
-        linear-gradient(rgba(37, 211, 102, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(37, 211, 102, 0.03) 1px, transparent 1px);
-      background-size: 40px 40px;
+        linear-gradient(rgba(0, 255, 136, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 255, 136, 0.04) 1px, transparent 1px);
+      background-size: 32px 32px;
     }
-    .shimmer-text {
-      background: linear-gradient(90deg, #25D366 0%, #128C7E 50%, #25D366 100%);
-      background-size: 200% auto;
-      -webkit-background-clip: text;
-      background-clip: text;
-      -webkit-text-fill-color: transparent;
-      animation: shimmer 3s linear infinite;
+
+    /* Glow effects */
+    .glow { box-shadow: 0 0 20px rgba(0,255,136,0.3), 0 0 40px rgba(0,255,136,0.1); }
+    .glow-sm { box-shadow: 0 0 10px rgba(0,255,136,0.4); }
+    .text-glow { text-shadow: 0 0 8px rgba(0,255,136,0.5); }
+
+    /* Terminal panel */
+    .panel {
+      background: rgba(8, 10, 8, 0.85);
+      border: 1px solid rgba(0,255,136,0.15);
+      backdrop-filter: blur(10px);
+      position: relative;
     }
+    .panel::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(0,255,136,0.02), transparent 30%);
+      pointer-events: none;
+    }
+
+    /* Corner brackets on panels */
+    .corner { position: absolute; width: 10px; height: 10px; border-color: var(--g); }
+    .corner-tl { top: -1px; left: -1px; border-top: 2px solid; border-left: 2px solid; }
+    .corner-tr { top: -1px; right: -1px; border-top: 2px solid; border-right: 2px solid; }
+    .corner-bl { bottom: -1px; left: -1px; border-bottom: 2px solid; border-left: 2px solid; }
+    .corner-br { bottom: -1px; right: -1px; border-bottom: 2px solid; border-right: 2px solid; }
+
+    /* Inputs */
+    .input {
+      background: rgba(0, 15, 8, 0.6);
+      border: 1px solid rgba(0,255,136,0.2);
+      color: #d4d4d4;
+      transition: all 0.15s;
+    }
+    .input:focus {
+      border-color: var(--g);
+      box-shadow: 0 0 0 2px rgba(0,255,136,0.1), 0 0 15px rgba(0,255,136,0.2);
+      outline: none;
+    }
+    .input::placeholder { color: rgba(0,255,136,0.3); }
+
+    /* Buttons */
+    .btn-g {
+      background: var(--g);
+      color: #000;
+      font-weight: 700;
+      transition: all 0.15s;
+      letter-spacing: 0.05em;
+    }
+    .btn-g:hover { background: #00ffaa; box-shadow: 0 0 25px rgba(0,255,136,0.5); }
+    .btn-g:active { transform: translateY(1px); }
+    .btn-g:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-outline {
+      border: 1px solid rgba(0,255,136,0.3);
+      color: var(--g);
+      transition: all 0.15s;
+    }
+    .btn-outline:hover { border-color: var(--g); background: rgba(0,255,136,0.08); }
+
+    /* Scanlines overlay */
+    .scanlines {
+      position: fixed; inset: 0; z-index: 1; pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg, rgba(0,255,100,0.02) 0px, rgba(0,255,100,0.02) 1px,
+        transparent 1px, transparent 3px
+      );
+      opacity: 0.5;
+    }
+
+    /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #404040; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #525252; }
-    .no-scrollbar::-webkit-scrollbar { display: none; }
+    ::-webkit-scrollbar-thumb { background: rgba(0,255,136,0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0,255,136,0.5); }
+
+    /* Animations */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.3); }
+    }
+    .pulse-dot { animation: pulse-dot 1.5s infinite; }
+
+    @keyframes boot-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .boot-in { animation: boot-in 0.3s ease-out both; }
+
+    @keyframes shake {
+      10%, 90% { transform: translateX(-1px); }
+      20%, 80% { transform: translateX(2px); }
+      30%, 50%, 70% { transform: translateX(-4px); }
+      40%, 60% { transform: translateX(4px); }
+    }
+    .shake { animation: shake 0.4s; }
+
+    @keyframes blink { 50% { opacity: 0; } }
+    .caret::after { content: '▊'; animation: blink 1s step-end infinite; color: var(--g); }
+
+    /* Toggle */
+    .toggle { width: 40px; height: 20px; border-radius: 10px; position: relative; transition: all 0.2s; }
+    .toggle span { position: absolute; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: white; transition: all 0.2s; }
+    .toggle.on { background: var(--g); box-shadow: 0 0 12px rgba(0,255,136,0.5); }
+    .toggle.on span { left: 22px; }
+    .toggle.off { background: #333; }
+    .toggle.off span { left: 2px; }
+
+    /* Toast */
+    .toast {
+      border-left: 3px solid var(--g);
+      background: rgba(8, 10, 8, 0.95);
+      animation: boot-in 0.2s ease-out;
+    }
+    .toast.error { border-color: #ff4444; }
+    .toast.warn { border-color: #ffaa00; }
+
+    /* Stat card */
+    .stat-card {
+      background: rgba(0, 10, 5, 0.5);
+      border: 1px solid rgba(0,255,136,0.15);
+    }
+    .stat-card:hover { border-color: rgba(0,255,136,0.4); }
+
+    /* Hidden */
+    .hidden { display: none !important; }
+
+    /* Modal backdrop */
+    .modal-backdrop {
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(8px);
+    }
+
+    /* Progress bar */
+    .progress-bar { background: rgba(0,255,136,0.1); height: 2px; }
+    .progress-fill { background: var(--g); height: 100%; transition: width 0.3s; box-shadow: 0 0 8px var(--g); }
   </style>
 </head>
-<body class="bg-neutral-950 text-neutral-100 min-h-screen relative overflow-x-hidden">
+<body class="grid-bg min-h-screen relative">
 
-  <!-- Animated background -->
-  <div class="fixed inset-0 grid-bg pointer-events-none"></div>
-  <div class="fixed top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-wa-green/10 blur-3xl animate-float pointer-events-none"></div>
-  <div class="fixed bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-wa-deep/20 blur-3xl animate-float-delayed pointer-events-none"></div>
+  <div class="scanlines"></div>
 
-  <!-- Toast container -->
-  <div id="toasts" class="fixed top-4 right-4 z-50 space-y-2 w-80 max-w-[calc(100vw-2rem)]"></div>
-
-  <!-- Modal container -->
-  <div id="modal" class="hidden fixed inset-0 z-40 items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-    <div class="glass rounded-2xl border border-neutral-800 p-6 max-w-sm w-full animate-bounce-in">
-      <h3 id="modalTitle" class="text-base font-semibold mb-2">Confirm</h3>
-      <p id="modalBody" class="text-sm text-neutral-400 mb-5"></p>
-      <div class="flex gap-2 justify-end">
-        <button id="modalCancel" class="px-4 py-2 rounded-lg text-sm text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors">Cancel</button>
-        <button id="modalConfirm" class="px-4 py-2 rounded-lg bg-wa-green text-neutral-900 text-sm font-medium hover:bg-wa-dark transition-colors">Confirm</button>
+  <!-- Top status bar -->
+  <div class="fixed top-0 inset-x-0 z-30 px-3 sm:px-4 py-2 flex items-center justify-between text-[10px] tracking-widest uppercase border-b border-g/20 bg-black/80 backdrop-blur-md">
+    <div class="flex items-center gap-2 sm:gap-3">
+      <div class="flex items-center gap-1.5">
+        <span id="connDot" class="w-1.5 h-1.5 rounded-full bg-neutral-600"></span>
+        <span id="connText" class="text-[10px]">OFFLINE</span>
       </div>
+      <span class="text-g/40 hidden sm:inline">/</span>
+      <span class="text-g/60 hidden sm:inline" id="topOwner">—</span>
+    </div>
+    <div class="flex items-center gap-2 sm:gap-3">
+      <span class="text-g/60"><span id="topUptime">--:--</span></span>
+      <span class="text-g/40">/</span>
+      <span class="text-g/60"><span id="topClock">--:--:--</span></span>
+      <button id="logoutBtn" class="ml-2 text-g/60 hover:text-red-400 transition-colors" title="Logout">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
     </div>
   </div>
 
-  <main class="relative w-full max-w-lg mx-auto p-4 sm:p-6 space-y-4">
+  <!-- Main content -->
+  <main class="relative z-10 pt-14 pb-20 px-3 sm:px-4 max-w-4xl mx-auto space-y-3">
 
     <!-- Header -->
-    <header class="flex items-center gap-3 animate-fade-in">
-      <div class="relative">
-        <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-wa-green to-wa-deep flex items-center justify-center text-neutral-900 font-bold text-lg shadow-lg">W</div>
-        <div id="headerPulse" class="hidden absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-wa-green ring-2 ring-neutral-950 animate-pulse"></div>
+    <header class="flex items-center justify-between boot-in">
+      <div class="flex items-center gap-3">
+        <div class="relative">
+          <div class="w-10 h-10 rounded border border-g/40 flex items-center justify-center text-g text-lg font-bold bg-g-soft">W</div>
+          <div id="headerPulse" class="hidden absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-g glow-sm pulse-dot"></div>
+        </div>
+        <div>
+          <h1 class="text-sm tracking-[0.2em] text-g text-glow">WA::CONSOLE</h1>
+          <p class="text-[10px] text-g/40 tracking-widest uppercase">v2.0.0 • SECURE SHELL</p>
+        </div>
       </div>
-      <div class="flex-1">
-        <h1 class="text-lg font-semibold tracking-tight">WhatsApp Bot</h1>
-        <p class="text-xs text-neutral-500">Control Panel <span class="text-neutral-700">•</span> v2.0</p>
-      </div>
-      <div id="statusBadge" class="px-3 py-1.5 rounded-full text-xs font-medium bg-neutral-800 text-neutral-400 flex items-center gap-1.5">
-        <span id="statusDot" class="w-1.5 h-1.5 rounded-full bg-neutral-500"></span>
-        <span id="statusText">Checking…</span>
-      </div>
-      <button id="logoutBtn" class="p-2 rounded-lg text-neutral-500 hover:text-red-400 hover:bg-neutral-900 transition-colors" title="Logout">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <button id="installBtn" class="hidden btn-outline px-3 py-1.5 rounded text-[10px] tracking-widest uppercase">
+        ⬇ INSTALL
       </button>
     </header>
 
-    <!-- Loading skeleton -->
+    <!-- Skeleton -->
     <div id="skeleton" class="space-y-3">
-      <div class="h-40 rounded-2xl bg-neutral-900/50 border border-neutral-800 overflow-hidden relative">
-        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent animate-shimmer" style="background-size: 1000px 100%"></div>
-      </div>
-      <div class="h-32 rounded-2xl bg-neutral-900/50 border border-neutral-800 overflow-hidden relative">
-        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent animate-shimmer" style="background-size: 1000px 100%"></div>
-      </div>
+      <div class="panel rounded p-5 h-32 animate-pulse"></div>
+      <div class="panel rounded p-5 h-48 animate-pulse"></div>
     </div>
 
-    <!-- Session Token Card -->
-    <section id="tokenCard" class="hidden glass rounded-2xl border border-neutral-800 p-5 space-y-4 animate-slide-up">
+    <!-- TOKEN CARD -->
+    <section id="tokenCard" class="hidden panel rounded p-5 space-y-4 boot-in">
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+
       <div class="flex items-start gap-3">
-        <div class="w-9 h-9 rounded-lg bg-wa-green/10 border border-wa-green/20 flex items-center justify-center text-wa-green flex-shrink-0">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        </div>
-        <div class="flex-1 min-w-0">
-          <h2 class="text-sm font-medium text-neutral-200">Session Token</h2>
-          <p class="text-xs text-neutral-500 mt-0.5">Paste your saved token to reconnect the bot instantly.</p>
+        <div class="w-8 h-8 rounded border border-g/40 bg-g-soft flex items-center justify-center text-g text-xs">🔑</div>
+        <div class="flex-1">
+          <h2 class="text-xs tracking-widest uppercase text-g">Session Token</h2>
+          <p class="text-[10px] text-g/50 mt-0.5">Paste saved token to reconnect instantly</p>
         </div>
       </div>
+
       <div class="flex gap-2">
-        <input id="tokenInput" type="text" placeholder="Paste session token…" autocomplete="off" spellcheck="false"
-          class="flex-1 px-3 py-2.5 rounded-lg bg-neutral-900/80 border border-neutral-800 text-xs font-mono focus:outline-none focus:border-wa-green focus:ring-2 focus:ring-wa-green/20 transition-all" />
-        <button id="tokenBtn"
-          class="px-4 py-2.5 rounded-lg bg-wa-green hover:bg-wa-dark text-neutral-900 text-sm font-medium transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-wa-green/20">
-          Connect
-        </button>
+        <div class="relative flex-1">
+          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-g text-xs select-none">$</span>
+          <input id="tokenInput" type="text" placeholder="paste token..." autocomplete="off" spellcheck="false"
+            class="input w-full pl-7 pr-3 py-2.5 rounded text-xs" />
+        </div>
+        <button id="tokenBtn" class="btn-g px-4 py-2.5 rounded text-xs">CONNECT</button>
       </div>
-      <p class="text-[10px] text-neutral-600 flex items-center gap-1">
-        <kbd class="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 font-mono text-[9px]">Ctrl</kbd>
-        <span>+</span>
-        <kbd class="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 font-mono text-[9px]">K</kbd>
-        <span>to focus</span>
-      </p>
+      <p class="text-[9px] text-g/40 tracking-widest uppercase"><kbd class="border border-g/30 px-1 rounded">CTRL</kbd>+<kbd class="border border-g/30 px-1 rounded">K</kbd> to focus</p>
     </section>
 
-    <!-- Pairing Card -->
-    <section id="pairingCard" class="hidden glass rounded-2xl border border-neutral-800 p-5 space-y-4 animate-slide-up">
+    <!-- PAIRING CARD -->
+    <section id="pairingCard" class="hidden panel rounded p-5 space-y-4 boot-in">
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+
       <div class="flex items-start gap-3">
-        <div class="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 flex-shrink-0">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-        </div>
-        <div class="flex-1 min-w-0">
-          <h2 class="text-sm font-medium text-neutral-200">Pair New Device</h2>
-          <p class="text-xs text-neutral-500 mt-0.5">Enter phone number with country code (no + or spaces).</p>
+        <div class="w-8 h-8 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center text-blue-400 text-xs">📱</div>
+        <div class="flex-1">
+          <h2 class="text-xs tracking-widest uppercase text-g">Pair New Device</h2>
+          <p class="text-[10px] text-g/50 mt-0.5">Phone with country code, digits only</p>
         </div>
       </div>
 
       <!-- Method toggle -->
-      <div class="flex gap-1 bg-neutral-900/80 rounded-lg p-1 border border-neutral-800">
-        <button data-method="code" class="methodBtn flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all">
-          📱 Pairing Code
-        </button>
-        <button data-method="qr" class="methodBtn flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all">
-          🔳 QR Code
-        </button>
+      <div class="flex gap-1 bg-black/60 rounded p-1 border border-g/20">
+        <button data-method="code" class="methodBtn flex-1 px-3 py-1.5 rounded text-[10px] tracking-widest uppercase transition-all">📱 CODE</button>
+        <button data-method="qr" class="methodBtn flex-1 px-3 py-1.5 rounded text-[10px] tracking-widest uppercase transition-all">🔳 QR</button>
       </div>
 
       <div class="flex gap-2">
-        <input id="phone" type="tel" placeholder="2376XXXXXXXX" inputmode="numeric" autocomplete="off"
-          class="flex-1 px-3 py-2.5 rounded-lg bg-neutral-900/80 border border-neutral-800 text-sm focus:outline-none focus:border-wa-green focus:ring-2 focus:ring-wa-green/20 transition-all" />
-        <button id="pairBtn"
-          class="px-4 py-2.5 rounded-lg bg-wa-green hover:bg-wa-dark text-neutral-900 text-sm font-medium transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-wa-green/20">
-          Generate
-        </button>
+        <div class="relative flex-1">
+          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-g text-xs select-none">$</span>
+          <input id="phone" type="tel" placeholder="2376XXXXXXXX" inputmode="numeric" autocomplete="off"
+            class="input w-full pl-7 pr-3 py-2.5 rounded text-sm" />
+        </div>
+        <button id="pairBtn" class="btn-g px-4 py-2.5 rounded text-xs">GENERATE</button>
       </div>
 
       <!-- Code display -->
-      <div id="codeBox" class="hidden space-y-3 animate-bounce-in">
-        <div class="flex items-center justify-between">
-          <p class="text-xs text-neutral-500">Enter in WhatsApp → Linked Devices:</p>
-          <div class="flex items-center gap-1 text-[10px] text-amber-400">
-            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            <span id="codeExpiry">—</span>
-          </div>
+      <div id="codeBox" class="hidden space-y-3">
+        <div class="flex items-center justify-between text-[10px] tracking-widest uppercase">
+          <span class="text-g/60">→ Enter in Linked Devices</span>
+          <span class="text-amber-400">⏱ <span id="codeExpiry">--s</span></span>
         </div>
-        <div class="relative group">
-          <div class="absolute -inset-0.5 bg-gradient-to-r from-wa-green to-wa-deep rounded-xl blur opacity-30 group-hover:opacity-50 transition-opacity"></div>
-          <div class="relative flex items-center gap-2 p-1 bg-neutral-900 rounded-xl border border-neutral-800">
-            <div id="codeValue" class="flex-1 py-3 px-4 text-center text-2xl font-mono tracking-[0.3em] text-wa-green select-all"></div>
-            <button id="copyCodeBtn" class="p-3 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 transition-all hover:scale-105 active:scale-95" title="Copy code">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </button>
-          </div>
+        <div class="flex items-center gap-2 p-1 bg-black/60 rounded border border-g/40 glow-sm">
+          <div id="codeValue" class="flex-1 py-3 px-4 text-center text-2xl text-g text-glow select-all tracking-[0.3em] font-bold"></div>
+          <button id="copyCodeBtn" class="p-3 mr-1 rounded bg-g-soft border border-g/30 text-g hover:bg-g/20 transition-colors" title="Copy">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
         </div>
-        <button id="regenBtn" class="w-full text-xs text-neutral-500 hover:text-wa-green transition-colors py-1">
-          🔄 Request a new code
+        <button id="regenBtn" class="w-full text-[10px] tracking-widest uppercase text-g/60 hover:text-g py-1 transition-colors">
+          ↻ REQUEST NEW CODE
         </button>
       </div>
 
       <!-- QR display -->
-      <div id="qrBox" class="hidden text-center space-y-3 animate-bounce-in">
-        <p class="text-xs text-neutral-500">Scan with WhatsApp → Linked Devices</p>
-        <div class="inline-block p-4 rounded-2xl bg-white">
+      <div id="qrBox" class="hidden text-center space-y-3">
+        <p class="text-[10px] tracking-widest uppercase text-g/60">Scan with WhatsApp → Linked Devices</p>
+        <div class="inline-block p-3 rounded bg-white">
           <canvas id="qrCanvas" class="block"></canvas>
         </div>
       </div>
 
-      <p id="pairError" class="hidden text-xs text-red-400"></p>
+      <p id="pairError" class="hidden text-[10px] text-red-400 tracking-wider uppercase"></p>
     </section>
 
-    <!-- Status Card -->
-    <section id="statusCard" class="hidden glass rounded-2xl border border-neutral-800 p-5 space-y-4 animate-slide-up">
+    <!-- STATUS CARD -->
+    <section id="statusCard" class="hidden panel rounded p-5 space-y-4 boot-in">
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+
+      <!-- Header -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-lg bg-wa-green/10 border border-wa-green/20 flex items-center justify-center text-wa-green">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          </div>
+          <div class="w-8 h-8 rounded border border-g/40 bg-g-soft flex items-center justify-center text-g text-xs">✓</div>
           <div>
-            <h2 class="text-sm font-medium text-neutral-200">Bot Online</h2>
-            <p class="text-xs text-neutral-500 mt-0.5">Connected and running</p>
+            <h2 class="text-xs tracking-widest uppercase text-g">● Bot Online</h2>
+            <p class="text-[10px] text-g/50 mt-0.5">Connected &amp; running</p>
           </div>
         </div>
         <div class="flex gap-1">
-          <button id="downloadSessionBtn" class="p-2 rounded-lg text-neutral-500 hover:text-wa-green hover:bg-neutral-800 transition-colors" title="Download Session">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <button id="downloadSessionBtn" class="p-2 rounded border border-g/20 text-g/60 hover:text-g hover:border-g/50 transition-colors" title="Export session">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
-          <button id="refreshKeysBtn" class="p-2 rounded-lg text-neutral-500 hover:text-amber-400 hover:bg-neutral-800 transition-colors" title="Refresh Keys">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          <button id="refreshKeysBtn" class="p-2 rounded border border-g/20 text-g/60 hover:text-amber-400 hover:border-amber-400/50 transition-colors" title="Refresh sender keys">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
         </div>
       </div>
 
       <!-- Stats grid -->
-      <div class="grid grid-cols-3 gap-2">
-        <div class="rounded-lg bg-neutral-900/60 border border-neutral-800 p-3">
-          <p class="text-[9px] uppercase tracking-wider text-neutral-500">Owner</p>
-          <p id="ownerJid" class="text-[10px] font-mono mt-1 truncate text-neutral-300">—</p>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div class="stat-card rounded p-3">
+          <p class="text-[9px] tracking-widest uppercase text-g/40">Owner</p>
+          <p id="ownerJid" class="text-[11px] mt-1 truncate text-g">—</p>
         </div>
-        <div class="rounded-lg bg-neutral-900/60 border border-neutral-800 p-3">
-          <p class="text-[9px] uppercase tracking-wider text-neutral-500">Uptime</p>
-          <p id="uptime" class="text-[10px] font-mono mt-1 text-neutral-300">—</p>
+        <div class="stat-card rounded p-3">
+          <p class="text-[9px] tracking-widest uppercase text-g/40">Uptime</p>
+          <p id="uptime" class="text-[11px] mt-1 text-g">—</p>
         </div>
-        <div class="rounded-lg bg-neutral-900/60 border border-neutral-800 p-3">
-          <p class="text-[9px] uppercase tracking-wider text-neutral-500">Messages</p>
-          <p id="msgCount" class="text-[10px] font-mono mt-1 text-neutral-300">0</p>
+        <div class="stat-card rounded p-3">
+          <p class="text-[9px] tracking-widest uppercase text-g/40">Messages</p>
+          <p id="msgCount" class="text-[11px] mt-1 text-g">0</p>
+        </div>
+        <div class="stat-card rounded p-3">
+          <p class="text-[9px] tracking-widest uppercase text-g/40">Mode</p>
+          <p id="modeStat" class="text-[11px] mt-1 text-g uppercase">—</p>
         </div>
       </div>
 
-      <!-- Session token -->
-      <div class="rounded-lg bg-neutral-900/60 border border-neutral-800 p-3">
-        <div class="flex items-center justify-between mb-1">
-          <p class="text-[9px] uppercase tracking-wider text-neutral-500">Session Token</p>
-          <button id="regenTokenBtn" class="text-[9px] text-neutral-500 hover:text-amber-400 transition-colors">Regenerate</button>
+      <!-- Session token display -->
+      <div class="rounded bg-black/60 border border-g/20 p-3">
+        <div class="flex items-center justify-between mb-1.5">
+          <p class="text-[9px] tracking-widest uppercase text-g/40">Session Token</p>
+          <div class="flex gap-2">
+            <button id="regenTokenBtn" class="text-[9px] tracking-widest uppercase text-g/60 hover:text-amber-400 transition-colors">REGEN</button>
+            <button id="copyTokenBtn" class="text-g/60 hover:text-g transition-colors" title="Copy">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          <code id="sessionToken" class="flex-1 text-[10px] font-mono truncate text-wa-green">—</code>
-          <button id="copyTokenBtn" class="p-1.5 rounded text-neutral-500 hover:text-wa-green hover:bg-neutral-800 transition-colors" title="Copy">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
+        <code id="sessionToken" class="text-[10px] text-g block truncate">—</code>
+      </div>
+
+      <!-- Settings row -->
+      <div class="grid grid-cols-2 gap-2">
+        <div class="rounded bg-black/60 border border-g/20 p-3 space-y-1">
+          <p class="text-[9px] tracking-widest uppercase text-g/40">Bot Name</p>
+          <input id="botNameInput" type="text" class="input w-full px-2 py-1 rounded text-xs" />
+        </div>
+        <div class="rounded bg-black/60 border border-g/20 p-3 space-y-1">
+          <p class="text-[9px] tracking-widest uppercase text-g/40">Prefix</p>
+          <input id="prefixInput" type="text" maxlength="2" class="input w-full px-2 py-1 rounded text-xs text-center" />
         </div>
       </div>
+      <button id="saveSettingsBtn" class="w-full btn-outline py-2 rounded text-[10px] tracking-widest uppercase">💾 SAVE SETTINGS</button>
 
       <!-- Mode toggle -->
-      <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
+      <div class="flex items-center justify-between pt-3 border-t border-g/20">
         <div>
-          <span class="text-sm text-neutral-300">Mode</span>
-          <p class="text-[10px] text-neutral-500 mt-0.5" id="modeHint">Only responds to owner</p>
+          <p class="text-xs text-g tracking-wider">MODE</p>
+          <p class="text-[10px] text-g/50" id="modeHint">—</p>
         </div>
-        <div class="flex gap-1 bg-neutral-900/80 rounded-lg p-1 border border-neutral-800">
-          <button data-mode="private" class="modeBtn px-3 py-1 rounded-md text-xs font-medium transition-all">Private</button>
-          <button data-mode="public" class="modeBtn px-3 py-1 rounded-md text-xs font-medium transition-all">Public</button>
+        <div class="flex gap-1 bg-black/60 rounded p-1 border border-g/20">
+          <button data-mode="private" class="modeBtn px-3 py-1 rounded text-[10px] tracking-widest uppercase transition-all">PRIVATE</button>
+          <button data-mode="public" class="modeBtn px-3 py-1 rounded text-[10px] tracking-widest uppercase transition-all">PUBLIC</button>
         </div>
       </div>
 
-      <!-- Feature toggles -->
-      <div class="pt-2 border-t border-neutral-800 space-y-1">
+      <!-- Toggles -->
+      <div class="pt-3 border-t border-g/20 space-y-1">
         <div class="flex items-center justify-between py-1.5">
           <div class="flex items-center gap-2">
-            <span class="text-base">🛡️</span>
-            <span class="text-sm text-neutral-300">Anti-delete</span>
+            <span class="text-sm">🛡️</span>
+            <span class="text-xs text-g tracking-wider uppercase">Anti-Delete</span>
           </div>
-          <button data-toggle="antidelete" class="toggleBtn w-10 h-5 rounded-full bg-neutral-700 relative transition-colors">
-            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow"></span>
-          </button>
+          <button data-toggle="antidelete" class="toggleBtn toggle off"><span></span></button>
         </div>
         <div class="flex items-center justify-between py-1.5">
           <div class="flex items-center gap-2">
-            <span class="text-base">✏️</span>
-            <span class="text-sm text-neutral-300">Anti-edit</span>
+            <span class="text-sm">✏️</span>
+            <span class="text-xs text-g tracking-wider uppercase">Anti-Edit</span>
           </div>
-          <button data-toggle="antiedit" class="toggleBtn w-10 h-5 rounded-full bg-neutral-700 relative transition-colors">
-            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow"></span>
-          </button>
+          <button data-toggle="antiedit" class="toggleBtn toggle off"><span></span></button>
         </div>
         <div class="flex items-center justify-between py-1.5">
           <div class="flex items-center gap-2">
-            <span class="text-base">👋</span>
-            <span class="text-sm text-neutral-300">Welcome / Goodbye</span>
+            <span class="text-sm">👋</span>
+            <span class="text-xs text-g tracking-wider uppercase">Welcome / Goodbye</span>
           </div>
-          <button data-toggle="welcome" class="toggleBtn w-10 h-5 rounded-full bg-neutral-700 relative transition-colors">
-            <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow"></span>
-          </button>
+          <button data-toggle="welcome" class="toggleBtn toggle off"><span></span></button>
         </div>
+      </div>
+
+      <!-- Danger zone -->
+      <div class="pt-3 border-t border-g/20">
+        <p class="text-[9px] tracking-widest uppercase text-red-400/60 mb-2">DANGER ZONE</p>
+        <button id="logoutDeviceBtn" class="w-full py-2 rounded border border-red-500/40 text-red-400 text-[10px] tracking-widest uppercase hover:bg-red-500/10 transition-colors">
+          ⏻ LOG OUT WHATSAPP DEVICE
+        </button>
       </div>
     </section>
 
-    <!-- Activity Log -->
-    <section id="logCard" class="hidden glass rounded-2xl border border-neutral-800 overflow-hidden animate-slide-up">
-      <div class="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+    <!-- TERMINAL LOG -->
+    <section id="logCard" class="hidden panel rounded overflow-hidden boot-in">
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+
+      <div class="flex items-center justify-between px-4 py-2.5 border-b border-g/20">
         <div class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 rounded-full bg-wa-green animate-pulse"></span>
-          <h3 class="text-xs font-medium text-neutral-300">Activity Log</h3>
+          <span class="w-1.5 h-1.5 rounded-full bg-g pulse-dot"></span>
+          <h3 class="text-[10px] tracking-widest uppercase text-g">Activity Stream</h3>
         </div>
-        <button id="clearLogBtn" class="text-[10px] text-neutral-500 hover:text-neutral-300 transition-colors">Clear</button>
+        <button id="clearLogBtn" class="text-[9px] tracking-widest uppercase text-g/50 hover:text-g transition-colors">CLEAR</button>
       </div>
-      <div id="logList" class="max-h-48 overflow-y-auto p-2 space-y-1 text-[11px] font-mono">
-        <p class="text-neutral-600 text-center py-4">No activity yet</p>
+      <div id="logList" class="max-h-64 overflow-y-auto p-3 space-y-1 text-[10px] font-mono leading-relaxed">
+        <p class="text-g/30 text-center py-4 tracking-widest uppercase">[ no activity ]</p>
       </div>
     </section>
 
     <!-- Footer -->
-    <footer class="text-center text-[10px] text-neutral-600 py-2 flex items-center justify-center gap-2">
-      <span class="w-1 h-1 rounded-full bg-wa-green animate-pulse"></span>
-      <span>Auto-refreshes every 3s</span>
-      <span class="text-neutral-700">•</span>
-      <span id="clock"></span>
+    <footer class="text-center text-[9px] tracking-[0.2em] uppercase text-g/30 py-3 flex items-center justify-center gap-2">
+      <span class="w-1 h-1 rounded-full bg-g pulse-dot"></span>
+      <span>AUTO-REFRESH 3S</span>
+      <span class="text-g/20">•</span>
+      <span id="bottomClock">--:--:--</span>
     </footer>
   </main>
 
+  <!-- TOASTS -->
+  <div id="toasts" class="fixed top-14 right-3 z-50 space-y-2 w-72 max-w-[calc(100vw-1.5rem)]"></div>
+
+  <!-- MODAL -->
+  <div id="modal" class="hidden fixed inset-0 z-40 items-center justify-center p-4 modal-backdrop">
+    <div class="panel rounded p-5 max-w-sm w-full boot-in">
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+      <h3 id="modalTitle" class="text-xs tracking-widest uppercase text-g mb-2">CONFIRM</h3>
+      <p id="modalBody" class="text-xs text-g/70 mb-5 leading-relaxed"></p>
+      <div class="flex gap-2 justify-end">
+        <button id="modalCancel" class="px-4 py-2 rounded text-[10px] tracking-widest uppercase text-g/60 hover:text-g border border-g/20 hover:border-g/50 transition-colors">CANCEL</button>
+        <button id="modalConfirm" class="btn-g px-4 py-2 rounded text-[10px] tracking-widest uppercase">CONFIRM</button>
+      </div>
+    </div>
+  </div>
+
   <script>
-    // ============================================================
+    // ============================================================================
     // HELPERS
-    // ============================================================
+    // ============================================================================
     const $ = (id) => document.getElementById(id);
     const API = {
       async post(url, body) {
@@ -362,28 +485,27 @@
           headers: { 'Content-Type': 'application/json' },
           body: body ? JSON.stringify(body) : undefined,
         });
+        if (r.status === 401) { window.location.href = '/login'; throw new Error('Unauthorized'); }
         return r.json();
       },
-      async get(url) { return fetch(url).then(r => r.json()); },
+      async get(url) {
+        const r = await fetch(url);
+        if (r.status === 401) { window.location.href = '/login'; throw new Error('Unauthorized'); }
+        return r.json();
+      },
     };
 
-    // ============================================================
+    // ============================================================================
     // TOASTS
-    // ============================================================
-    function toast(message, type = 'info', duration = 3000) {
-      const colors = {
-        success: 'border-wa-green/30 bg-wa-green/10 text-wa-green',
-        error: 'border-red-500/30 bg-red-500/10 text-red-400',
-        warn: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
-        info: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
-      };
-      const icons = { success: '✓', error: '✕', warn: '⚠', info: 'ℹ' };
+    // ============================================================================
+    function toast(msg, type = 'info', duration = 3200) {
       const el = document.createElement('div');
-      el.className = `flex items-start gap-2 px-4 py-3 rounded-xl border ${colors[type]} backdrop-blur-lg shadow-lg animate-slide-up`;
+      el.className = `toast rounded px-3 py-2.5 text-[11px] flex items-start gap-2 ${type === 'error' ? 'error' : type === 'warn' ? 'warn' : ''}`;
+      const icons = { info: 'ℹ', success: '✓', error: '✕', warn: '⚠' };
       el.innerHTML = `
-        <span class="font-bold text-sm">${icons[type]}</span>
-        <span class="text-xs flex-1 leading-relaxed">${message}</span>
-        <button class="text-current opacity-50 hover:opacity-100 transition-opacity" onclick="this.parentElement.remove()">✕</button>
+        <span class="text-g font-bold">${icons[type] || 'ℹ'}</span>
+        <span class="flex-1 text-g/90 leading-relaxed">${msg}</span>
+        <button class="text-g/50 hover:text-g" onclick="this.parentElement.remove()">✕</button>
       `;
       $('toasts').appendChild(el);
       setTimeout(() => {
@@ -394,81 +516,87 @@
       }, duration);
     }
 
-    // ============================================================
+    // ============================================================================
     // MODAL
-    // ============================================================
+    // ============================================================================
     function confirmModal(title, body) {
       return new Promise(resolve => {
         $('modalTitle').textContent = title;
         $('modalBody').textContent = body;
         $('modal').classList.remove('hidden');
         $('modal').classList.add('flex');
-        const cleanup = (result) => {
+        const cleanup = (v) => {
           $('modal').classList.add('hidden');
           $('modal').classList.remove('flex');
           $('modalConfirm').onclick = null;
           $('modalCancel').onclick = null;
-          resolve(result);
+          resolve(v);
         };
         $('modalConfirm').onclick = () => cleanup(true);
         $('modalCancel').onclick = () => cleanup(false);
       });
     }
 
-    // ============================================================
+    // ============================================================================
     // STATE
-    // ============================================================
+    // ============================================================================
     let currentMode = 'private';
     let pairMethod = 'code';
     let lastPairingCode = null;
     let codeExpiresAt = 0;
-    const toggleState = { antidelete: true, antiedit: true, welcome: true };
     let codeTimer = null;
+    const toggleState = { antidelete: false, antiedit: false, welcome: false };
+    let loadedSettings = false;
 
-    // ============================================================
-    // ACTIVITY LOG
-    // ============================================================
+    // ============================================================================
+    // LOG
+    // ============================================================================
     const logEntries = [];
     function logEvent(msg, type = 'info') {
-      const entry = { msg, type, t: Date.now() };
-      logEntries.unshift(entry);
-      if (logEntries.length > 30) logEntries.pop();
+      logEntries.unshift({ msg, type, t: Date.now() });
+      if (logEntries.length > 50) logEntries.pop();
       renderLog();
     }
     function renderLog() {
       const list = $('logList');
       if (!logEntries.length) {
-        list.innerHTML = '<p class="text-neutral-600 text-center py-4">No activity yet</p>';
+        list.innerHTML = '<p class="text-g/30 text-center py-4 tracking-widest uppercase">[ no activity ]</p>';
         return;
       }
-      const colors = { info: 'text-neutral-400', success: 'text-wa-green', error: 'text-red-400', warn: 'text-amber-400' };
-      list.innerHTML = logEntries.map(e => `
-        <div class="flex gap-2 px-2 py-1 rounded hover:bg-neutral-800/50 transition-colors">
-          <span class="text-neutral-600">${new Date(e.t).toLocaleTimeString()}</span>
-          <span class="${colors[e.type]} flex-1">${e.msg}</span>
-        </div>
-      `).join('');
+      const colors = { info: 'text-g/60', success: 'text-g', error: 'text-red-400', warn: 'text-amber-400' };
+      list.innerHTML = logEntries.map(e => {
+        const time = new Date(e.t).toTimeString().slice(0, 8);
+        const tag = { info: 'INF', success: 'OK ', error: 'ERR', warn: 'WRN' }[e.type] || 'INF';
+        const color = colors[e.type] || 'text-g/60';
+        return `<div class="flex gap-2 px-1 py-0.5 hover:bg-g/5 rounded transition-colors">
+          <span class="text-g/30">${time}</span>
+          <span class="${color}">[${tag}]</span>
+          <span class="${color} flex-1">${escapeHtml(e.msg)}</span>
+        </div>`;
+      }).join('');
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
-    // ============================================================
+    // ============================================================================
     // UI HELPERS
-    // ============================================================
+    // ============================================================================
     function fmtUptime(s) {
       if (s < 60) return s + 's';
-      if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+      if (s < 3600) return Math.floor(s / 60) + 'm';
       const h = Math.floor(s / 3600);
-      const m = Math.floor((s % 3600) / 60);
       const d = Math.floor(h / 24);
       if (d > 0) return `${d}d ${h % 24}h`;
-      return `${h}h ${m}m`;
+      return `${h}h ${Math.floor((s % 3600) / 60)}m`;
     }
 
     function setModeUI(mode) {
       currentMode = mode;
       document.querySelectorAll('.modeBtn').forEach(btn => {
         const active = btn.dataset.mode === mode;
-        btn.className = 'modeBtn px-3 py-1 rounded-md text-xs font-medium transition-all ' +
-          (active ? 'bg-wa-green text-neutral-900 shadow-lg shadow-wa-green/20' : 'text-neutral-400 hover:text-neutral-200');
+        btn.className = 'modeBtn px-3 py-1 rounded text-[10px] tracking-widest uppercase transition-all ' +
+          (active ? 'bg-g text-black font-bold glow-sm' : 'text-g/60 hover:text-g');
       });
       $('modeHint').textContent = mode === 'private' ? 'Only responds to owner' : 'Responds to everyone';
     }
@@ -477,11 +605,7 @@
       toggleState[key] = val;
       document.querySelectorAll('.toggleBtn').forEach(btn => {
         if (btn.dataset.toggle !== key) return;
-        btn.className = 'toggleBtn w-10 h-5 rounded-full relative transition-colors ' +
-          (val ? 'bg-wa-green glow-green-sm' : 'bg-neutral-700');
-        const knob = btn.querySelector('span');
-        knob.className = 'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow ' +
-          (val ? 'translate-x-5' : 'translate-x-0.5');
+        btn.className = 'toggleBtn toggle ' + (val ? 'on' : 'off');
       });
     }
 
@@ -489,12 +613,11 @@
       pairMethod = method;
       document.querySelectorAll('.methodBtn').forEach(btn => {
         const active = btn.dataset.method === method;
-        btn.className = 'methodBtn flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ' +
-          (active ? 'bg-neutral-800 text-wa-green shadow' : 'text-neutral-500 hover:text-neutral-300');
+        btn.className = 'methodBtn flex-1 px-3 py-1.5 rounded text-[10px] tracking-widest uppercase transition-all ' +
+          (active ? 'bg-g text-black font-bold' : 'text-g/60 hover:text-g');
       });
       if (method === 'qr') {
         $('codeBox').classList.add('hidden');
-        toast('QR pairing requires server-side QR support', 'warn');
       } else {
         $('qrBox').classList.add('hidden');
       }
@@ -518,51 +641,53 @@
       codeTimer = setInterval(tick, 1000);
     }
 
-    // ============================================================
-    // REFRESH STATUS
-    // ============================================================
+    // ============================================================================
+    // REFRESH
+    // ============================================================================
     let consecutiveErrors = 0;
     async function refresh() {
       try {
         const r = await API.get('/api/status');
         consecutiveErrors = 0;
-        const badge = $('statusBadge');
-        const dot = $('statusDot');
-        const text = $('statusText');
-
         $('skeleton').classList.add('hidden');
 
-        if (r.connected) {
-          badge.className = 'px-3 py-1.5 rounded-full text-xs font-medium bg-wa-green/20 text-wa-green flex items-center gap-1.5';
-          dot.className = 'w-1.5 h-1.5 rounded-full bg-wa-green animate-pulse';
-          text.textContent = 'Online';
-          $('headerPulse').classList.remove('hidden');
+        $('topOwner').textContent = r.ownerNumber || '—';
+        $('topUptime').textContent = fmtUptime(r.uptime);
 
+        if (r.connected) {
+          $('connDot').className = 'w-1.5 h-1.5 rounded-full bg-g glow-sm pulse-dot';
+          $('connText').textContent = 'ONLINE';
+          $('headerPulse').classList.remove('hidden');
           showCard('statusCard');
-          $('ownerJid').textContent = (r.ownerJid || '—').split('@')[0];
+
+          $('ownerJid').textContent = (r.ownerNumber || '—');
           $('uptime').textContent = fmtUptime(r.uptime);
+          $('msgCount').textContent = r.msgCount || 0;
+          $('modeStat').textContent = (r.mode || '—').toUpperCase();
           $('sessionToken').textContent = r.sessionToken || 'not generated';
-          $('msgCount').textContent = r.msgCount || '—';
+
           setModeUI(r.mode);
           setToggleUI('antidelete', r.antidelete);
           setToggleUI('antiedit', r.antiedit);
           setToggleUI('welcome', r.welcome);
+
+          if (!loadedSettings) {
+            $('botNameInput').value = r.botName || 'WA Bot';
+            $('prefixInput').value = r.prefix || '!';
+            loadedSettings = true;
+          }
         } else {
-          badge.className = 'px-3 py-1.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400 flex items-center gap-1.5';
-          dot.className = 'w-1.5 h-1.5 rounded-full bg-red-500';
-          text.textContent = 'Offline';
+          $('connDot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
+          $('connText').textContent = 'OFFLINE';
           $('headerPulse').classList.add('hidden');
 
-          if (r.sessionToken) {
-            showCard('tokenCard');
-          } else {
-            showCard('pairingCard');
-          }
+          if (r.sessionToken) showCard('tokenCard');
+          else showCard('pairingCard');
 
           if (r.pairingCode) {
             if (r.pairingCode !== lastPairingCode) {
               lastPairingCode = r.pairingCode;
-              logEvent(`Pairing code generated: ${r.pairingCode}`, 'success');
+              logEvent(`Code: ${r.pairingCode}`, 'success');
               startCodeExpiry(60);
             }
             $('codeBox').classList.remove('hidden');
@@ -573,51 +698,38 @@
         consecutiveErrors++;
         if (consecutiveErrors === 1) {
           logEvent('Status fetch failed', 'error');
-          toast('Lost connection to server', 'error');
-        }
-        if (e.message?.includes('401') || consecutiveErrors > 5) {
-          window.location.href = '/login';
         }
       }
     }
 
-    // ============================================================
+    // ============================================================================
     // ACTIONS
-    // ============================================================
+    // ============================================================================
     async function connectToken() {
       const token = $('tokenInput').value.trim();
-      if (!token) { toast('Please enter a token', 'warn'); return; }
+      if (!token) { toast('Enter a token', 'warn'); return; }
       const btn = $('tokenBtn');
-      btn.disabled = true;
-      btn.textContent = 'Connecting…';
-
+      btn.disabled = true; btn.textContent = '...';
       try {
         const r = await API.post('/api/token/import', { token });
         if (r.ok) {
           toast(r.message || 'Token accepted', 'success');
-          logEvent('Session token imported', 'success');
+          logEvent('Token imported', 'success');
           $('tokenInput').value = '';
           setTimeout(refresh, 500);
         } else {
           toast(r.error || 'Invalid token', 'error');
-          logEvent(`Token import failed: ${r.error}`, 'error');
         }
-      } catch (e) {
-        toast('Network error', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Connect';
-      }
+      } catch (e) { toast('Network error', 'error'); }
+      finally { btn.disabled = false; btn.textContent = 'CONNECT'; }
     }
 
     async function pairDevice(force = true) {
       const phone = $('phone').value.trim();
-      if (!phone) { toast('Please enter a phone number', 'warn'); return; }
+      if (!phone) { toast('Enter phone number', 'warn'); return; }
       const btn = $('pairBtn');
-      btn.disabled = true;
-      btn.textContent = 'Requesting…';
+      btn.disabled = true; btn.textContent = '...';
       $('pairError').classList.add('hidden');
-
       try {
         const r = await API.post('/api/pair', { phone, force });
         if (r.code) {
@@ -625,39 +737,27 @@
           $('codeValue').textContent = r.code;
           lastPairingCode = r.code;
           startCodeExpiry(60);
-          toast('Pairing code generated', 'success');
-          logEvent(`Requested code for ${phone}`, 'success');
+          toast('Code generated', 'success');
+          logEvent(`Code for ${phone}`, 'success');
         } else {
-          $('pairError').textContent = r.error || 'Failed to request code';
+          $('pairError').textContent = r.error || 'Failed';
           $('pairError').classList.remove('hidden');
           toast(r.error || 'Pairing failed', 'error');
-          logEvent(`Pairing failed: ${r.error}`, 'error');
         }
-      } catch (e) {
-        $('pairError').textContent = 'Network error';
-        $('pairError').classList.remove('hidden');
-        toast('Network error', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Generate';
-      }
+      } catch (e) { toast('Network error', 'error'); }
+      finally { btn.disabled = false; btn.textContent = 'GENERATE'; }
     }
 
-    async function copyText(text, btn, label = 'Copy') {
+    async function copyText(text, label = 'Copy') {
       try {
         await navigator.clipboard.writeText(text);
-        const old = btn.innerHTML;
-        btn.innerHTML = '<span class="text-wa-green">✓</span>';
-        toast('Copied to clipboard', 'success', 1500);
-        setTimeout(() => { btn.innerHTML = old; }, 1500);
-      } catch (e) {
-        toast('Copy failed', 'error');
-      }
+        toast('Copied', 'success', 1500);
+      } catch (e) { toast('Copy failed', 'error'); }
     }
 
-    // ============================================================
-    // EVENT LISTENERS
-    // ============================================================
+    // ============================================================================
+    // EVENTS
+    // ============================================================================
     $('tokenBtn').addEventListener('click', connectToken);
     $('tokenInput').addEventListener('keydown', e => { if (e.key === 'Enter') connectToken(); });
 
@@ -665,55 +765,54 @@
     $('phone').addEventListener('keydown', e => { if (e.key === 'Enter') pairDevice(true); });
 
     $('regenBtn').addEventListener('click', async () => {
-      const ok = await confirmModal('Request new code?', 'This will invalidate the current pairing code and generate a fresh one. Your previous attempt will stop working.');
+      const ok = await confirmModal('NEW CODE?', 'This invalidates the current code.');
       if (ok) pairDevice(true);
     });
 
     $('copyCodeBtn').addEventListener('click', () => {
       const code = $('codeValue').textContent;
-      if (code) copyText(code.replace(/-/g, ''), $('copyCodeBtn'));
+      if (code) copyText(code.replace(/-/g, ''));
     });
 
     $('copyTokenBtn').addEventListener('click', () => {
-      const token = $('sessionToken').textContent;
-      if (token && token !== '—' && token !== 'not generated') {
-        copyText(token, $('copyTokenBtn'));
-      }
+      const t = $('sessionToken').textContent;
+      if (t && t !== '—' && t !== 'not generated') copyText(t);
     });
 
     $('downloadSessionBtn').addEventListener('click', () => {
       window.location.href = '/api/session/export';
-      toast('Downloading session…', 'info');
-      logEvent('Session package exported', 'info');
+      logEvent('Session exported', 'info');
     });
 
     $('refreshKeysBtn').addEventListener('click', async () => {
-      const ok = await confirmModal(
-        'Refresh sender keys?',
-        'This restarts the bot and clears sender-key-memory. Use it to fix "Waiting for this message".'
-      );
+      const ok = await confirmModal('REFRESH KEYS?', 'Restarts bot & clears sender-key-memory. Fixes "Waiting for message".');
       if (!ok) return;
       try {
         const r = await API.post('/api/session/refresh');
         toast(r.message || 'Restarted', 'success');
-        logEvent('Sender keys refreshed', 'warn');
+        logEvent('Keys refreshed', 'warn');
         refresh();
-      } catch (e) {
-        toast('Failed: ' + e.message, 'error');
-      }
+      } catch (e) { toast('Failed: ' + e.message, 'error'); }
     });
 
     $('regenTokenBtn').addEventListener('click', async () => {
-      const ok = await confirmModal(
-        'Regenerate session token?',
-        'Your old token will stop working. Save the new one to reconnect later.'
-      );
+      const ok = await confirmModal('REGENERATE TOKEN?', 'Old token stops working.');
       if (!ok) return;
       const r = await API.post('/api/token/regenerate');
       if (r.token) {
         $('sessionToken').textContent = r.token;
-        toast('New token generated', 'success');
-        logEvent('Session token regenerated', 'warn');
+        toast('New token', 'success');
+        logEvent('Token regenerated', 'warn');
+      }
+    });
+
+    $('saveSettingsBtn').addEventListener('click', async () => {
+      const botName = $('botNameInput').value.trim();
+      const prefix = $('prefixInput').value.trim();
+      const r = await API.post('/api/settings', { botName, prefix });
+      if (r.ok) {
+        toast('Settings saved', 'success');
+        logEvent(`Settings: ${r.botName} / ${r.prefix}`, 'info');
       }
     });
 
@@ -723,10 +822,22 @@
     });
 
     $('logoutBtn').addEventListener('click', async () => {
-      const ok = await confirmModal('Log out?', 'You will need to enter your password again.');
+      const ok = await confirmModal('LOG OUT?', 'You will need your password again.');
       if (!ok) return;
       await API.post('/api/logout');
       window.location.href = '/login';
+    });
+
+    $('logoutDeviceBtn').addEventListener('click', async () => {
+      const ok = await confirmModal('UNLINK WHATSAPP?', 'This logs the bot out from your WhatsApp. You will need to re-pair.');
+      if (!ok) return;
+      const r = await API.post('/api/logout-device');
+      if (r.ok) {
+        toast('Device unlinked', 'warn');
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        toast(r.error || 'Failed', 'error');
+      }
     });
 
     document.querySelectorAll('.modeBtn').forEach(btn => btn.addEventListener('click', async () => {
@@ -734,7 +845,7 @@
       if (mode === currentMode) return;
       setModeUI(mode);
       await API.post('/api/mode', { mode });
-      toast(`Mode set to ${mode}`, 'success');
+      toast(`Mode: ${mode}`, 'success');
       logEvent(`Mode → ${mode}`, 'info');
     }));
 
@@ -743,24 +854,15 @@
       const next = !toggleState[key];
       setToggleUI(key, next);
       await API.post('/api/toggle', { key, value: next });
-      toast(`${key} ${next ? 'enabled' : 'disabled'}`, next ? 'success' : 'info', 1800);
+      toast(`${key}: ${next ? 'ON' : 'OFF'}`, next ? 'success' : 'info', 1800);
       logEvent(`${key} → ${next ? 'on' : 'off'}`, 'info');
     }));
 
-    document.querySelectorAll('.methodBtn').forEach(btn => btn.addEventListener('click', () => {
-      setMethodUI(btn.dataset.method);
-    }));
+    document.querySelectorAll('.methodBtn').forEach(btn => btn.addEventListener('click', () => setMethodUI(btn.dataset.method)));
 
-    // Keyboard shortcuts
     document.addEventListener('keydown', e => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
-        $('tokenInput')?.focus();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
-        e.preventDefault();
-        $('phone')?.focus();
-      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); $('tokenInput')?.focus(); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'p') { e.preventDefault(); $('phone')?.focus(); }
       if (e.key === 'Escape') {
         $('modal').classList.add('hidden');
         $('modal').classList.remove('flex');
@@ -769,16 +871,42 @@
 
     // Clock
     function tickClock() {
-      $('clock').textContent = new Date().toLocaleTimeString();
+      const t = new Date().toTimeString().slice(0, 8);
+      $('topClock').textContent = t;
+      $('bottomClock').textContent = t;
     }
     tickClock();
     setInterval(tickClock, 1000);
 
-    // Boot
+    // ============================================================================
+    // PWA INSTALL
+    // ============================================================================
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      $('installBtn').classList.remove('hidden');
+    });
+    $('installBtn').addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      $('installBtn').classList.add('hidden');
+    });
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
+    // ============================================================================
+    // BOOT
+    // ============================================================================
     setMethodUI('code');
     refresh();
     setInterval(refresh, 3000);
-    logEvent('Control panel loaded', 'info');
+    logEvent('Console loaded', 'info');
   </script>
 </body>
 </html>

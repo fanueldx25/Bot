@@ -1,8 +1,12 @@
+// ============================================================================
+// IMPORTS
+// ============================================================================
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  isJidBroadcast,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -17,8 +21,9 @@ import { handleMessage, handleReaction, handleGroupParticipants } from './comman
 export const state = {
   sock: null,
   connected: false,
-  mode: 'private',
-  ownerJid: null,
+  mode: 'public',              // ← changed default: allow groups
+  ownerJid: null,              // full JID of the owner (the account the bot runs as)
+  ownerNumber: null,           // raw phone number
   pairingCode: null,
   pairingPhone: null,
   sessionToken: null,
@@ -35,6 +40,7 @@ export const state = {
   bannerUrl: null,
   botName: 'WA Bot',
   msgCount: 0,
+  menuSent: false,             // ← flag so menu sends once per connect
 };
 
 // ============================================================================
@@ -48,14 +54,10 @@ const DATA_DIR = path.join(DATA_ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'bot-data.json');
 
 // ============================================================================
-// AUTO-DELETE TIMERS (for 1-hour disappearing notifications)
+// AUTO-DELETE TIMERS
 // ============================================================================
 const autoDeleteTimers = new Map();
 
-/**
- * Schedule a message to be deleted from the chat after `delayMs`.
- * Used for anti-delete/anti-edit notifications and view-once captures.
- */
 export function scheduleAutoDelete(sock, chatJid, messageKey, delayMs = 60 * 60 * 1000) {
   if (!messageKey?.id) return;
   const id = `${chatJid}:${messageKey.id}`;
@@ -72,9 +74,6 @@ export function scheduleAutoDelete(sock, chatJid, messageKey, delayMs = 60 * 60 
   autoDeleteTimers.set(id, timer);
 }
 
-/**
- * Cancel all scheduled auto-deletes (e.g., on logout/restart).
- */
 export function cancelAllAutoDeletes() {
   for (const [id, timer] of autoDeleteTimers.entries()) {
     clearTimeout(timer);
@@ -86,7 +85,7 @@ export function cancelAllAutoDeletes() {
 // IN-MEMORY MESSAGE STORE
 // ============================================================================
 export const messageStore = new Map();
-const MAX_STORE = 500;
+const MAX_STORE = 1000;
 
 function addToStore(msg) {
   if (!msg.key?.id || !msg.key?.remoteJid) return;
@@ -121,7 +120,7 @@ function loadData() {
 function saveData() {
   const data = {};
   const fields = [
-    'ownerJid', 'sessionToken', 'mode', 'antidelete', 'antiedit',
+    'ownerJid', 'ownerNumber', 'sessionToken', 'mode', 'antidelete', 'antiedit',
     'welcome', 'goodbye', 'welcomeText', 'goodbyeText', 'prefix',
     'bannerUrl', 'botName', 'msgCount'
   ];
@@ -144,18 +143,9 @@ function generateToken() {
 // ============================================================================
 // SESSION PACKAGE EXPORT / IMPORT
 // ============================================================================
-
 export function exportSessionPackage() {
-  const pkg = {
-    version: 1,
-    createdAt: new Date().toISOString(),
-    files: {},
-  };
-
-  if (!fs.existsSync(AUTH_DIR)) {
-    throw new Error('Auth folder does not exist');
-  }
-
+  const pkg = { version: 1, createdAt: new Date().toISOString(), files: {} };
+  if (!fs.existsSync(AUTH_DIR)) throw new Error('Auth folder does not exist');
   const files = fs.readdirSync(AUTH_DIR);
   for (const file of files) {
     const fullPath = path.join(AUTH_DIR, file);
@@ -168,23 +158,17 @@ export function exportSessionPackage() {
       console.error(`Skipping non-JSON file: ${file}`, e.message);
     }
   }
-
   return pkg;
 }
 
 export function importSessionPackage(pkg) {
-  if (!pkg || pkg.version !== 1 || !pkg.files) {
-    throw new Error('Invalid session package format');
-  }
-
+  if (!pkg || pkg.version !== 1 || !pkg.files) throw new Error('Invalid session package format');
   ensureDirs();
-
   if (fs.existsSync(AUTH_DIR)) {
     for (const f of fs.readdirSync(AUTH_DIR)) {
       fs.unlinkSync(path.join(AUTH_DIR, f));
     }
   }
-
   let written = 0;
   for (const [filename, content] of Object.entries(pkg.files)) {
     if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
@@ -194,7 +178,6 @@ export function importSessionPackage(pkg) {
     fs.writeFileSync(path.join(AUTH_DIR, filename), content);
     written++;
   }
-
   console.log(`📦 Imported ${written} auth files from session package`);
   return written;
 }
@@ -203,15 +186,12 @@ export function clearSenderKeyMemory() {
   if (!fs.existsSync(AUTH_DIR)) return 0;
   const files = fs.readdirSync(AUTH_DIR).filter(f => f.startsWith('sender-key-memory-'));
   let cleared = 0;
-
   for (const file of files) {
     const fullPath = path.join(AUTH_DIR, file);
     try {
       const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
       if (content && typeof content === 'object') {
-        for (const jid of Object.keys(content)) {
-          content[jid] = null;
-        }
+        for (const jid of Object.keys(content)) content[jid] = null;
         fs.writeFileSync(fullPath, JSON.stringify(content));
         cleared++;
       }
@@ -219,7 +199,6 @@ export function clearSenderKeyMemory() {
       console.error(`Failed to clear ${file}:`, e.message);
     }
   }
-
   console.log(`🔑 Cleared sender-key-memory in ${cleared} files`);
   return cleared;
 }
@@ -227,7 +206,6 @@ export function clearSenderKeyMemory() {
 // ============================================================================
 // AUTH FOLDER HELPERS
 // ============================================================================
-
 function wipeAuthFolder() {
   if (fs.existsSync(AUTH_DIR)) {
     for (const f of fs.readdirSync(AUTH_DIR)) {
@@ -238,10 +216,8 @@ function wipeAuthFolder() {
 }
 
 // ============================================================================
-// SHARED SOCKET OPTIONS
+// SOCKET OPTIONS
 // ============================================================================
-
-// CANONICAL browser label — fixes WhatsApp rejecting pairing codes
 const BROWSER_LABEL = ['Ubuntu', 'Chrome', '20.0.04'];
 
 function makeSocketOptions(authState) {
@@ -256,18 +232,23 @@ function makeSocketOptions(authState) {
     markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
+    // ⭐ REQUIRED so retry receipts can be answered (fixes "Waiting for this message")
+    getMessage: async (key) => {
+      const stored = messageStore.get(`${key.remoteJid}:${key.id}`);
+      if (stored?.message) return stored.message;
+      // fallback: return empty so Baileys doesn't crash
+      return { conversation: '' };
+    },
   };
 }
 
 // ============================================================================
 // BOT LIFECYCLE
 // ============================================================================
-
 let activeSocket = null;
 let startingUp = false;
 
 export async function startBot(options = {}) {
-  // Guard against concurrent startups (fixes double-handler bug)
   if (startingUp) {
     console.log('⚠️ startBot already in progress, skipping');
     return activeSocket;
@@ -278,7 +259,6 @@ export async function startBot(options = {}) {
     ensureDirs();
     if (!options.skipLoad) loadData();
 
-    // Tear down existing socket AND detach all its listeners
     if (activeSocket) {
       try {
         activeSocket.ev.removeAllListeners('connection.update');
@@ -291,6 +271,7 @@ export async function startBot(options = {}) {
       activeSocket = null;
     }
     state.sock = null;
+    state.menuSent = false;
 
     const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const { version } = await fetchLatestBaileysVersion();
@@ -314,23 +295,37 @@ export async function startBot(options = {}) {
 // ============================================================================
 // FULL HANDLERS
 // ============================================================================
-
 function attachFullHandlers(sock, authState, saveCreds) {
-  // Message store + counter
+
+  // --------------------------------------------------------------------------
+  // 1. Store EVERY incoming message (both notify & append) for retries & anti-delete
+  // --------------------------------------------------------------------------
   sock.ev.on('messages.upsert', ({ messages, type }) => {
-    if (type !== 'notify') return;
+    if (type !== 'notify' && type !== 'append') return;
     for (const msg of messages) {
-      if (msg.message) {
+      if (msg.message && !msg.key.fromMe) {
         addToStore(msg);
         state.msgCount = (state.msgCount || 0) + 1;
+      } else if (msg.message && msg.key.fromMe) {
+        // also store our own outgoing messages for anti-delete / retries
+        addToStore(msg);
       }
     }
   });
 
-  // Command dispatch
-  sock.ev.on('messages.upsert', (payload) => handleMessage(payload, sock, state));
+  // --------------------------------------------------------------------------
+  // 2. Command dispatch (only for notify)
+  // --------------------------------------------------------------------------
+  sock.ev.on('messages.upsert', (payload) => {
+    if (payload.type !== 'notify') return;
+    handleMessage(payload, sock, state).catch(e =>
+      console.error('handleMessage error:', e.message)
+    );
+  });
 
-  // Anti-delete + anti-edit (with auto-delete after 1 hour)
+  // --------------------------------------------------------------------------
+  // 3. Anti-delete + Anti-edit
+  // --------------------------------------------------------------------------
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
@@ -348,9 +343,7 @@ function attachFullHandlers(sock, authState, saveCreds) {
               forward: original,
               text: `⚠️ *Deleted message recovered*\nChat: ${origKey.remoteJid}`,
             });
-            if (sent?.key) {
-              scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
-            }
+            if (sent?.key) scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
           } catch (e) { console.error('anti-delete failed', e.message); }
         }
       }
@@ -367,22 +360,35 @@ function attachFullHandlers(sock, authState, saveCreds) {
           const sent = await sock.sendMessage(state.ownerJid, {
             text: `✏️ *Message edited*\nChat: ${origKey.remoteJid}\n\n*Original:*\n${originalText}\n\n*Edited:*\n${editedText}`,
           });
-          if (sent?.key) {
-            scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
-          }
+          if (sent?.key) scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
         } catch (e) { console.error('anti-edit failed', e.message); }
       }
     }
   });
 
-  // Reactions & group events
-  sock.ev.on('messages.reaction', (reactions) => handleReaction(reactions, sock, state));
-  sock.ev.on('group-participants.update', (update) => handleGroupParticipants(update, sock, state));
+  // --------------------------------------------------------------------------
+  // 4. Reactions & group events
+  // --------------------------------------------------------------------------
+  sock.ev.on('messages.reaction', (reactions) => {
+    handleReaction(reactions, sock, state).catch(e =>
+      console.error('handleReaction error:', e.message)
+    );
+  });
 
-  // Credentials persistence
+  sock.ev.on('group-participants.update', (update) => {
+    handleGroupParticipants(update, sock, state).catch(e =>
+      console.error('handleGroupParticipants error:', e.message)
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // 5. Credentials persistence
+  // --------------------------------------------------------------------------
   sock.ev.on('creds.update', saveCreds);
 
-  // Connection lifecycle
+  // --------------------------------------------------------------------------
+  // 6. Connection lifecycle + auto-send menu
+  // --------------------------------------------------------------------------
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
@@ -392,20 +398,44 @@ function attachFullHandlers(sock, authState, saveCreds) {
       state.pairingCode = null;
       state.pairingPhone = null;
 
-      const jid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-      if (!state.ownerJid) {
-        state.ownerJid = jid;
-        saveData();
-      }
+      // ⭐ Set owner JID from the bot's own identity — this is correct because
+      //    the bot IS the owner's WhatsApp account (linked device).
+      const meJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+      state.ownerJid = meJid;
+      state.ownerNumber = meJid.split('@')[0];
       if (!state.sessionToken) generateToken();
-      console.log('✅ Connected as', jid);
+      saveData();
+
+      console.log('✅ Connected as', meJid);
+
+      // ⭐ Auto-send menu to the owner's own DM (the linked device's "Message yourself" chat)
+      if (!state.menuSent) {
+        state.menuSent = true;
+        setTimeout(async () => {
+          try {
+            const { buildMenu } = await import('./command.js');
+            const menuText = typeof buildMenu === 'function'
+              ? buildMenu(state)
+              : `🤖 *${state.botName}* is online.\nSend *${state.prefix}menu* to see commands.`;
+            await sock.sendMessage(meJid, { text: menuText });
+            console.log('📋 Menu sent to owner DM');
+          } catch (e) {
+            console.error('Failed to send startup menu:', e.message);
+            try {
+              await sock.sendMessage(meJid, {
+                text: `🤖 *${state.botName}* is online.\nSend *${state.prefix}menu* to see commands.`
+              });
+            } catch (_) {}
+          }
+        }, 1500);
+      }
     }
 
     if (connection === 'close') {
       state.connected = false;
+      state.menuSent = false;
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
 
-      // If we were waiting for pairing and it failed, don't reconnect
       if (state.isInitialConnection && !authState.creds.registered) {
         console.log('🔌 Pairing attempt closed (not registered yet)');
         return;
@@ -426,16 +456,8 @@ function attachFullHandlers(sock, authState, saveCreds) {
 }
 
 // ============================================================================
-// PAIRING (FIXED)
+// PAIRING
 // ============================================================================
-
-/**
- * Request a FRESH pairing code.
- *
- * CRITICAL: requestPairingCode() must be called AFTER the socket reaches
- * the 'connecting' state (signalled by the first 'qr' event). Calling it
- * too early produces codes that WhatsApp rejects.
- */
 export async function requestPairing(phoneNumber, force = true) {
   const cleaned = String(phoneNumber).replace(/\D/g, '');
   if (!cleaned || cleaned.length < 7) {
@@ -448,7 +470,6 @@ export async function requestPairing(phoneNumber, force = true) {
 
   console.log(`📱 Requesting fresh pairing code for ${cleaned}...`);
 
-  // 1. Tear down any existing socket AND detach listeners
   if (activeSocket) {
     try {
       activeSocket.ev.removeAllListeners('connection.update');
@@ -464,11 +485,10 @@ export async function requestPairing(phoneNumber, force = true) {
   state.connected = false;
   state.pairingCode = null;
   state.pairingPhone = null;
+  state.menuSent = false;
 
-  // 2. Wipe auth folder for a clean slate
   wipeAuthFolder();
 
-  // 3. Build fresh socket
   const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
 
@@ -483,7 +503,6 @@ export async function requestPairing(phoneNumber, force = true) {
 
   sock.ev.on('creds.update', saveCreds);
 
-  // 4. WAIT for socket readiness — the 'qr' event is the reliable signal.
   await new Promise((resolve, reject) => {
     let done = false;
     const finish = (err) => {
@@ -510,12 +529,9 @@ export async function requestPairing(phoneNumber, force = true) {
     };
 
     sock.ev.on('connection.update', handler);
-
-    // Safety timeout — 30s max
     setTimeout(() => finish(new Error('Timed out waiting for socket readiness (30s)')), 30000);
   });
 
-  // 5. Request the code — socket is now guaranteed ready
   let code;
   try {
     code = await sock.requestPairingCode(cleaned);
@@ -524,15 +540,12 @@ export async function requestPairing(phoneNumber, force = true) {
     throw new Error(`Pairing request failed: ${e.message}`);
   }
 
-  if (!code) {
-    throw new Error('WhatsApp returned an empty pairing code');
-  }
+  if (!code) throw new Error('WhatsApp returned an empty pairing code');
 
   state.pairingCode = code;
   state.pairingPhone = cleaned;
   console.log(`🔑 Fresh pairing code for ${cleaned}: ${code}`);
 
-  // 6. Attach full handlers for when pairing succeeds
   attachFullHandlers(sock, authState, saveCreds);
 
   return code;
@@ -541,11 +554,8 @@ export async function requestPairing(phoneNumber, force = true) {
 // ============================================================================
 // RESTART
 // ============================================================================
-
 export async function restartBot(sessionPkg = null) {
   console.log('🔄 Restarting bot...');
-
-  // Cancel all pending auto-deletes before tearing down
   cancelAllAutoDeletes();
 
   if (activeSocket) {
@@ -564,10 +574,9 @@ export async function restartBot(sessionPkg = null) {
   state.isInitialConnection = true;
   state.pairingCode = null;
   state.pairingPhone = null;
+  state.menuSent = false;
 
-  if (sessionPkg) {
-    importSessionPackage(sessionPkg);
-  }
+  if (sessionPkg) importSessionPackage(sessionPkg);
 
   clearSenderKeyMemory();
 
@@ -578,14 +587,13 @@ export async function restartBot(sessionPkg = null) {
 // ============================================================================
 // EXPORTS
 // ============================================================================
-
 export function persistConfig() { saveData(); }
 export function getToken() { return state.sessionToken; }
 export function regenerateToken() { return generateToken(); }
 export function getBotData() {
   const data = {};
   const fields = [
-    'ownerJid', 'sessionToken', 'mode', 'antidelete', 'antiedit',
+    'ownerJid', 'ownerNumber', 'sessionToken', 'mode', 'antidelete', 'antiedit',
     'welcome', 'goodbye', 'welcomeText', 'goodbyeText', 'prefix',
     'bannerUrl', 'botName', 'msgCount'
   ];

@@ -1,3 +1,6 @@
+// ============================================================================
+// IMPORTS
+// ============================================================================
 import { downloadMediaMessage, getContentType } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import fs from 'fs';
@@ -7,22 +10,12 @@ import { persistConfig, messageStore, scheduleAutoDelete } from './bot.js';
 // ============================================================================
 // OPTIONAL MODULE IMPORTS
 // ============================================================================
-let ttdl, ytdl, Sticker, sharp;
-try {
-  const ttdlMod = await import('@silent-tech-offc/ttdl');
-  ttdl = ttdlMod.download;
-} catch (e) { console.warn('ttdl not available'); }
-try {
-  const ytdlMod = await import('@slipknot/ytdl-core');
-  ytdl = ytdlMod.default || ytdlMod;
-} catch (e) { console.warn('ytdl not available'); }
-try {
-  const stickerMod = await import('wa-sticker-kit');
-  Sticker = stickerMod.Sticker || stickerMod.default?.Sticker || stickerMod.default;
-} catch (e) { console.warn('wa-sticker-kit not available'); }
-try {
-  sharp = (await import('sharp')).default;
-} catch (e) { console.warn('sharp not available'); }
+let ttdl, Sticker, sharp, playdl, yts;
+try { const m = await import('@silent-tech-offc/ttdl'); ttdl = m.download; } catch { console.warn('ttdl not available'); }
+try { playdl = await import('play-dl'); } catch { console.warn('play-dl not available'); }
+try { yts = (await import('yt-search')).default; } catch { console.warn('yt-search not available'); }
+try { const m = await import('wa-sticker-kit'); Sticker = m.Sticker || m.default?.Sticker || m.default; } catch { console.warn('wa-sticker-kit not available'); }
+try { sharp = (await import('sharp')).default; } catch { console.warn('sharp not available'); }
 
 // ============================================================================
 // CONFIG
@@ -30,10 +23,52 @@ try {
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '';
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || '';
 const HARDCODED_BANNER = process.env.DEFAULT_BANNER_URL || '';
-
 const TTS_MAX_CHARS = 200;
-
 const logger = pino({ level: 'silent' });
+
+// ============================================================================
+// QUOTED MEDIA HELPERS
+// ============================================================================
+function getContextInfo(msg) {
+  return msg.message?.extendedTextMessage?.contextInfo || null;
+}
+
+function getQuotedMessage(msg) {
+  return getContextInfo(msg)?.quotedMessage || null;
+}
+
+function getQuotedKey(msg, jid, state) {
+  const ctx = getContextInfo(msg);
+  if (!ctx?.stanzaId) return null;
+  return {
+    remoteJid: jid,
+    fromMe: ctx.participant === state.ownerJid,
+    id: ctx.stanzaId,
+    participant: ctx.participant,
+  };
+}
+
+function unwrapViewOnce(message) {
+  return (
+    message?.viewOnceMessageV2?.message ||
+    message?.viewOnceMessageV2Extension?.message ||
+    message?.viewOnceMessage?.message ||
+    message
+  );
+}
+
+async function downloadQuotedMedia(msg, jid, state, sock) {
+  const quoted = getQuotedMessage(msg);
+  const key = getQuotedKey(msg, jid, state);
+  if (!quoted || !key) throw new Error('No quoted media found');
+  const buffer = await downloadMediaMessage(
+    { key, message: quoted },
+    'buffer', {},
+    { logger, reuploadRequest: sock.updateMediaMessage }
+  );
+  const type = getContentType(unwrapViewOnce(quoted));
+  return { buffer, type, key, quoted };
+}
 
 // ============================================================================
 // HUMAN-LIKE PRESENCE HELPERS
@@ -103,14 +138,12 @@ async function uploadToImgBB(buffer, name = 'image.jpg') {
 async function textToImage(text, width = 1080, height = 1080) {
   if (!sharp) throw new Error('sharp not installed — cannot render text to image');
 
-  // Escape XML special chars
   const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-  // Wrap long text into lines of ~30 chars
   const lines = [];
   const words = escaped.split(/\s+/);
   let current = '';
@@ -203,8 +236,13 @@ export async function handleMessage(payload, sock, state) {
     const sender = fromMe ? state.ownerJid : (msg.key.participant || jid);
     const isGroup = jid.endsWith('@g.us');
 
-    if (state.mode === 'private' && !fromMe && sender !== state.ownerJid) continue;
+    // In private mode: only respond to owner
+const isOwner =
+  fromMe ||
+  sender === state.ownerJid ||
+  sender?.split('@')[0]?.split(':')[0] === state.ownerNumber;
 
+if (state.mode === 'private' && !isOwner) continue;
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
@@ -216,7 +254,6 @@ export async function handleMessage(payload, sock, state) {
     const handler = commands[rawCmd.toLowerCase()];
     if (!handler) continue;
 
-    // Human-like: mark message as read, show online
     try {
       await sock.readMessages([msg.key]);
       await sendOnline(sock);
@@ -238,35 +275,36 @@ export async function handleMessage(payload, sock, state) {
 export async function handleReaction(reactions, sock, state) {
   for (const { key, reaction } of reactions) {
     if (reaction.text !== '🐼' || !state.ownerJid) continue;
+
     const original = messageStore.get(`${key.remoteJid}:${key.id}`);
     if (!original) continue;
 
-    const content = original.message?.viewOnceMessageV2?.message || original.message?.viewOnceMessage?.message;
-    if (!content) continue;
+    const content = unwrapViewOnce(original.message);
+    if (!content || (!content.imageMessage && !content.videoMessage)) continue;
 
-    await setReaction(sock, { key, ...original }, '⏳');
+    await setReaction(sock, { key }, '⏳');
 
     try {
       const buffer = await downloadMediaMessage(
-        { ...original, message: content },
+        original,
         'buffer', {},
         { logger, reuploadRequest: sock.updateMediaMessage }
       );
+
       const type = getContentType(content);
       const sendOpts = type === 'videoMessage'
         ? { video: buffer, caption: '📥 *View-once downloaded* (auto-deletes in 1h)' }
         : { image: buffer, caption: '📥 *View-once downloaded* (auto-deletes in 1h)' };
 
       const sent = await sock.sendMessage(state.ownerJid, sendOpts);
-      await setReaction(sock, { key, ...original }, '✅');
+      await setReaction(sock, { key }, '✅');
 
-      // Auto-delete after 1 hour
       if (sent?.key) {
         scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
       }
     } catch (e) {
       console.error('view-once download failed:', e.message);
-      await setReaction(sock, { key, ...original }, '❌');
+      await setReaction(sock, { key }, '❌');
     }
   }
 }
@@ -678,44 +716,55 @@ async function cmdQr({ args, sock, jid, state, msg }) {
 }
 
 // ============================================================================
-// 🎵 MUSIC — search & download
+// 🎵 MUSIC — using play-dl + yt-search
 // ============================================================================
 async function cmdPlay({ args, sock, jid, state, msg }) {
-  const query = args.join(' ');
+  const query = args.join(' ').trim();
   if (!query) {
     await setReaction(sock, msg, '🍎');
-    return sock.sendMessage(jid, { text: `Usage: ${state.prefix}play <song name>\nExample: ${state.prefix}play Shape of You` });
+    return sock.sendMessage(jid, {
+      text: `Usage: ${state.prefix}play <song name>\nExample: ${state.prefix}play Lonely at the top`
+    });
+  }
+
+  if (!playdl || !yts) {
+    await setReaction(sock, msg, '❌');
+    return sock.sendMessage(jid, {
+      text: '❌ Music libraries not installed.\nRun: npm install play-dl yt-search'
+    });
   }
 
   await setReaction(sock, msg, '🔎');
-  await sendRecording(sock, jid, 1500);
+  await sendRecording(sock, jid, 1200);
 
   try {
-    if (!ytdl) {
-      await setReaction(sock, msg, '❌');
-      return sock.sendMessage(jid, { text: '❌ YouTube downloader not installed' });
-    }
+    const results = await yts(query);
+    const video = results.videos?.[0];
+    if (!video) throw new Error('No results found');
 
-    const searchUrl = `ytsearch:${query}`;
-    let info;
-    try {
-      info = await ytdl.getInfo(searchUrl);
-    } catch (e) {
-      const searchRes = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
-      const html = await searchRes.text();
-      const match = html.match(/"videoId":"([^"]+)"/);
-      if (!match) throw new Error('No results');
-      info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${match[1]}`);
-    }
-
-    const video = info.videoDetails;
     await sock.sendMessage(jid, {
-      text: `${DIV}\n║  🎵 *Found:* ${video.title}\n║  ⏱ ${Math.floor(video.lengthSeconds / 60)}:${String(video.lengthSeconds % 60).padStart(2, '0')}\n║  👤 ${video.author.name}\n║  ⏳ Downloading audio...\n${DIV}`
+      text:
+        `${DIV}\n` +
+        `║  🎵 *Found:* ${video.title}\n` +
+        `║  ⏱ Duration: ${video.timestamp}\n` +
+        `║  👤 ${video.author.name}\n` +
+        `║  👁️ ${video.views?.toLocaleString() || '?'} views\n` +
+        `║  ⏳ Downloading audio...\n` +
+        `${DIV}`
     });
 
-    const stream = ytdl(video.videoId, { quality: 'highestaudio', filter: 'audioonly' });
+    let stream;
+    try {
+      stream = await playdl.stream(video.url, { quality: 2 });
+    } catch (e) {
+      console.warn('YT stream failed, trying SoundCloud fallback...');
+      const sc = await playdl.search(query, { source: { soundcloud: 'tracks' }, limit: 1 });
+      if (!sc.length) throw new Error('YouTube blocked + no SoundCloud fallback');
+      stream = await playdl.stream(sc[0].url);
+    }
+
     const chunks = [];
-    for await (const chunk of stream) chunks.push(chunk);
+    for await (const chunk of stream.stream) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
 
     if (buffer.length > 16 * 1024 * 1024) {
@@ -723,18 +772,20 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
       return sock.sendMessage(jid, { text: '❌ Audio too large (max 16MB)' });
     }
 
-    // Send as downloadable audio file (not voice note)
     await sock.sendMessage(jid, {
       audio: buffer,
       mimetype: 'audio/mp4',
       ptt: false,
-      fileName: `${video.title.replace(/[^\w\s]/g, '')}.mp3`,
-      caption: `🎵 *${video.title}*`,
+      fileName: `${video.title.replace(/[^\w\s]/g, '').slice(0, 60)}.m4a`,
     });
+
     await setReaction(sock, msg, '✅');
   } catch (e) {
+    console.error('Play error:', e);
     await setReaction(sock, msg, '❌');
-    await sock.sendMessage(jid, { text: `❌ Music error: ${e.message}` });
+    await sock.sendMessage(jid, {
+      text: `❌ Music error: ${e.message}\n\n💡 Tip: Try again or use a different song name.`
+    });
   }
 }
 
@@ -748,24 +799,28 @@ async function cmdSong({ args, sock, jid, state, msg }) {
 async function cmdYt({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const url = args[0];
-  if (!url || !url.includes('youtu')) {
+  if (!url || !/youtu/.test(url)) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `Usage: ${state.prefix}yt <youtube-url>` });
   }
-  if (!ytdl) {
+  if (!playdl) {
     await setReaction(sock, msg, '❌');
-    return sock.sendMessage(jid, { text: '❌ YouTube downloader not installed' });
+    return sock.sendMessage(jid, { text: '❌ play-dl not installed' });
   }
 
   await setReaction(sock, msg, '🔎');
   try {
-    const info = await ytdl.getBasicInfo(url);
-    await setReaction(sock, msg, '⏳');
-    await sock.sendMessage(jid, { text: `${DIV}\n║  ⏳ *Processing YouTube video...*\n║  📹 ${info.videoDetails.title}\n║  ⏱ ${Math.floor(info.videoDetails.lengthSeconds / 60)}m ${info.videoDetails.lengthSeconds % 60}s\n${DIV}` });
+    const info = await playdl.video_info(url);
+    const v = info.video_details;
 
-    const stream = ytdl(url, { quality: 'highest', filter: 'audioandvideo' });
+    await setReaction(sock, msg, '⏳');
+    await sock.sendMessage(jid, {
+      text: `${DIV}\n║  ⏳ *Processing YouTube video...*\n║  📹 ${v.title}\n║  ⏱ ${v.durationRaw}\n${DIV}`
+    });
+
+    const stream = await playdl.stream(url, { quality: 1 });
     const chunks = [];
-    for await (const chunk of stream) chunks.push(chunk);
+    for await (const chunk of stream.stream) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
 
     if (buffer.length > 64 * 1024 * 1024) {
@@ -773,7 +828,7 @@ async function cmdYt({ args, sock, jid, fromMe, state, msg }) {
       return sock.sendMessage(jid, { text: '❌ Video too large (max 64MB)' });
     }
 
-    await sock.sendMessage(jid, { video: buffer, caption: `📹 *${info.videoDetails.title}*` });
+    await sock.sendMessage(jid, { video: buffer, caption: `📹 *${v.title}*` });
     await setReaction(sock, msg, '✅');
   } catch (e) {
     await setReaction(sock, msg, '❌');
@@ -792,16 +847,20 @@ async function cmdTiktok({ args, sock, jid, fromMe, state, msg }) {
     await setReaction(sock, msg, '❌');
     return sock.sendMessage(jid, { text: '❌ TikTok downloader not installed' });
   }
-
   await setReaction(sock, msg, '🔎');
   try {
     const v = await ttdl(url);
     await setReaction(sock, msg, '⏳');
-    const videoUrl = v.videoNoWatermark || v.video;
+    const videoUrl =
+      v.videoNoWatermark || v.video || v.play || v.data?.play ||
+      v.data?.video || v.videoUrl;
+    if (!videoUrl) throw new Error('No video URL in response');
     const res = await fetch(videoUrl);
     const buffer = Buffer.from(await res.arrayBuffer());
-
-    await sock.sendMessage(jid, { video: buffer, caption: `📹 *${v.title || 'TikTok video'}*\n👤 ${v.author || ''}` });
+    await sock.sendMessage(jid, {
+      video: buffer,
+      caption: `📹 *${v.title || v.desc || 'TikTok video'}*\n👤 ${v.author || v.authorName || ''}`
+    });
     await setReaction(sock, msg, '✅');
   } catch (e) {
     await setReaction(sock, msg, '❌');
@@ -836,30 +895,20 @@ async function cmdFb({ args, sock, jid, fromMe, state, msg }) {
 // ============================================================================
 async function cmdOps({ msg, sock, jid, fromMe, state }) {
   if (!fromMe || !state.ownerJid) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
+  const quoted = getQuotedMessage(msg);
   if (!quoted) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `↩️ Reply to a view-once message with ${state.prefix}ops` });
   }
-  const content = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessage?.message || quoted;
   await setReaction(sock, msg, '⏳');
   try {
-    const buffer = await downloadMediaMessage(
-      { key: msg.key, message: content },
-      'buffer', {},
-      { logger, reuploadRequest: sock.updateMediaMessage }
-    );
-    const type = getContentType(content);
+    const { buffer, type } = await downloadQuotedMedia(msg, jid, state, sock);
     const opts = type === 'videoMessage'
       ? { video: buffer, caption: '📥 Downloaded from view-once (auto-deletes in 1h)' }
       : { image: buffer, caption: '📥 Downloaded from view-once (auto-deletes in 1h)' };
     const sent = await sock.sendMessage(state.ownerJid, opts);
     await setReaction(sock, msg, '✅');
-
-    if (sent?.key) {
-      scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
-    }
+    if (sent?.key) scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
   } catch (e) {
     await setReaction(sock, msg, '❌');
     await sock.sendMessage(jid, { text: `❌ Failed: ${e.message}` });
@@ -868,20 +917,14 @@ async function cmdOps({ msg, sock, jid, fromMe, state }) {
 
 async function cmdSaveMedia({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
+  const quoted = getQuotedMessage(msg);
   if (!quoted) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `↩️ Reply to media with ${state.prefix}save` });
   }
   await setReaction(sock, msg, '⏳');
   try {
-    const buffer = await downloadMediaMessage(
-      { key: msg.key, message: quoted },
-      'buffer', {},
-      { logger, reuploadRequest: sock.updateMediaMessage }
-    );
-    const type = getContentType(quoted);
+    const { buffer, type } = await downloadQuotedMedia(msg, jid, state, sock);
     const opts = type === 'videoMessage' ? { video: buffer } : { image: buffer };
     await sock.sendMessage(state.ownerJid, opts);
     await setReaction(sock, msg, '✅');
@@ -896,24 +939,16 @@ async function cmdSaveMedia({ msg, sock, jid, fromMe, state }) {
 // ============================================================================
 async function cmdSticker({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
+  const quoted = getQuotedMessage(msg);
   if (!quoted?.imageMessage && !quoted?.videoMessage) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `↩️ Reply to an image or video with ${state.prefix}sticker` });
   }
-
   await setReaction(sock, msg, '⏳');
   try {
-    const buffer = await downloadMediaMessage(
-      { key: msg.key, message: quoted },
-      'buffer', {},
-      { logger, reuploadRequest: sock.updateMediaMessage }
-    );
-
-    let stickerBuffer;
+    const { buffer } = await downloadQuotedMedia(msg, jid, state, sock);
     const isVideo = !!quoted.videoMessage;
-
+    let stickerBuffer;
     if (sharp && !isVideo) {
       stickerBuffer = await sharp(buffer)
         .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -930,7 +965,6 @@ async function cmdSticker({ msg, sock, jid, fromMe, state }) {
     } else {
       throw new Error('No sticker library available');
     }
-
     await sock.sendMessage(jid, { sticker: stickerBuffer });
     await setReaction(sock, msg, '✅');
   } catch (e) {
@@ -944,18 +978,12 @@ async function cmdSticker({ msg, sock, jid, fromMe, state }) {
 // ============================================================================
 async function cmdToImg({ args, msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
+  const quoted = getQuotedMessage(msg);
 
-  // If a sticker is quoted → convert sticker to image
   if (quoted?.stickerMessage) {
     await setReaction(sock, msg, '⏳');
     try {
-      const buffer = await downloadMediaMessage(
-        { key: msg.key, message: quoted },
-        'buffer', {},
-        { logger, reuploadRequest: sock.updateMediaMessage }
-      );
+      const { buffer } = await downloadQuotedMedia(msg, jid, state, sock);
       await sock.sendMessage(jid, { image: buffer, caption: '🖼️ Converted from sticker' });
       await setReaction(sock, msg, '✅');
     } catch (e) {
@@ -965,7 +993,6 @@ async function cmdToImg({ args, msg, sock, jid, fromMe, state }) {
     return;
   }
 
-  // If text is given → render text on black background
   const text = args.join(' ').trim();
   if (!text) {
     await setReaction(sock, msg, '🍎');
@@ -1030,8 +1057,7 @@ async function cmdTextToImg({ args, sock, jid, fromMe, state, msg }) {
 // ============================================================================
 async function cmdToUrl({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
+  const quoted = getQuotedMessage(msg);
   if (!quoted?.imageMessage && !quoted?.videoMessage) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `↩️ Reply to an image/video with ${state.prefix}tourl` });
@@ -1045,11 +1071,7 @@ async function cmdToUrl({ msg, sock, jid, fromMe, state }) {
   await setReaction(sock, msg, '⏳');
   await sendTyping(sock, jid, 1000);
   try {
-    const buffer = await downloadMediaMessage(
-      { key: msg.key, message: quoted },
-      'buffer', {},
-      { logger, reuploadRequest: sock.updateMediaMessage }
-    );
+    const { buffer } = await downloadQuotedMedia(msg, jid, state, sock);
     const url = await uploadToImgBB(buffer, `wa-${Date.now()}.jpg`);
 
     await sock.sendMessage(jid, {
@@ -1062,9 +1084,12 @@ async function cmdToUrl({ msg, sock, jid, fromMe, state }) {
   }
 }
 
+// ============================================================================
+// GET PROFILE PICTURE
+// ============================================================================
 async function cmdGetPp({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant || state.ownerJid;
   if (!target) {
     await setReaction(sock, msg, '🍎');
@@ -1121,7 +1146,6 @@ async function cmdTts({ args, sock, jid, fromMe, state, msg }) {
     const buffer = Buffer.from(await res.arrayBuffer());
     if (buffer.length < 100) throw new Error('TTS returned empty audio');
 
-    // Send as downloadable audio file (ptt: false = not voice note)
     await sock.sendMessage(jid, {
       audio: buffer,
       mimetype: 'audio/mpeg',
@@ -1136,7 +1160,7 @@ async function cmdTts({ args, sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// UTILITY
+// UTILITY — LYRICS
 // ============================================================================
 async function cmdLyrics({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1158,15 +1182,18 @@ async function cmdLyrics({ args, sock, jid, fromMe, state, msg }) {
   }
 }
 
-async function cmdForward({ msg, sock, jid, fromMe, state }) {
+// ============================================================================
+// UTILITY — FORWARD
+// ============================================================================
+async function cmdForward({ args, msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
-  if (!quoted) {
+  const quoted = getQuotedMessage(msg);
+  const key = getQuotedKey(msg, jid, state);
+  if (!quoted || !key) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `↩️ Reply to a message with ${state.prefix}forward <number>` });
   }
-  const targetNum = msg.message?.extendedTextMessage?.text?.split(' ')[1];
+  const targetNum = args[0];
   if (!targetNum) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `Usage: ${state.prefix}forward <number>` });
@@ -1174,7 +1201,7 @@ async function cmdForward({ msg, sock, jid, fromMe, state }) {
   await setReaction(sock, msg, '⏳');
   try {
     const targetJid = `${targetNum.replace(/\D/g, '')}@s.whatsapp.net`;
-    await sock.sendMessage(targetJid, { forward: { key: msg.key, message: quoted } });
+    await sock.sendMessage(targetJid, { forward: { key, message: quoted } });
     await setReaction(sock, msg, '✅');
     await sock.sendMessage(jid, { text: '✅ Message forwarded' });
   } catch (e) {
@@ -1184,7 +1211,7 @@ async function cmdForward({ msg, sock, jid, fromMe, state }) {
 }
 
 // ============================================================================
-// ANTI
+// ANTI — ANTI-DELETE
 // ============================================================================
 async function cmdAntiDelete({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1198,6 +1225,9 @@ async function cmdAntiDelete({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `🛡️ Anti-delete: *${val.toUpperCase()}*` });
 }
 
+// ============================================================================
+// ANTI — ANTI-EDIT
+// ============================================================================
 async function cmdAntiEdit({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const val = args[0]?.toLowerCase();
@@ -1210,6 +1240,9 @@ async function cmdAntiEdit({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `✏️ Anti-edit: *${val.toUpperCase()}*` });
 }
 
+// ============================================================================
+// ANTI — HISTORY
+// ============================================================================
 async function cmdHistory({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const n = Math.min(parseInt(args[0]) || 10, 50);
@@ -1226,6 +1259,9 @@ async function cmdHistory({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `${DIV}\n║  📜 *Last ${items.length} messages*\n${SUB}\n${lines.join('\n')}\n${DIV}` });
 }
 
+// ============================================================================
+// ANTI — LAST DELETED
+// ============================================================================
 async function cmdLastDeleted({ sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   await setReaction(sock, msg, 'ℹ️');
@@ -1233,7 +1269,7 @@ async function cmdLastDeleted({ sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// GROUP
+// GROUP — WELCOME TOGGLE
 // ============================================================================
 async function cmdWelcome({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1247,6 +1283,9 @@ async function cmdWelcome({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `👋 Welcome messages: *${val.toUpperCase()}*` });
 }
 
+// ============================================================================
+// GROUP — SET WELCOME TEXT
+// ============================================================================
 async function cmdSetWelcome({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const txt = args.join(' ');
@@ -1259,6 +1298,9 @@ async function cmdSetWelcome({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: '✅ Welcome text updated' });
 }
 
+// ============================================================================
+// GROUP — GOODBYE TOGGLE
+// ============================================================================
 async function cmdGoodbye({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const val = args[0]?.toLowerCase();
@@ -1271,6 +1313,9 @@ async function cmdGoodbye({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `👋 Goodbye messages: *${val.toUpperCase()}*` });
 }
 
+// ============================================================================
+// GROUP — SET GOODBYE TEXT
+// ============================================================================
 async function cmdSetGoodbye({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const txt = args.join(' ');
@@ -1283,9 +1328,12 @@ async function cmdSetGoodbye({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: '✅ Goodbye text updated' });
 }
 
+// ============================================================================
+// GROUP — KICK
+// ============================================================================
 async function cmdKick({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const mentioned = ctxInfo?.mentionedJid || [];
   const quoted = ctxInfo?.participant;
   const targets = mentioned.length ? mentioned : (quoted ? [quoted] : []);
@@ -1298,6 +1346,9 @@ async function cmdKick({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: '✅ Member removed' });
 }
 
+// ============================================================================
+// GROUP — ADD
+// ============================================================================
 async function cmdAdd({ args, sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const num = args[0]?.replace(/\D/g, '');
@@ -1310,9 +1361,12 @@ async function cmdAdd({ args, sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: '✅ Member added' });
 }
 
+// ============================================================================
+// GROUP — PROMOTE
+// ============================================================================
 async function cmdPromote({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const targets = ctxInfo?.mentionedJid?.length ? ctxInfo.mentionedJid : (ctxInfo?.participant ? [ctxInfo.participant] : []);
   if (!targets.length) {
     await setReaction(sock, msg, '🍎');
@@ -1323,9 +1377,12 @@ async function cmdPromote({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: '🛡️ Member promoted' });
 }
 
+// ============================================================================
+// GROUP — DEMOTE
+// ============================================================================
 async function cmdDemote({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const targets = ctxInfo?.mentionedJid?.length ? ctxInfo.mentionedJid : (ctxInfo?.participant ? [ctxInfo.participant] : []);
   if (!targets.length) {
     await setReaction(sock, msg, '🍎');
@@ -1336,6 +1393,9 @@ async function cmdDemote({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: '📉 Member demoted' });
 }
 
+// ============================================================================
+// GROUP — MUTE
+// ============================================================================
 async function cmdMute({ sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   await sock.groupSettingUpdate(jid, 'announcement');
@@ -1343,6 +1403,9 @@ async function cmdMute({ sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: '🔇 Group muted (admins only)' });
 }
 
+// ============================================================================
+// GROUP — UNMUTE
+// ============================================================================
 async function cmdUnmute({ sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   await sock.groupSettingUpdate(jid, 'not_announcement');
@@ -1350,6 +1413,9 @@ async function cmdUnmute({ sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: '🔊 Group unmuted' });
 }
 
+// ============================================================================
+// GROUP — TAG ALL
+// ============================================================================
 async function cmdTagAll({ args, sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const metadata = await sock.groupMetadata(jid);
@@ -1362,6 +1428,9 @@ async function cmdTagAll({ args, sock, jid, fromMe, msg }) {
   await setReaction(sock, msg, '✅');
 }
 
+// ============================================================================
+// GROUP — GROUP INFO
+// ============================================================================
 async function cmdGroupInfo({ sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const m = await sock.groupMetadata(jid);
@@ -1372,6 +1441,9 @@ async function cmdGroupInfo({ sock, jid, fromMe, msg }) {
   });
 }
 
+// ============================================================================
+// GROUP — LINK
+// ============================================================================
 async function cmdLink({ sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const code = await sock.groupInviteCode(jid);
@@ -1379,6 +1451,9 @@ async function cmdLink({ sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: `🔗 https://chat.whatsapp.com/${code}` });
 }
 
+// ============================================================================
+// GROUP — SET NAME
+// ============================================================================
 async function cmdSetName({ args, sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const name = args.join(' ');
@@ -1391,6 +1466,9 @@ async function cmdSetName({ args, sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: '✅ Group name updated' });
 }
 
+// ============================================================================
+// GROUP — SET DESCRIPTION
+// ============================================================================
 async function cmdSetDesc({ args, sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const desc = args.join(' ');
@@ -1403,21 +1481,19 @@ async function cmdSetDesc({ args, sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: '✅ Description updated' });
 }
 
-async function cmdSetGcPp({ msg, sock, jid, fromMe }) {
+// ============================================================================
+// GROUP — SET GROUP PROFILE PICTURE
+// ============================================================================
+async function cmdSetGcPp({ msg, sock, jid, fromMe, state }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
+  const quoted = getQuotedMessage(msg);
   if (!quoted?.imageMessage) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `↩️ Reply to an image with setgcpp` });
   }
   await setReaction(sock, msg, '⏳');
   try {
-    const buffer = await downloadMediaMessage(
-      { key: msg.key, message: quoted },
-      'buffer', {},
-      { logger, reuploadRequest: sock.updateMediaMessage }
-    );
+    const { buffer } = await downloadQuotedMedia(msg, jid, state, sock);
     await sock.updateProfilePicture(jid, buffer);
     await setReaction(sock, msg, '✅');
     await sock.sendMessage(jid, { text: '✅ Group picture updated' });
@@ -1427,6 +1503,9 @@ async function cmdSetGcPp({ msg, sock, jid, fromMe }) {
   }
 }
 
+// ============================================================================
+// GROUP — ADMINS LIST
+// ============================================================================
 async function cmdAdmins({ sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const m = await sock.groupMetadata(jid);
@@ -1436,9 +1515,12 @@ async function cmdAdmins({ sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: `🛡️ *Admins (${admins.length}):*\n${list}`, mentions: admins.map(a => a.id) });
 }
 
+// ============================================================================
+// GROUP — WHOIS
+// ============================================================================
 async function cmdWhois({ msg, sock, jid, fromMe }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
   if (!target) {
     await setReaction(sock, msg, '🍎');
@@ -1448,6 +1530,9 @@ async function cmdWhois({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: `👤 *User Info*\nJID: ${target}\nNumber: ${target.split('@')[0].split(':')[0]}` });
 }
 
+// ============================================================================
+// GROUP — REVOKE LINK
+// ============================================================================
 async function cmdRevoke({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const code = await sock.groupRevokeInvite(jid);
@@ -1455,11 +1540,14 @@ async function cmdRevoke({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: `🔄 Link revoked. New: https://chat.whatsapp.com/${code}` });
 }
 
+// ============================================================================
+// GROUP — WARN SYSTEM (in-memory)
+// ============================================================================
 const warnings = new Map();
 
 async function cmdWarn({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
   if (!target) {
     await setReaction(sock, msg, '🍎');
@@ -1479,9 +1567,12 @@ async function cmdWarn({ msg, sock, jid, fromMe }) {
   }
 }
 
+// ============================================================================
+// GROUP — LIST WARNINGS
+// ============================================================================
 async function cmdWarnings({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
   if (!target) {
     await setReaction(sock, msg, '🍎');
@@ -1492,9 +1583,12 @@ async function cmdWarnings({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: `📊 @${target.split('@')[0]}: ${count} warning(s)`, mentions: [target] });
 }
 
+// ============================================================================
+// GROUP — RESET WARNINGS
+// ============================================================================
 async function cmdResetWarn({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
   if (!target) {
     await setReaction(sock, msg, '🍎');
@@ -1506,13 +1600,11 @@ async function cmdResetWarn({ msg, sock, jid, fromMe }) {
 }
 
 // ============================================================================
-// OWNER
+// OWNER — SET BANNER
 // ============================================================================
 async function cmdSetBanner({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-  const quoted = ctxInfo?.quotedMessage;
-
+  const quoted = getQuotedMessage(msg);
   const args = msg.message?.extendedTextMessage?.text?.split(/\s+/).slice(1) || [];
   const urlArg = args[0];
 
@@ -1530,37 +1622,35 @@ async function cmdSetBanner({ msg, sock, jid, fromMe, state }) {
     });
   }
 
+  if (!IMGBB_API_KEY) {
+    await setReaction(sock, msg, '❌');
+    return sock.sendMessage(jid, { text: '⚠️ IMGBB_API_KEY required for banner uploads' });
+  }
+
   await setReaction(sock, msg, '⏳');
   try {
-    const buffer = await downloadMediaMessage(
-      { key: msg.key, message: quoted },
-      'buffer', {},
-      { logger, reuploadRequest: sock.updateMediaMessage }
-    );
-
-    if (IMGBB_API_KEY) {
-      const url = await uploadToImgBB(buffer, 'banner.jpg');
-      state.bannerUrl = url;
-      persistConfig();
-      await setReaction(sock, msg, '✅');
-      return sock.sendMessage(jid, { text: `✅ Banner uploaded:\n${url}` });
-    }
-
-    const b64 = buffer.toString('base64');
-    state.bannerUrl = `data:image/jpeg;base64,${b64}`;
+    const { buffer } = await downloadQuotedMedia(msg, jid, state, sock);
+    const url = await uploadToImgBB(buffer, 'banner.jpg');
+    state.bannerUrl = url;
     persistConfig();
     await setReaction(sock, msg, '✅');
-    await sock.sendMessage(jid, { text: '✅ Banner set (in-memory only — set IMGBB_API_KEY for persistence)' });
+    await sock.sendMessage(jid, { text: `✅ Banner uploaded:\n${url}` });
   } catch (e) {
     await setReaction(sock, msg, '❌');
     await sock.sendMessage(jid, { text: `❌ ${e.message}` });
   }
 }
 
+// ============================================================================
+// OWNER — SET PREFIX (alias)
+// ============================================================================
 async function cmdSetPrefix({ args, sock, jid, fromMe, state, msg }) {
   return cmdPrefix({ args, sock, jid, fromMe, state, msg });
 }
 
+// ============================================================================
+// OWNER — SET BOT NAME
+// ============================================================================
 async function cmdSetBotName({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const name = args.join(' ');
@@ -1573,6 +1663,9 @@ async function cmdSetBotName({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `✅ Bot name: *${name}*` });
 }
 
+// ============================================================================
+// OWNER — BROADCAST
+// ============================================================================
 async function cmdBroadcast({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const text = args.join(' ');
@@ -1584,9 +1677,12 @@ async function cmdBroadcast({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: `📢 Broadcast queued: ${text}` });
 }
 
+// ============================================================================
+// OWNER — BLOCK
+// ============================================================================
 async function cmdBlock({ msg, sock, jid, fromMe }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
   if (!target) {
     await setReaction(sock, msg, '🍎');
@@ -1597,9 +1693,12 @@ async function cmdBlock({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: `🚫 Blocked @${target.split('@')[0]}`, mentions: [target] });
 }
 
+// ============================================================================
+// OWNER — UNBLOCK
+// ============================================================================
 async function cmdUnblock({ msg, sock, jid, fromMe }) {
   if (!fromMe) return;
-  const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const ctxInfo = getContextInfo(msg);
   const target = ctxInfo?.mentionedJid?.[0] || ctxInfo?.participant;
   if (!target) {
     await setReaction(sock, msg, '🍎');
@@ -1611,7 +1710,7 @@ async function cmdUnblock({ msg, sock, jid, fromMe }) {
 }
 
 // ============================================================================
-// SYSTEM
+// SYSTEM — CLEAR TEMP
 // ============================================================================
 async function cmdClearTemp({ sock, jid, fromMe, msg }) {
   if (!fromMe) return;
@@ -1620,6 +1719,9 @@ async function cmdClearTemp({ sock, jid, fromMe, msg }) {
   await sock.sendMessage(jid, { text: `🗑️ Message cache cleared` });
 }
 
+// ============================================================================
+// SYSTEM — RESTART
+// ============================================================================
 async function cmdRestart({ sock, jid, fromMe, msg }) {
   if (!fromMe) return;
   await setReaction(sock, msg, '🔄');
@@ -1627,6 +1729,9 @@ async function cmdRestart({ sock, jid, fromMe, msg }) {
   process.exit(0);
 }
 
+// ============================================================================
+// SYSTEM — LOGOUT
+// ============================================================================
 async function cmdLogout({ sock, jid, fromMe, msg }) {
   if (!fromMe) return;
   await setReaction(sock, msg, '🚪');
@@ -1638,4 +1743,4 @@ async function cmdLogout({ sock, jid, fromMe, msg }) {
 // ============================================================================
 // EXPORTS
 // ============================================================================
-export { sendTyping, sendRecording, sendOnline };
+export { sendTyping, sendRecording, sendOnline, buildMenu };
