@@ -48,6 +48,40 @@ const DATA_DIR = path.join(DATA_ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'bot-data.json');
 
 // ============================================================================
+// AUTO-DELETE TIMERS (for 1-hour disappearing messages)
+// ============================================================================
+const autoDeleteTimers = new Map();
+
+/**
+ * Schedule a message to be deleted from the chat after `delayMs`.
+ * Used for anti-delete/anti-edit notifications and view-once captures.
+ */
+export function scheduleAutoDelete(sock, chatJid, messageKey, delayMs = 60 * 60 * 1000) {
+  const id = `${chatJid}:${messageKey.id}`;
+  if (autoDeleteTimers.has(id)) clearTimeout(autoDeleteTimers.get(id));
+  const timer = setTimeout(async () => {
+    try {
+      await sock.sendMessage(chatJid, { delete: messageKey });
+      console.log(`🗑️ Auto-deleted message ${messageKey.id}`);
+    } catch (e) {
+      console.warn(`Auto-delete failed: ${e.message}`);
+    }
+    autoDeleteTimers.delete(id);
+  }, delayMs);
+  autoDeleteTimers.set(id, timer);
+}
+
+/**
+ * Cancel a scheduled auto-delete (e.g., on logout/shutdown).
+ */
+export function cancelAllAutoDeletes() {
+  for (const [id, timer] of autoDeleteTimers.entries()) {
+    clearTimeout(timer);
+    autoDeleteTimers.delete(id);
+  }
+}
+
+// ============================================================================
 // IN-MEMORY MESSAGE STORE
 // ============================================================================
 export const messageStore = new Map();
@@ -229,30 +263,51 @@ function makeSocketOptions(authState) {
 // ============================================================================
 
 let activeSocket = null;
+let startingUp = false;
 
 export async function startBot(options = {}) {
-  ensureDirs();
-  if (!options.skipLoad) loadData();
-
-  if (activeSocket) {
-    try { activeSocket.end(undefined); } catch (_) {}
-    activeSocket = null;
+  // Guard against concurrent startups (fixes double-handler bug)
+  if (startingUp) {
+    console.log('⚠️ startBot already in progress, skipping');
+    return activeSocket;
   }
+  startingUp = true;
 
-  const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
+  try {
+    ensureDirs();
+    if (!options.skipLoad) loadData();
 
-  const sock = makeWASocket({
-    version,
-    ...makeSocketOptions(authState),
-  });
+    // Tear down existing socket AND detach all its listeners
+    if (activeSocket) {
+      try {
+        activeSocket.ev.removeAllListeners('connection.update');
+        activeSocket.ev.removeAllListeners('messages.upsert');
+        activeSocket.ev.removeAllListeners('messages.reaction');
+        activeSocket.ev.removeAllListeners('group-participants.update');
+        activeSocket.ev.removeAllListeners('creds.update');
+        activeSocket.end(undefined);
+      } catch (_) {}
+      activeSocket = null;
+    }
+    state.sock = null;
 
-  activeSocket = sock;
-  state.sock = sock;
+    const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { version } = await fetchLatestBaileysVersion();
 
-  attachFullHandlers(sock, authState, saveCreds);
+    const sock = makeWASocket({
+      version,
+      ...makeSocketOptions(authState),
+    });
 
-  return sock;
+    activeSocket = sock;
+    state.sock = sock;
+
+    attachFullHandlers(sock, authState, saveCreds);
+
+    return sock;
+  } finally {
+    startingUp = false;
+  }
 }
 
 // ============================================================================
@@ -274,27 +329,33 @@ function attachFullHandlers(sock, authState, saveCreds) {
   // Command dispatch
   sock.ev.on('messages.upsert', (payload) => handleMessage(payload, sock, state));
 
-  // Anti-delete + anti-edit
+  // Anti-delete + anti-edit (with auto-delete after 1 hour)
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
       const proto = msg.message?.protocolMessage;
       if (!proto) continue;
 
+      // ---- ANTI-DELETE ----
       if (proto.type === 'REVOKE' && state.antidelete && state.ownerJid) {
         const origKey = proto.key;
         if (!origKey) continue;
         const original = messageStore.get(`${origKey.remoteJid}:${origKey.id}`);
         if (original) {
           try {
-            await sock.sendMessage(state.ownerJid, {
+            const sent = await sock.sendMessage(state.ownerJid, {
               forward: original,
               text: `⚠️ *Deleted message recovered*\nChat: ${origKey.remoteJid}`,
             });
+            // Auto-delete the recovery notification after 1 hour
+            if (sent?.key) {
+              scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
+            }
           } catch (e) { console.error('anti-delete failed', e.message); }
         }
       }
 
+      // ---- ANTI-EDIT ----
       if (proto.type === 'MESSAGE_EDIT' && state.antiedit && state.ownerJid) {
         const origKey = proto.key;
         const edited = proto.editedMessage;
@@ -303,9 +364,13 @@ function attachFullHandlers(sock, authState, saveCreds) {
         const editedText = edited.conversation || edited.extendedTextMessage?.text || '[media]';
         const originalText = original?.message?.conversation || original?.message?.extendedTextMessage?.text || '[media]';
         try {
-          await sock.sendMessage(state.ownerJid, {
+          const sent = await sock.sendMessage(state.ownerJid, {
             text: `✏️ *Message edited*\nChat: ${origKey.remoteJid}\n\n*Original:*\n${originalText}\n\n*Edited:*\n${editedText}`,
           });
+          // Auto-delete the edit notification after 1 hour
+          if (sent?.key) {
+            scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
+          }
         } catch (e) { console.error('anti-edit failed', e.message); }
       }
     }
@@ -384,9 +449,16 @@ export async function requestPairing(phoneNumber, force = true) {
 
   console.log(`📱 Requesting fresh pairing code for ${cleaned}...`);
 
-  // 1. Tear down any existing socket
+  // 1. Tear down any existing socket AND detach listeners
   if (activeSocket) {
-    try { activeSocket.end(undefined); } catch (_) {}
+    try {
+      activeSocket.ev.removeAllListeners('connection.update');
+      activeSocket.ev.removeAllListeners('messages.upsert');
+      activeSocket.ev.removeAllListeners('messages.reaction');
+      activeSocket.ev.removeAllListeners('group-participants.update');
+      activeSocket.ev.removeAllListeners('creds.update');
+      activeSocket.end(undefined);
+    } catch (_) {}
     activeSocket = null;
   }
   state.sock = null;
@@ -413,8 +485,6 @@ export async function requestPairing(phoneNumber, force = true) {
   sock.ev.on('creds.update', saveCreds);
 
   // 4. WAIT for socket readiness — the 'qr' event is the reliable signal.
-  //    Baileys emits 'qr' even in pairing-code mode; it means the socket
-  //    is registered with WhatsApp servers and ready for pairing requests.
   await new Promise((resolve, reject) => {
     let done = false;
     const finish = (err) => {
@@ -476,8 +546,18 @@ export async function requestPairing(phoneNumber, force = true) {
 export async function restartBot(sessionPkg = null) {
   console.log('🔄 Restarting bot...');
 
+  // Cancel all pending auto-deletes before tearing down
+  cancelAllAutoDeletes();
+
   if (activeSocket) {
-    try { activeSocket.end(undefined); } catch (_) {}
+    try {
+      activeSocket.ev.removeAllListeners('connection.update');
+      activeSocket.ev.removeAllListeners('messages.upsert');
+      activeSocket.ev.removeAllListeners('messages.reaction');
+      activeSocket.ev.removeAllListeners('group-participants.update');
+      activeSocket.ev.removeAllListeners('creds.update');
+      activeSocket.end(undefined);
+    } catch (_) {}
     activeSocket = null;
   }
   state.sock = null;
