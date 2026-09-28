@@ -6,6 +6,7 @@ import makeWASocket, {
   downloadMediaMessage,
   getContentType,
   Browsers,
+  BufferJSON,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -14,6 +15,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { handleMessage, handleReaction, handleGroupParticipants } from './command.js';
 
+// ---- Shared state ----
 export const state = {
   sock: null,
   connected: false,
@@ -31,19 +33,19 @@ export const state = {
   welcomeText: 'Welcome to *{group}*, @{user}! 👋',
   goodbyeText: 'Goodbye @{user}! 👋',
   prefix: '!',
-  bannerUrl: 'https://i.imgur.com/8Q9Z4Qp.jpeg', // hardcoded banner
+  bannerUrl: null,
   botName: 'WA Bot',
 };
 
+// ---- Paths ----
 const IS_RENDER = !!process.env.RENDER;
 const PERSISTENT = process.env.PERSISTENT_DISK === 'true';
 const DATA_ROOT = IS_RENDER ? (PERSISTENT ? '/data' : '/tmp') : '.';
 const AUTH_DIR = path.join(DATA_ROOT, 'auth');
 const DATA_DIR = path.join(DATA_ROOT, 'data');
-const OWNER_FILE = path.join(DATA_DIR, 'owner.json');
-const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-const TOKEN_FILE = path.join(DATA_DIR, 'token.json');
+const DATA_FILE = path.join(DATA_DIR, 'bot-data.json');
 
+// ---- In-memory message store ----
 export const messageStore = new Map();
 const MAX_STORE = 500;
 
@@ -57,49 +59,150 @@ function addToStore(msg) {
   }
 }
 
+// ---- JSON file storage ----
 function ensureDirs() {
   for (const d of [DATA_DIR, AUTH_DIR]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   }
 }
 
-function loadConfig() {
-  if (fs.existsSync(CONFIG_FILE)) {
-    const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    Object.assign(state, cfg);
-  }
-  if (fs.existsSync(OWNER_FILE)) {
-    const { jid } = JSON.parse(fs.readFileSync(OWNER_FILE, 'utf-8'));
-    state.ownerJid = jid;
-  }
-  if (fs.existsSync(TOKEN_FILE)) {
-    const { token } = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf-8'));
-    state.sessionToken = token;
+function loadData() {
+  if (fs.existsSync(DATA_FILE)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+      Object.keys(data).forEach(k => { if (k in state) state[k] = data[k]; });
+    } catch (e) {
+      console.error('Failed to load bot-data.json:', e.message);
+    }
   }
 }
 
-function saveConfig() {
-  const { antidelete, antiedit, welcome, goodbye, welcomeText, goodbyeText, prefix, bannerUrl, botName, mode } = state;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify({
-    antidelete, antiedit, welcome, goodbye, welcomeText, goodbyeText, prefix, bannerUrl, botName, mode
-  }, null, 2));
-}
-
-function saveOwner(jid) {
-  fs.writeFileSync(OWNER_FILE, JSON.stringify({ jid }, null, 2));
-  state.ownerJid = jid;
+function saveData() {
+  const data = {};
+  const fields = [
+    'ownerJid', 'sessionToken', 'mode', 'antidelete', 'antiedit',
+    'welcome', 'goodbye', 'welcomeText', 'goodbyeText', 'prefix',
+    'bannerUrl', 'botName'
+  ];
+  fields.forEach(f => { data[f] = state[f]; });
+  data.savedAt = new Date().toISOString();
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
 function generateToken() {
   const token = crypto.randomBytes(24).toString('hex');
-  fs.writeFileSync(TOKEN_FILE, JSON.stringify({ token }, null, 2));
   state.sessionToken = token;
+  saveData();
   return token;
 }
 
-export async function startBot() {
+// ============================================================================
+// SESSION PACKAGE EXPORT / IMPORT
+// ============================================================================
+
+/**
+ * Reads all files in the auth folder and packages them into a single JSON.
+ * Uses BufferJSON to safely serialize any binary content.
+ */
+export function exportSessionPackage() {
+  const pkg = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    files: {},
+  };
+
+  if (!fs.existsSync(AUTH_DIR)) {
+    throw new Error('Auth folder does not exist');
+  }
+
+  const files = fs.readdirSync(AUTH_DIR);
+  for (const file of files) {
+    const fullPath = path.join(AUTH_DIR, file);
+    if (!fs.statSync(fullPath).isFile()) continue;
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      // Validate it's parseable JSON, then re-stringify cleanly
+      JSON.parse(content);
+      pkg.files[file] = content;
+    } catch (e) {
+      console.error(`Skipping non-JSON file: ${file}`, e.message);
+    }
+  }
+
+  return pkg;
+}
+
+/**
+ * Writes all files from a session package back to the auth folder.
+ * Clears sender-key-memory entries to force fresh SKDM distribution.
+ */
+export function importSessionPackage(pkg) {
+  if (!pkg || pkg.version !== 1 || !pkg.files) {
+    throw new Error('Invalid session package format');
+  }
+
   ensureDirs();
-  loadConfig();
+
+  // Clear existing auth folder first
+  if (fs.existsSync(AUTH_DIR)) {
+    for (const f of fs.readdirSync(AUTH_DIR)) {
+      fs.unlinkSync(path.join(AUTH_DIR, f));
+    }
+  }
+
+  let written = 0;
+  for (const [filename, content] of Object.entries(pkg.files)) {
+    // Security: prevent path traversal
+    if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+      console.warn(`Skipping suspicious filename: ${filename}`);
+      continue;
+    }
+    fs.writeFileSync(path.join(AUTH_DIR, filename), content);
+    written++;
+  }
+
+  console.log(`📦 Imported ${written} auth files from session package`);
+  return written;
+}
+
+/**
+ * Clears sender-key-memory entries from all sender-key-*.json files.
+ * This forces Baileys to redistribute SKDMs on the next group send.
+ * This is the verified workaround for "Waiting for this message" [citation:7][citation:13].
+ */
+export function clearSenderKeyMemory() {
+  const files = fs.readdirSync(AUTH_DIR).filter(f => f.startsWith('sender-key-memory-'));
+  let cleared = 0;
+
+  for (const file of files) {
+    const fullPath = path.join(AUTH_DIR, file);
+    try {
+      const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
+      // sender-key-memory files are JID → bool maps
+      // Resetting to null forces fresh distribution
+      if (content && typeof content === 'object') {
+        for (const jid of Object.keys(content)) {
+          content[jid] = null;
+        }
+        fs.writeFileSync(fullPath, JSON.stringify(content));
+        cleared++;
+      }
+    } catch (e) {
+      console.error(`Failed to clear ${file}:`, e.message);
+    }
+  }
+
+  console.log(`🔑 Cleared sender-key-memory in ${cleared} files`);
+  return cleared;
+}
+
+// ============================================================================
+// BOT LIFECYCLE
+// ============================================================================
+
+export async function startBot(options = {}) {
+  ensureDirs();
+  if (!options.skipLoad) loadData();
 
   const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
@@ -146,7 +249,7 @@ export async function startBot() {
               forward: original,
               text: `⚠️ *Deleted message recovered*\nChat: ${origKey.remoteJid}`,
             });
-          } catch (e) { console.error('anti-delete forward failed', e.message); }
+          } catch (e) { console.error('anti-delete failed', e.message); }
         }
       }
 
@@ -161,7 +264,7 @@ export async function startBot() {
           await sock.sendMessage(state.ownerJid, {
             text: `✏️ *Message edited*\nChat: ${origKey.remoteJid}\n\n*Original:*\n${originalText}\n\n*Edited:*\n${editedText}`,
           });
-        } catch (e) { console.error('anti-edit forward failed', e.message); }
+        } catch (e) { console.error('anti-edit failed', e.message); }
       }
     }
   });
@@ -191,10 +294,12 @@ export async function startBot() {
       state.isInitialConnection = false;
       state.pairingCode = null;
       const jid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-      if (!state.ownerJid) saveOwner(jid);
+      if (!state.ownerJid) {
+        state.ownerJid = jid;
+        saveData();
+      }
       if (!state.sessionToken) generateToken();
       console.log('✅ Connected as', jid);
-      console.log('🔑 Session token:', state.sessionToken);
     }
 
     if (connection === 'close') {
@@ -204,7 +309,7 @@ export async function startBot() {
       if (code !== DisconnectReason.loggedOut) {
         console.log('🔁 Reconnecting...');
         state.isInitialConnection = false;
-        startBot();
+        startBot({ skipLoad: true });
       }
     }
   });
@@ -222,6 +327,47 @@ export async function requestPairing(phoneNumber) {
   return code;
 }
 
-export function persistConfig() { saveConfig(); }
+/**
+ * Restart the bot: close current socket, import session (if provided),
+ * clear sender-key-memory, and start fresh.
+ */
+export async function restartBot(sessionPkg = null) {
+  console.log('🔄 Restarting bot...');
+
+  // Close existing socket
+  if (state.sock) {
+    try { state.sock.end(undefined); } catch (e) { /* ignore */ }
+    state.sock = null;
+  }
+
+  state.connected = false;
+  state.isInitialConnection = true;
+  state.pairingCode = null;
+
+  // Import session package if provided
+  if (sessionPkg) {
+    importSessionPackage(sessionPkg);
+  }
+
+  // Clear sender-key-memory to force fresh SKDM distribution
+  // This is the verified fix for "Waiting for this message" [citation:7][citation:13]
+  clearSenderKeyMemory();
+
+  // Start fresh
+  await startBot({ skipLoad: true });
+  return true;
+}
+
+export function persistConfig() { saveData(); }
 export function getToken() { return state.sessionToken; }
 export function regenerateToken() { return generateToken(); }
+export function getBotData() {
+  const data = {};
+  const fields = [
+    'ownerJid', 'sessionToken', 'mode', 'antidelete', 'antiedit',
+    'welcome', 'goodbye', 'welcomeText', 'goodbyeText', 'prefix',
+    'bannerUrl', 'botName'
+  ];
+  fields.forEach(f => { data[f] = state[f]; });
+  return data;
+}

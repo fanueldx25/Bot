@@ -4,13 +4,17 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "apt-get update && apt-get install -y ffmpeg || true"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
     "@hapi/boom": "^10.0.1",
+    "@silent-tech-offc/ttdl": "^1.0.0",
+    "@slipknot/ytdl-core": "^4.14.5",
     "express": "^4.21.2",
     "pino": "^9.5.0",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "wa-sticker-toolkit": "^1.0.0"
   }
 }
