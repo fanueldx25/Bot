@@ -48,7 +48,7 @@ const DATA_DIR = path.join(DATA_ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'bot-data.json');
 
 // ============================================================================
-// AUTO-DELETE TIMERS (for 1-hour disappearing messages)
+// AUTO-DELETE TIMERS (for 1-hour disappearing notifications)
 // ============================================================================
 const autoDeleteTimers = new Map();
 
@@ -57,6 +57,7 @@ const autoDeleteTimers = new Map();
  * Used for anti-delete/anti-edit notifications and view-once captures.
  */
 export function scheduleAutoDelete(sock, chatJid, messageKey, delayMs = 60 * 60 * 1000) {
+  if (!messageKey?.id) return;
   const id = `${chatJid}:${messageKey.id}`;
   if (autoDeleteTimers.has(id)) clearTimeout(autoDeleteTimers.get(id));
   const timer = setTimeout(async () => {
@@ -72,7 +73,7 @@ export function scheduleAutoDelete(sock, chatJid, messageKey, delayMs = 60 * 60 
 }
 
 /**
- * Cancel a scheduled auto-delete (e.g., on logout/shutdown).
+ * Cancel all scheduled auto-deletes (e.g., on logout/restart).
  */
 export function cancelAllAutoDeletes() {
   for (const [id, timer] of autoDeleteTimers.entries()) {
@@ -347,7 +348,6 @@ function attachFullHandlers(sock, authState, saveCreds) {
               forward: original,
               text: `⚠️ *Deleted message recovered*\nChat: ${origKey.remoteJid}`,
             });
-            // Auto-delete the recovery notification after 1 hour
             if (sent?.key) {
               scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
             }
@@ -367,7 +367,6 @@ function attachFullHandlers(sock, authState, saveCreds) {
           const sent = await sock.sendMessage(state.ownerJid, {
             text: `✏️ *Message edited*\nChat: ${origKey.remoteJid}\n\n*Original:*\n${originalText}\n\n*Edited:*\n${editedText}`,
           });
-          // Auto-delete the edit notification after 1 hour
           if (sent?.key) {
             scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
           }

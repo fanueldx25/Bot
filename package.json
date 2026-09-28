@@ -1,15 +1,26 @@
 {
   "name": "wa-bot",
   "version": "1.0.0",
+  "description": "WhatsApp automation bot with web control panel, built on Baileys",
   "type": "module",
   "main": "server.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": "20.x"
   },
   "scripts": {
     "postinstall": "apt-get update && apt-get install -y ffmpeg python3 make g++ || true && npm rebuild sharp || true",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "automation",
+    "whatsapp-bot"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
     "@hapi/boom": "^10.0.1",
