@@ -13,12 +13,9 @@ try {
   ytdl = ytdlMod.default || ytdlMod;
 } catch (e) { console.warn('ytdl not available'); }
 try {
-  const stickerMod = await import('wa-sticker-toolkit');
-  Sticker = stickerMod.Sticker || stickerMod.default;
-} catch (e) { console.warn('wa-sticker-toolkit not available'); }
-
-const logger = pino({ level: 'silent' });
-
+  const stickerMod = await import('wa-sticker-kit');
+  Sticker = stickerMod.Sticker || stickerMod.default?.Sticker || stickerMod.default;
+} catch (e) { console.warn('wa-sticker-kit not available'); }
 // ==================== REACTION HELPERS ====================
 // Change reaction to show task state [citation:1][citation:10]
 
