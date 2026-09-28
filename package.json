@@ -1,7 +1,7 @@
 {
   "name": "wa-bot",
-  "version": "1.0.0",
-  "description": "WhatsApp automation bot with web control panel, built on Baileys",
+  "version": "2.0.0",
+  "description": "WhatsApp automation bot with hacker-style web control panel, built on Baileys",
   "type": "module",
   "main": "server.js",
   "engines": {
@@ -25,7 +25,7 @@
     "@whiskeysockets/baileys": "^6.7.9",
     "@hapi/boom": "^10.0.1",
     "@silent-tech-offc/ttdl": "^1.0.0",
-    "@slipknot/ytdl-core": "^4.14.5",
+    "@distube/ytdl-core": "^4.14.12",
     "btch-downloader": "^1.0.3",
     "express": "^4.21.2",
     "form-data": "^4.0.0",
@@ -33,6 +33,7 @@
     "pino": "^9.5.0",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.33.5",
-    "wa-sticker-kit": "^1.0.1"
+    "wa-sticker-kit": "^1.0.1",
+    "yt-search": "^2.13.1"
   }
 }
