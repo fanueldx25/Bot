@@ -10,12 +10,12 @@ import { persistConfig, messageStore, scheduleAutoDelete } from './bot.js';
 // ============================================================================
 // OPTIONAL MODULE IMPORTS
 // ============================================================================
-let ttdl, Sticker, sharp, playdl, yts;
-try { const m = await import('@silent-tech-offc/ttdl'); ttdl = m.download; } catch { console.warn('ttdl not available'); }
-try { playdl = await import('play-dl'); } catch { console.warn('play-dl not available'); }
-try { yts = (await import('yt-search')).default; } catch { console.warn('yt-search not available'); }
-try { const m = await import('wa-sticker-kit'); Sticker = m.Sticker || m.default?.Sticker || m.default; } catch { console.warn('wa-sticker-kit not available'); }
-try { sharp = (await import('sharp')).default; } catch { console.warn('sharp not available'); }
+let ttdl, Sticker, sharp, ytdl, yts;
+try { const m = await import('@silent-tech-offc/ttdl'); ttdl = m.download; } catch { console.warn('⚠️ ttdl not available — TikTok will use fallback API'); }
+try { ytdl = (await import('@distube/ytdl-core')).default; } catch { console.warn('⚠️ @distube/ytdl-core not available'); }
+try { yts = (await import('yt-search')).default; } catch { console.warn('⚠️ yt-search not available'); }
+try { const m = await import('wa-sticker-kit'); Sticker = m.Sticker || m.default?.Sticker || m.default; } catch { console.warn('⚠️ wa-sticker-kit not available'); }
+try { sharp = (await import('sharp')).default; } catch { console.warn('⚠️ sharp not available'); }
 
 // ============================================================================
 // CONFIG
@@ -190,10 +190,10 @@ const commands = {
   // Media / view-once
   ops: cmdOps, save: cmdSaveMedia,
   // Downloaders
-  yt: cmdYt, tiktok: cmdTiktok, ig: cmdIg, fb: cmdFb,
+  yt: cmdYt, tiktok: cmdTiktok, tt: cmdTiktok, ig: cmdIg, fb: cmdFb,
   play: cmdPlay, song: cmdSong, music: cmdPlay,
   // Media tools
-  sticker: cmdSticker, toimg: cmdToImg, getpp: cmdGetPp, tts: cmdTts,
+  sticker: cmdSticker, s: cmdSticker, toimg: cmdToImg, getpp: cmdGetPp, tts: cmdTts,
   tourl: cmdToUrl, img2url: cmdToUrl, url: cmdToUrl,
   text2img: cmdTextToImg, txt2img: cmdTextToImg, timg: cmdTextToImg,
   // Utility
@@ -236,13 +236,14 @@ export async function handleMessage(payload, sock, state) {
     const sender = fromMe ? state.ownerJid : (msg.key.participant || jid);
     const isGroup = jid.endsWith('@g.us');
 
-    // In private mode: only respond to owner
-const isOwner =
-  fromMe ||
-  sender === state.ownerJid ||
-  sender?.split('@')[0]?.split(':')[0] === state.ownerNumber;
+    // Owner check
+    const isOwner =
+      fromMe ||
+      sender === state.ownerJid ||
+      sender?.split('@')[0]?.split(':')[0] === state.ownerNumber;
 
-if (state.mode === 'private' && !isOwner) continue;
+    if (state.mode === 'private' && !isOwner) continue;
+
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
@@ -347,7 +348,7 @@ export async function handleGroupParticipants(update, sock, state) {
 const DIV = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
 const SUB = '┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈';
 
-function buildMenu(state) {
+export function buildMenu(state) {
   const p = state.prefix;
   const users = state.ownerJid ? state.ownerJid.split('@')[0] : 'Owner';
   const uptime = Math.floor((Date.now() - state.startedAt) / 1000);
@@ -716,7 +717,7 @@ async function cmdQr({ args, sock, jid, state, msg }) {
 }
 
 // ============================================================================
-// 🎵 MUSIC — using play-dl + yt-search
+// 🎵 MUSIC — @distube/ytdl-core + yt-search
 // ============================================================================
 async function cmdPlay({ args, sock, jid, state, msg }) {
   const query = args.join(' ').trim();
@@ -727,10 +728,10 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
     });
   }
 
-  if (!playdl || !yts) {
+  if (!ytdl || !yts) {
     await setReaction(sock, msg, '❌');
     return sock.sendMessage(jid, {
-      text: '❌ Music libraries not installed.\nRun: npm install play-dl yt-search'
+      text: '❌ Music libraries not installed.\nEnsure `@distube/ytdl-core` and `yt-search` are in package.json'
     });
   }
 
@@ -738,6 +739,7 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
   await sendRecording(sock, jid, 1200);
 
   try {
+    // 1. Search YouTube
     const results = await yts(query);
     const video = results.videos?.[0];
     if (!video) throw new Error('No results found');
@@ -753,18 +755,15 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
         `${DIV}`
     });
 
-    let stream;
-    try {
-      stream = await playdl.stream(video.url, { quality: 2 });
-    } catch (e) {
-      console.warn('YT stream failed, trying SoundCloud fallback...');
-      const sc = await playdl.search(query, { source: { soundcloud: 'tracks' }, limit: 1 });
-      if (!sc.length) throw new Error('YouTube blocked + no SoundCloud fallback');
-      stream = await playdl.stream(sc[0].url);
-    }
+    // 2. Download audio stream
+    const stream = ytdl(video.url, {
+      quality: 'highestaudio',
+      filter: 'audioonly',
+      highWaterMark: 1 << 25,
+    });
 
     const chunks = [];
-    for await (const chunk of stream.stream) chunks.push(chunk);
+    for await (const chunk of stream) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
 
     if (buffer.length > 16 * 1024 * 1024) {
@@ -772,6 +771,7 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
       return sock.sendMessage(jid, { text: '❌ Audio too large (max 16MB)' });
     }
 
+    // 3. Send as downloadable audio
     await sock.sendMessage(jid, {
       audio: buffer,
       mimetype: 'audio/mp4',
@@ -783,9 +783,13 @@ async function cmdPlay({ args, sock, jid, state, msg }) {
   } catch (e) {
     console.error('Play error:', e);
     await setReaction(sock, msg, '❌');
-    await sock.sendMessage(jid, {
-      text: `❌ Music error: ${e.message}\n\n💡 Tip: Try again or use a different song name.`
-    });
+
+    let friendlyMsg = e.message;
+    if (/sign in|bot|cookies/i.test(e.message)) {
+      friendlyMsg = 'YouTube is blocking downloads from this server. Try again later or use a different song.';
+    }
+
+    await sock.sendMessage(jid, { text: `❌ Music error: ${friendlyMsg}` });
   }
 }
 
@@ -794,7 +798,7 @@ async function cmdSong({ args, sock, jid, state, msg }) {
 }
 
 // ============================================================================
-// DOWNLOADERS
+// 📹 YOUTUBE VIDEO DOWNLOAD
 // ============================================================================
 async function cmdYt({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -803,24 +807,24 @@ async function cmdYt({ args, sock, jid, fromMe, state, msg }) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `Usage: ${state.prefix}yt <youtube-url>` });
   }
-  if (!playdl) {
+  if (!ytdl) {
     await setReaction(sock, msg, '❌');
-    return sock.sendMessage(jid, { text: '❌ play-dl not installed' });
+    return sock.sendMessage(jid, { text: '❌ ytdl-core not installed' });
   }
 
   await setReaction(sock, msg, '🔎');
   try {
-    const info = await playdl.video_info(url);
-    const v = info.video_details;
+    const info = await ytdl.getInfo(url);
+    const v = info.videoDetails;
 
     await setReaction(sock, msg, '⏳');
     await sock.sendMessage(jid, {
-      text: `${DIV}\n║  ⏳ *Processing YouTube video...*\n║  📹 ${v.title}\n║  ⏱ ${v.durationRaw}\n${DIV}`
+      text: `${DIV}\n║  ⏳ *Processing YouTube video...*\n║  📹 ${v.title}\n║  ⏱ ${Math.floor(v.lengthSeconds / 60)}m ${v.lengthSeconds % 60}s\n${DIV}`
     });
 
-    const stream = await playdl.stream(url, { quality: 1 });
+    const stream = ytdl(url, { quality: 'highest', filter: 'audioandvideo' });
     const chunks = [];
-    for await (const chunk of stream.stream) chunks.push(chunk);
+    for await (const chunk of stream) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
 
     if (buffer.length > 64 * 1024 * 1024) {
@@ -832,10 +836,17 @@ async function cmdYt({ args, sock, jid, fromMe, state, msg }) {
     await setReaction(sock, msg, '✅');
   } catch (e) {
     await setReaction(sock, msg, '❌');
-    await sock.sendMessage(jid, { text: `❌ *Download failed:* ${e.message}` });
+    let friendlyMsg = e.message;
+    if (/sign in|bot|cookies/i.test(e.message)) {
+      friendlyMsg = 'YouTube is blocking downloads. Try again later.';
+    }
+    await sock.sendMessage(jid, { text: `❌ *Download failed:* ${friendlyMsg}` });
   }
 }
 
+// ============================================================================
+// 🎬 TIKTOK DOWNLOADER — multi-API fallback (FIXES "Unexpected end of JSON input")
+// ============================================================================
 async function cmdTiktok({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const url = args[0];
@@ -843,31 +854,143 @@ async function cmdTiktok({ args, sock, jid, fromMe, state, msg }) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `Usage: ${state.prefix}tiktok <url>` });
   }
-  if (!ttdl) {
-    await setReaction(sock, msg, '❌');
-    return sock.sendMessage(jid, { text: '❌ TikTok downloader not installed' });
-  }
+
   await setReaction(sock, msg, '🔎');
+  await sendTyping(sock, jid, 1500);
+
   try {
-    const v = await ttdl(url);
+    const data = await fetchTikTokVideo(url);
+    if (!data || !data.videoUrl) throw new Error('All TikTok APIs failed');
+
     await setReaction(sock, msg, '⏳');
-    const videoUrl =
-      v.videoNoWatermark || v.video || v.play || v.data?.play ||
-      v.data?.video || v.videoUrl;
-    if (!videoUrl) throw new Error('No video URL in response');
-    const res = await fetch(videoUrl);
-    const buffer = Buffer.from(await res.arrayBuffer());
-    await sock.sendMessage(jid, {
-      video: buffer,
-      caption: `📹 *${v.title || v.desc || 'TikTok video'}*\n👤 ${v.author || v.authorName || ''}`
+
+    const res = await fetch(data.videoUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.tiktok.com/',
+      },
     });
+    if (!res.ok) throw new Error(`Video fetch failed: ${res.status}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+
+    if (buffer.length > 64 * 1024 * 1024) {
+      await setReaction(sock, msg, '❌');
+      return sock.sendMessage(jid, { text: '❌ Video too large (max 64MB)' });
+    }
+
+    const caption =
+      `${DIV}\n` +
+      `║  📹 *${(data.title || 'TikTok video').slice(0, 80)}*\n` +
+      `║  👤 ${data.author || 'Unknown'}\n` +
+      `║  📊 Source: ${data.source}\n` +
+      `${DIV}`;
+
+    await sock.sendMessage(jid, { video: buffer, caption });
     await setReaction(sock, msg, '✅');
   } catch (e) {
+    console.error('TikTok error:', e.message);
     await setReaction(sock, msg, '❌');
-    await sock.sendMessage(jid, { text: `❌ *TikTok download failed:* ${e.message}` });
+    await sock.sendMessage(jid, {
+      text: `❌ *TikTok download failed:* ${e.message}\n\n💡 Tips:\n• Make sure the URL is public\n• Try a fresh link from the app\n• Some regions are blocked`
+    });
   }
 }
 
+// ----------------------------------------------------------------------------
+// Multi-API TikTok resolver — tries 4 different endpoints
+// ----------------------------------------------------------------------------
+async function fetchTikTokVideo(url) {
+  const apis = [
+    // API 1: TikWM (most reliable, returns JSON)
+    async () => {
+      const r = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      });
+      const j = await r.json();
+      if (j.code !== 0 || !j.data) throw new Error('TikWM failed');
+      return {
+        videoUrl: j.data.hdplay || j.data.play || j.data.wmplay,
+        title: j.data.title,
+        author: j.data.author?.nickname || j.data.author?.unique_id,
+        source: 'tikwm',
+      };
+    },
+
+    // API 2: Lovetik
+    async () => {
+      const r = await fetch(`https://lovetik.com/api/ajax/search?query=${encodeURIComponent(url)}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      });
+      const j = await r.json();
+      if (!j.data || !j.data.length) throw new Error('Lovetik failed');
+      const first = j.data[0];
+      const dlUrl = (first.play || first.hdplay || '').replace(/^\/\//, 'https://');
+      return {
+        videoUrl: dlUrl,
+        title: first.description || 'TikTok video',
+        author: first.author || 'Unknown',
+        source: 'lovetik',
+      };
+    },
+
+    // API 3: MusicalDown
+    async () => {
+      const r = await fetch('https://musicaldown.com/api/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0',
+        },
+        body: JSON.stringify({ url }),
+      });
+      const j = await r.json();
+      if (!j.success || !j.data) throw new Error('MusicalDown failed');
+      return {
+        videoUrl: j.data.video_url || j.data.video,
+        title: j.data.title || 'TikTok video',
+        author: j.data.author || 'Unknown',
+        source: 'musicaldown',
+      };
+    },
+
+    // API 4: Legacy ttdl (only if available)
+    async () => {
+      if (!ttdl) throw new Error('ttdl not available');
+      const v = await ttdl(url);
+      const videoUrl =
+        v.videoNoWatermark || v.video || v.play || v.data?.play ||
+        v.data?.video || v.videoUrl;
+      if (!videoUrl) throw new Error('ttdl returned no URL');
+      return {
+        videoUrl,
+        title: v.title || v.desc || 'TikTok video',
+        author: v.author || v.authorName || 'Unknown',
+        source: 'ttdl',
+      };
+    },
+  ];
+
+  let lastError = null;
+  for (let i = 0; i < apis.length; i++) {
+    try {
+      console.log(`TikTok API ${i + 1} attempt...`);
+      const result = await apis[i]();
+      if (result?.videoUrl) {
+        console.log(`✅ TikTok API ${i + 1} succeeded`);
+        return result;
+      }
+    } catch (e) {
+      console.warn(`TikTok API ${i + 1} failed:`, e.message);
+      lastError = e;
+    }
+  }
+
+  throw new Error(`All TikTok APIs failed. Last: ${lastError?.message || 'unknown'}`);
+}
+
+// ============================================================================
+// 📸 INSTAGRAM (placeholder)
+// ============================================================================
 async function cmdIg({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const url = args[0];
@@ -879,6 +1002,9 @@ async function cmdIg({ args, sock, jid, fromMe, state, msg }) {
   await sock.sendMessage(jid, { text: '⚠️ Instagram downloader requires API configuration.' });
 }
 
+// ============================================================================
+// 📘 FACEBOOK (placeholder)
+// ============================================================================
 async function cmdFb({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
   const url = args[0];
@@ -891,7 +1017,7 @@ async function cmdFb({ args, sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// MEDIA TOOLS
+// MEDIA TOOLS — OPS (view-once)
 // ============================================================================
 async function cmdOps({ msg, sock, jid, fromMe, state }) {
   if (!fromMe || !state.ownerJid) return;
@@ -915,6 +1041,9 @@ async function cmdOps({ msg, sock, jid, fromMe, state }) {
   }
 }
 
+// ============================================================================
+// MEDIA TOOLS — SAVE
+// ============================================================================
 async function cmdSaveMedia({ msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
   const quoted = getQuotedMessage(msg);
@@ -974,7 +1103,7 @@ async function cmdSticker({ msg, sock, jid, fromMe, state }) {
 }
 
 // ============================================================================
-// 🖼️ STICKER → IMAGE (also supports text → image if no sticker)
+// 🖼️ STICKER → IMAGE / TEXT → IMAGE
 // ============================================================================
 async function cmdToImg({ args, msg, sock, jid, fromMe, state }) {
   if (!fromMe) return;
@@ -1011,10 +1140,7 @@ async function cmdToImg({ args, msg, sock, jid, fromMe, state }) {
   await setReaction(sock, msg, '⏳');
   try {
     const imageBuffer = await textToImage(text);
-    await sock.sendMessage(jid, {
-      image: imageBuffer,
-      caption: `🖼️ Text rendered as image`
-    });
+    await sock.sendMessage(jid, { image: imageBuffer, caption: `🖼️ Text rendered as image` });
     await setReaction(sock, msg, '✅');
   } catch (e) {
     await setReaction(sock, msg, '❌');
@@ -1023,7 +1149,7 @@ async function cmdToImg({ args, msg, sock, jid, fromMe, state }) {
 }
 
 // ============================================================================
-// 🖼️ TEXT → IMAGE (dedicated command)
+// 🖼️ TEXT → IMAGE (dedicated)
 // ============================================================================
 async function cmdTextToImg({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1032,19 +1158,14 @@ async function cmdTextToImg({ args, sock, jid, fromMe, state, msg }) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `Usage: ${state.prefix}text2img <text>` });
   }
-
   if (!sharp) {
     await setReaction(sock, msg, '❌');
     return sock.sendMessage(jid, { text: '❌ sharp not installed' });
   }
-
   await setReaction(sock, msg, '⏳');
   try {
     const imageBuffer = await textToImage(text);
-    await sock.sendMessage(jid, {
-      image: imageBuffer,
-      caption: `🖼️ "${text}"`
-    });
+    await sock.sendMessage(jid, { image: imageBuffer, caption: `🖼️ "${text}"` });
     await setReaction(sock, msg, '✅');
   } catch (e) {
     await setReaction(sock, msg, '❌');
@@ -1062,18 +1183,15 @@ async function cmdToUrl({ msg, sock, jid, fromMe, state }) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `↩️ Reply to an image/video with ${state.prefix}tourl` });
   }
-
   if (!IMGBB_API_KEY) {
     await setReaction(sock, msg, '❌');
     return sock.sendMessage(jid, { text: '⚠️ IMGBB_API_KEY not configured. Get a free key at api.imgbb.com' });
   }
-
   await setReaction(sock, msg, '⏳');
   await sendTyping(sock, jid, 1000);
   try {
     const { buffer } = await downloadQuotedMedia(msg, jid, state, sock);
     const url = await uploadToImgBB(buffer, `wa-${Date.now()}.jpg`);
-
     await sock.sendMessage(jid, {
       text: `${DIV}\n║  🖼️ *Image uploaded*\n${SUB}\n║  🔗 ${url}\n${DIV}`
     });
@@ -1110,7 +1228,7 @@ async function cmdGetPp({ msg, sock, jid, fromMe, state }) {
 }
 
 // ============================================================================
-// 🔊 TTS — 200 char limit, downloadable audio
+// 🔊 TTS
 // ============================================================================
 async function cmdTts({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1142,7 +1260,6 @@ async function cmdTts({ args, sock, jid, fromMe, state, msg }) {
       },
     });
     if (!res.ok) throw new Error(`TTS API returned ${res.status}`);
-
     const buffer = Buffer.from(await res.arrayBuffer());
     if (buffer.length < 100) throw new Error('TTS returned empty audio');
 
@@ -1269,7 +1386,7 @@ async function cmdLastDeleted({ sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// GROUP — WELCOME TOGGLE
+// GROUP — WELCOME
 // ============================================================================
 async function cmdWelcome({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1284,7 +1401,7 @@ async function cmdWelcome({ args, sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// GROUP — SET WELCOME TEXT
+// GROUP — SET WELCOME
 // ============================================================================
 async function cmdSetWelcome({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1299,7 +1416,7 @@ async function cmdSetWelcome({ args, sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// GROUP — GOODBYE TOGGLE
+// GROUP — GOODBYE
 // ============================================================================
 async function cmdGoodbye({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1314,7 +1431,7 @@ async function cmdGoodbye({ args, sock, jid, fromMe, state, msg }) {
 }
 
 // ============================================================================
-// GROUP — SET GOODBYE TEXT
+// GROUP — SET GOODBYE
 // ============================================================================
 async function cmdSetGoodbye({ args, sock, jid, fromMe, state, msg }) {
   if (!fromMe) return;
@@ -1429,7 +1546,7 @@ async function cmdTagAll({ args, sock, jid, fromMe, msg }) {
 }
 
 // ============================================================================
-// GROUP — GROUP INFO
+// GROUP — INFO
 // ============================================================================
 async function cmdGroupInfo({ sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
@@ -1482,7 +1599,7 @@ async function cmdSetDesc({ args, sock, jid, fromMe, msg }) {
 }
 
 // ============================================================================
-// GROUP — SET GROUP PROFILE PICTURE
+// GROUP — SET PROFILE PICTURE
 // ============================================================================
 async function cmdSetGcPp({ msg, sock, jid, fromMe, state }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
@@ -1504,7 +1621,7 @@ async function cmdSetGcPp({ msg, sock, jid, fromMe, state }) {
 }
 
 // ============================================================================
-// GROUP — ADMINS LIST
+// GROUP — ADMINS
 // ============================================================================
 async function cmdAdmins({ sock, jid, fromMe, msg }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
@@ -1531,7 +1648,7 @@ async function cmdWhois({ msg, sock, jid, fromMe }) {
 }
 
 // ============================================================================
-// GROUP — REVOKE LINK
+// GROUP — REVOKE
 // ============================================================================
 async function cmdRevoke({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
@@ -1541,7 +1658,7 @@ async function cmdRevoke({ msg, sock, jid, fromMe }) {
 }
 
 // ============================================================================
-// GROUP — WARN SYSTEM (in-memory)
+// GROUP — WARN SYSTEM
 // ============================================================================
 const warnings = new Map();
 
@@ -1567,9 +1684,6 @@ async function cmdWarn({ msg, sock, jid, fromMe }) {
   }
 }
 
-// ============================================================================
-// GROUP — LIST WARNINGS
-// ============================================================================
 async function cmdWarnings({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const ctxInfo = getContextInfo(msg);
@@ -1583,9 +1697,6 @@ async function cmdWarnings({ msg, sock, jid, fromMe }) {
   await sock.sendMessage(jid, { text: `📊 @${target.split('@')[0]}: ${count} warning(s)`, mentions: [target] });
 }
 
-// ============================================================================
-// GROUP — RESET WARNINGS
-// ============================================================================
 async function cmdResetWarn({ msg, sock, jid, fromMe }) {
   if (!fromMe || !jid.endsWith('@g.us')) return;
   const ctxInfo = getContextInfo(msg);
@@ -1743,4 +1854,4 @@ async function cmdLogout({ sock, jid, fromMe, msg }) {
 // ============================================================================
 // EXPORTS
 // ============================================================================
-export { sendTyping, sendRecording, sendOnline, buildMenu };
+export { sendTyping, sendRecording, sendOnline };
