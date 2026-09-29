@@ -1,335 +1,320 @@
-// ============================================================================
-// IMPORTS
-// ============================================================================
 import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import crypto from 'crypto';
-import https from 'https';
 import http from 'http';
-import fs from 'fs';
-import {
-  startBot, requestPairing, state, persistConfig,
-  regenerateToken, getBotData, exportSessionPackage,
-  importSessionPackage, restartBot, clearSenderKeyMemory
-} from './bot.js';
+import { Server as SocketServer } from 'socket.io';
+import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
+import bcrypt from 'bcrypt';
+import dotenv from 'dotenv';
+import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
+
+import { pool, initDb, getStatus, log } from './db.js';
+import { startBot, setIO, logout, getSock, getIO } from './bot.js';
+import { loadCommands } from './commands/index.js';
+import { loadAntiSettings } from './commands/anti.js';
+import { invalidateAutomationCache } from './engine.js';
+
+dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.use(express.json({ limit: '50mb' }));
-
-// ============================================================================
-// AUTH CONFIG
-// ============================================================================
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-const COOKIE_NAME = 'wa_bot_auth';
-
-if (!ADMIN_PASSWORD) {
-  console.warn('⚠️  ADMIN_PASSWORD not set. Set it in Render environment variables.');
-}
-
-// ============================================================================
-// COOKIE PARSER
-// ============================================================================
-app.use((req, res, next) => {
-  req.cookies = {};
-  const cookieHeader = req.headers.cookie;
-  if (cookieHeader) {
-    cookieHeader.split(';').forEach(c => {
-      const [k, ...v] = c.trim().split('=');
-      req.cookies[k] = decodeURIComponent(v.join('='));
-    });
-  }
-  next();
+const server = http.createServer(app);
+const io = new SocketServer(server, {
+  cors: { origin: true, credentials: true },
 });
 
-// ============================================================================
-// AUTH HELPERS
-// ============================================================================
-function generateAuthToken() {
-  const payload = `${Date.now()}`;
-  const hmac = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
-  return `${payload}.${hmac}`;
-}
+setIO(io);
 
-function verifyAuthToken(token) {
-  if (!token || !token.includes('.')) return false;
-  const [payload, hmac] = token.split('.');
-  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
-  if (hmac !== expected) return false;
-  const age = Date.now() - parseInt(payload);
-  return age < 7 * 24 * 60 * 60 * 1000;
-}
+/* ═══════════════ Middleware ═══════════════ */
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
+/* ═══════════════ Session Store ═══════════════ */
+const PgStore = connectPgSimple(session);
+const sessionMiddleware = session({
+  store: new PgStore({ pool, createTableIfMissing: true }),
+  secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
+  resave: false,
+  saveUninitialized: false,
+  proxy: true,
+  cookie: {
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  },
+});
+app.use(sessionMiddleware);
+
+/* Share session with Socket.IO */
+io.engine.use(sessionMiddleware);
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+/* ═══════════════ Auth Middleware ═══════════════ */
 function requireAuth(req, res, next) {
-  // Public assets (needed for login page to work)
-  if (
-    req.path === '/login' ||
-    req.path === '/api/login' ||
-    req.path === '/health' ||
-    req.path === '/manifest.json' ||
-    req.path === '/sw.js' ||
-    req.path.startsWith('/icon-') ||
-    req.path === '/favicon.ico'
-  ) {
-    return next();
-  }
-
-  const token = req.cookies[COOKIE_NAME];
-  if (token && verifyAuthToken(token)) return next();
-
-  if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  return res.redirect('/login');
+  if (req.session?.user) return next();
+  res.status(401).json({ error: 'Unauthorized' });
 }
 
-// ============================================================================
-// LOGIN ROUTES (public)
-// ============================================================================
-app.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
+/* ═══════════════ Auth Routes ═══════════════ */
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Missing credentials' });
+    }
+    if (username !== process.env.OWNER_USERNAME) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const expected = process.env.OWNER_PASSWORD || '';
+    const ok = password === expected;
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 
-app.post('/api/login', (req, res) => {
-  const { password } = req.body;
-  if (!ADMIN_PASSWORD) {
-    return res.status(500).json({ error: 'Server password not configured' });
+    req.session.user = { username, role: 'owner' };
+    await log('owner', 'info', `Login from ${req.ip}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Invalid password' });
-  }
-  const token = generateAuthToken();
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`);
-  res.json({ ok: true });
 });
 
 app.post('/api/logout', (req, res) => {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; Max-Age=0`);
-  res.json({ ok: true });
+  req.session.destroy(() => res.json({ ok: true }));
 });
 
-// ============================================================================
-// HEALTH CHECK (public — used by self-ping)
-// ============================================================================
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    uptime: Math.floor((Date.now() - state.startedAt) / 1000),
-    connected: state.connected,
-    timestamp: new Date().toISOString(),
-  });
+app.get('/api/me', requireAuth, (req, res) => res.json(req.session.user));
+
+/* ═══════════════ Status ═══════════════ */
+app.get('/api/status', requireAuth, async (req, res) => {
+  const status = await getStatus('owner');
+  res.json(status);
 });
 
-// ============================================================================
-// STATIC ASSETS (public for PWA files)
-// ============================================================================
-app.get('/manifest.json', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
-});
-app.get('/sw.js', (req, res) => {
-  res.setHeader('Service-Worker-Allowed', '/');
-  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
-});
-app.get('/favicon.ico', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'icon-192.png'));
-});
-
-// ============================================================================
-// BOOT BOT
-// ============================================================================
-startBot().catch((err) => console.error('Bot boot failed:', err));
-
-// ============================================================================
-// PROTECTED API ROUTES
-// ============================================================================
-app.use(requireAuth);
-
-app.get('/api/status', (req, res) => {
-  res.json({
-    connected: state.connected,
-    mode: state.mode,
-    ownerJid: state.ownerJid,
-    ownerNumber: state.ownerNumber,
-    pairingCode: state.pairingCode,
-    pairingPhone: state.pairingPhone,
-    sessionToken: state.sessionToken,
-    uptime: Math.floor((Date.now() - state.startedAt) / 1000),
-    antidelete: state.antidelete,
-    antiedit: state.antiedit,
-    welcome: state.welcome,
-    goodbye: state.goodbye,
-    botName: state.botName,
-    prefix: state.prefix,
-    msgCount: state.msgCount || 0,
-    startedAt: state.startedAt,
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Pairing
-// ---------------------------------------------------------------------------
-app.post('/api/pair', async (req, res) => {
+/* ═══════════════ Bot Control ═══════════════ */
+app.post('/api/bot/start', requireAuth, async (req, res) => {
   try {
-    const { phone, force } = req.body;
-    if (!phone) return res.status(400).json({ error: 'Phone required' });
-    const code = await requestPairing(phone, force !== false);
-    res.json({ code });
-  } catch (err) {
-    console.error('Pair error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Session token
-// ---------------------------------------------------------------------------
-app.post('/api/token/import', async (req, res) => {
-  const { token } = req.body;
-  if (!token) return res.status(400).json({ error: 'Token required' });
-  if (token === state.sessionToken) {
-    return res.json({ ok: true, message: 'Token valid — bot already connected' });
-  }
-  state.sessionToken = token;
-  persistConfig();
-  res.json({ ok: true, message: 'Token saved locally' });
-});
-
-app.post('/api/token/regenerate', (req, res) => {
-  const token = regenerateToken();
-  res.json({ token });
-});
-
-// ---------------------------------------------------------------------------
-// Mode / toggles
-// ---------------------------------------------------------------------------
-app.post('/api/mode', (req, res) => {
-  const { mode } = req.body;
-  if (!['private', 'public'].includes(mode)) return res.status(400).json({ error: 'Invalid mode' });
-  state.mode = mode; persistConfig();
-  res.json({ ok: true, mode });
-});
-
-app.post('/api/toggle', (req, res) => {
-  const { key, value } = req.body;
-  const allowed = ['antidelete', 'antiedit', 'welcome', 'goodbye'];
-  if (!allowed.includes(key)) return res.status(400).json({ error: 'Invalid key' });
-  state[key] = value; persistConfig();
-  res.json({ ok: true });
-});
-
-// ---------------------------------------------------------------------------
-// Settings (bot name, prefix)
-// ---------------------------------------------------------------------------
-app.post('/api/settings', (req, res) => {
-  const { botName, prefix } = req.body;
-  if (typeof botName === 'string' && botName.trim()) state.botName = botName.trim();
-  if (typeof prefix === 'string' && prefix.length <= 2) state.prefix = prefix;
-  persistConfig();
-  res.json({ ok: true, botName: state.botName, prefix: state.prefix });
-});
-
-// ---------------------------------------------------------------------------
-// Session export / import / refresh
-// ---------------------------------------------------------------------------
-app.get('/api/session/export', (req, res) => {
-  try {
-    if (!state.connected) {
-      return res.status(400).json({ error: 'Bot must be connected to export session' });
-    }
-    const pkg = exportSessionPackage();
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename="wa-session-${Date.now()}.json"`);
-    res.send(JSON.stringify(pkg, null, 2));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/session/import', async (req, res) => {
-  try {
-    const { package: pkg } = req.body;
-    if (!pkg) return res.status(400).json({ error: 'Package required' });
-    if (!pkg.files || typeof pkg.files !== 'object') {
-      return res.status(400).json({ error: 'Invalid package format' });
-    }
-    await restartBot(pkg);
-    res.json({ ok: true, message: 'Session imported and bot restarted' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/session/refresh', async (req, res) => {
-  try {
-    const cleared = clearSenderKeyMemory();
-    await restartBot();
-    res.json({ ok: true, message: `Restarted. Cleared ${cleared} sender-key files.` });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Logout device
-// ---------------------------------------------------------------------------
-app.post('/api/logout-device', async (req, res) => {
-  try {
-    if (state.sock) {
-      await state.sock.logout().catch(() => {});
-    }
+    const existing = getSock();
+    if (existing?.user) return res.json({ ok: true, message: 'Already connected' });
+    await startBot();
     res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
-// ============================================================================
-// PROTECTED STATIC (the main app)
-// ============================================================================
-app.use(express.static(path.join(__dirname, 'public'), {
-  index: false,       // we serve index manually below
-  extensions: ['html'],
-}));
-
-app.get('*', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.post('/api/bot/logout', requireAuth, async (req, res) => {
+  try {
+    await logout();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// ============================================================================
-// SELF-PING
-// ============================================================================
-const SELF_URL = process.env.SELF_URL;
+/* ═══════════════ Commands ═══════════════ */
+app.get('/api/commands', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT command, enabled, config FROM command_settings WHERE session_id='owner' ORDER BY command`
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-function selfPing() {
-  if (!SELF_URL) return;
-  const url = `${SELF_URL.replace(/\/$/, '')}/health`;
-  const client = url.startsWith('https') ? https : http;
-  const req = client.get(url, (res) => {
-    res.on('data', () => {});
-    res.on('end', () => {
-      if (res.statusCode === 200) console.log(`💓 Self-ping OK (${res.statusCode})`);
-      else console.warn(`💓 Self-ping returned ${res.statusCode}`);
+app.post('/api/commands/:name', requireAuth, async (req, res) => {
+  try {
+    const { name } = req.params;
+    const { enabled } = req.body;
+    await pool.query(
+      `INSERT INTO command_settings (session_id, command, enabled)
+       VALUES ('owner', $1, $2)
+       ON CONFLICT (session_id, command) DO UPDATE SET enabled=$2`,
+      [name, !!enabled]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ═══════════════ Storage ═══════════════ */
+app.get('/api/storage', requireAuth, async (req, res) => {
+  try {
+    const { type } = req.query;
+    const q = type
+      ? `SELECT id, type, key, value, created_at FROM storage
+         WHERE session_id='owner' AND type=$1
+         ORDER BY id DESC LIMIT 300`
+      : `SELECT id, type, key, value, created_at FROM storage
+         WHERE session_id='owner' AND type NOT IN ('key')
+         ORDER BY id DESC LIMIT 300`;
+    const { rows } = await pool.query(q, type ? [type] : []);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/storage/:id', requireAuth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM storage WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ═══════════════ Automations ═══════════════ */
+app.get('/api/automations', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, trigger, action, enabled, created_at FROM automations
+       WHERE session_id='owner' ORDER BY id DESC`
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/automations', requireAuth, async (req, res) => {
+  try {
+    const { trigger, action } = req.body;
+    if (!trigger?.type || !action?.type) {
+      return res.status(400).json({ error: 'Invalid trigger/action' });
+    }
+    await pool.query(
+      `INSERT INTO automations (session_id, trigger, action, enabled)
+       VALUES ('owner', $1, $2, TRUE)`,
+      [trigger, action]
+    );
+    invalidateAutomationCache();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/automations/:id', requireAuth, async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    await pool.query(
+      `UPDATE automations SET enabled=$1 WHERE id=$2 AND session_id='owner'`,
+      [!!enabled, req.params.id]
+    );
+    invalidateAutomationCache();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/automations/:id', requireAuth, async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM automations WHERE id=$1 AND session_id='owner'`,
+      [req.params.id]
+    );
+    invalidateAutomationCache();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ═══════════════ Logs ═══════════════ */
+app.get('/api/logs', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, level, message, created_at FROM logs
+       WHERE session_id='owner' ORDER BY id DESC LIMIT 200`
+    );
+    res.json(rows.reverse());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ═══════════════ System ═══════════════ */
+app.get('/api/system', requireAuth, async (req, res) => {
+  try {
+    const total = os.totalmem() / 1024 / 1024 / 1024;
+    const free = os.freemem() / 1024 / 1024 / 1024;
+    const up = process.uptime();
+    const h = Math.floor(up / 3600);
+    const m = Math.floor((up % 3600) / 60);
+    const { rows } = await pool.query(`SELECT COUNT(*) AS c FROM storage`);
+    res.json({
+      platform: os.platform(),
+      arch: os.arch(),
+      node: process.version,
+      uptime: `${h}h ${m}m`,
+      memTotal: total.toFixed(2),
+      memUsed: (total - free).toFixed(2),
+      cpus: os.cpus().length,
+      dbStorage: rows[0].c,
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ═══════════════ Health Check ═══════════════ */
+app.get('/healthz', (req, res) => res.send('ok'));
+
+/* ═══════════════ Socket.IO ═══════════════ */
+io.on('connection', (socket) => {
+  const user = socket.request.session?.user;
+  console.log('🔌 UI connected', user?.username || 'anonymous');
+  socket.emit('ready');
+});
+
+/* ═══════════════ Log broadcaster ═══════════════ */
+// Wrap db log() to also emit to sockets
+const originalLog = log;
+global.__emitLog = (entry) => io.emit('log', entry);
+
+/* ═══════════════ Boot ═══════════════ */
+async function boot() {
+  try {
+    await initDb();
+    console.log('🗄️  Database ready');
+    await loadCommands();
+    await loadAntiSettings();
+    console.log('⚙️  Commands + anti settings loaded');
+  } catch (e) {
+    console.error('❌ Boot prep failed:', e);
+  }
+
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log(`🚀 Server listening on port ${PORT}`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   });
-  req.on('error', (err) => console.warn(`💓 Self-ping failed: ${err.message}`));
-  req.setTimeout(10000, () => { req.destroy(); console.warn('💓 Self-ping timed out'); });
+
+  // Auto-start bot on boot (it will use stored creds if available)
+  try {
+    await startBot();
+  } catch (e) {
+    console.error('⚠️  Bot auto-start failed:', e.message);
+  }
 }
 
-const PING_INTERVAL_MS = 14 * 60 * 1000;
-if (SELF_URL) {
-  console.log(`💓 Self-ping enabled → ${SELF_URL}/health every ${PING_INTERVAL_MS / 60000} min`);
-  setTimeout(() => { selfPing(); setInterval(selfPing, PING_INTERVAL_MS); }, 30000);
-} else {
-  console.log('💓 Self-ping disabled (SELF_URL not set)');
-}
+boot();
 
-// ============================================================================
-// START
-// ============================================================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🖥️  UI on http://0.0.0.0:${PORT}`);
-  if (SELF_URL) console.log(`🔗 Public URL: ${SELF_URL}`);
+/* ═══════════════ Graceful Shutdown ═══════════════ */
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down...');
+  try { await logout(); } catch {}
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
 });

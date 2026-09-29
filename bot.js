@@ -1,602 +1,190 @@
-// ============================================================================
-// IMPORTS
-// ============================================================================
 import makeWASocket, {
-  useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  isJidBroadcast,
+  jidNormalizedUser,
+  getContentType,
 } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
+import QRCode from 'qrcode';
 import pino from 'pino';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import { handleMessage, handleReaction, handleGroupParticipants } from './command.js';
+import { Boom } from '@hapi/boom';
+import { usePostgresAuthState, clearAuthState } from './auth.js';
+import { setStatus, log } from './db.js';
+import { isOwner } from './commands/access.js';
+import { handleViewOnce } from './view.js';
+import { runAutomations } from './engine.js';
+import { antiCheck } from './commands/anti.js';
 
-// ============================================================================
-// SHARED STATE
-// ============================================================================
-export const state = {
-  sock: null,
-  connected: false,
-  mode: 'public',              // ← changed default: allow groups
-  ownerJid: null,              // full JID of the owner (the account the bot runs as)
-  ownerNumber: null,           // raw phone number
-  pairingCode: null,
-  pairingPhone: null,
-  sessionToken: null,
-  startedAt: Date.now(),
-  lastDisconnect: null,
-  isInitialConnection: true,
-  antidelete: true,
-  antiedit: true,
-  welcome: true,
-  goodbye: true,
-  welcomeText: 'Welcome to *{group}*, @{user}! 👋',
-  goodbyeText: 'Goodbye @{user}! 👋',
-  prefix: '!',
-  bannerUrl: null,
-  botName: 'WA Bot',
-  msgCount: 0,
-  menuSent: false,             // ← flag so menu sends once per connect
-};
+// inside messages.upsert handler, after handleViewOnce:
+if (await antiCheck({ sock, msg, jid, text })) return;
+const SESSION_ID = 'owner';
+const logger = pino({ level: 'silent' });
 
-// ============================================================================
-// PATHS
-// ============================================================================
-const IS_RENDER = !!process.env.RENDER;
-const PERSISTENT = process.env.PERSISTENT_DISK === 'true';
-const DATA_ROOT = IS_RENDER ? (PERSISTENT ? '/data' : '/tmp') : '.';
-const AUTH_DIR = path.join(DATA_ROOT, 'auth');
-const DATA_DIR = path.join(DATA_ROOT, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'bot-data.json');
+let sock = null;
+let ioRef = null;
+const commands = new Map();
 
-// ============================================================================
-// AUTO-DELETE TIMERS
-// ============================================================================
-const autoDeleteTimers = new Map();
+export const setIO = (io) => { ioRef = io; };
+export const getSock = () => sock;
+export const getIO = () => ioRef;
+export const registerCommand = (name, handler) => commands.set(name, handler);
 
-export function scheduleAutoDelete(sock, chatJid, messageKey, delayMs = 60 * 60 * 1000) {
-  if (!messageKey?.id) return;
-  const id = `${chatJid}:${messageKey.id}`;
-  if (autoDeleteTimers.has(id)) clearTimeout(autoDeleteTimers.get(id));
-  const timer = setTimeout(async () => {
-    try {
-      await sock.sendMessage(chatJid, { delete: messageKey });
-      console.log(`🗑️ Auto-deleted message ${messageKey.id}`);
-    } catch (e) {
-      console.warn(`Auto-delete failed: ${e.message}`);
-    }
-    autoDeleteTimers.delete(id);
-  }, delayMs);
-  autoDeleteTimers.set(id, timer);
-}
+/* ---------------- Human-like helpers ---------------- */
+const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export function cancelAllAutoDeletes() {
-  for (const [id, timer] of autoDeleteTimers.entries()) {
-    clearTimeout(timer);
-    autoDeleteTimers.delete(id);
-  }
-}
+const PRESENCE_JITTER = { min: 500, max: 1800 };
+const TYPING_RATE = { min: 20, max: 55 }; // chars per second
 
-// ============================================================================
-// IN-MEMORY MESSAGE STORE
-// ============================================================================
-export const messageStore = new Map();
-const MAX_STORE = 1000;
-
-function addToStore(msg) {
-  if (!msg.key?.id || !msg.key?.remoteJid) return;
-  const k = `${msg.key.remoteJid}:${msg.key.id}`;
-  messageStore.set(k, msg);
-  if (messageStore.size > MAX_STORE) {
-    const first = messageStore.keys().next().value;
-    messageStore.delete(first);
-  }
-}
-
-// ============================================================================
-// JSON FILE STORAGE
-// ============================================================================
-function ensureDirs() {
-  for (const d of [DATA_DIR, AUTH_DIR]) {
-    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-  }
-}
-
-function loadData() {
-  if (fs.existsSync(DATA_FILE)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
-      Object.keys(data).forEach(k => { if (k in state) state[k] = data[k]; });
-    } catch (e) {
-      console.error('Failed to load bot-data.json:', e.message);
-    }
-  }
-}
-
-function saveData() {
-  const data = {};
-  const fields = [
-    'ownerJid', 'ownerNumber', 'sessionToken', 'mode', 'antidelete', 'antiedit',
-    'welcome', 'goodbye', 'welcomeText', 'goodbyeText', 'prefix',
-    'bannerUrl', 'botName', 'msgCount'
-  ];
-  fields.forEach(f => { data[f] = state[f]; });
-  data.savedAt = new Date().toISOString();
+async function humanTyping(jid, text = '') {
+  if (!sock) return;
   try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error('Failed to save bot-data.json:', e.message);
-  }
+    await sock.sendPresenceUpdate('available', jid);
+    await sock.sendPresenceUpdate('composing', jid);
+    const cps = rand(TYPING_RATE.min, TYPING_RATE.max);
+    const ms = Math.min(9000, Math.max(900, (text.length / cps) * 1000));
+    await sleep(ms + rand(PRESENCE_JITTER.min, PRESENCE_JITTER.max));
+    await sock.sendPresenceUpdate('paused', jid);
+  } catch {}
 }
 
-function generateToken() {
-  const token = crypto.randomBytes(24).toString('hex');
-  state.sessionToken = token;
-  saveData();
-  return token;
+export async function humanSend(jid, content, opts = {}) {
+  if (!sock) throw new Error('Socket not connected');
+  const text = content?.text || content?.caption || '';
+  await humanTyping(jid, text);
+  return sock.sendMessage(jid, content, opts);
 }
 
-// ============================================================================
-// SESSION PACKAGE EXPORT / IMPORT
-// ============================================================================
-export function exportSessionPackage() {
-  const pkg = { version: 1, createdAt: new Date().toISOString(), files: {} };
-  if (!fs.existsSync(AUTH_DIR)) throw new Error('Auth folder does not exist');
-  const files = fs.readdirSync(AUTH_DIR);
-  for (const file of files) {
-    const fullPath = path.join(AUTH_DIR, file);
-    if (!fs.statSync(fullPath).isFile()) continue;
-    try {
-      const content = fs.readFileSync(fullPath, 'utf-8');
-      JSON.parse(content);
-      pkg.files[file] = content;
-    } catch (e) {
-      console.error(`Skipping non-JSON file: ${file}`, e.message);
-    }
-  }
-  return pkg;
-}
-
-export function importSessionPackage(pkg) {
-  if (!pkg || pkg.version !== 1 || !pkg.files) throw new Error('Invalid session package format');
-  ensureDirs();
-  if (fs.existsSync(AUTH_DIR)) {
-    for (const f of fs.readdirSync(AUTH_DIR)) {
-      fs.unlinkSync(path.join(AUTH_DIR, f));
-    }
-  }
-  let written = 0;
-  for (const [filename, content] of Object.entries(pkg.files)) {
-    if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
-      console.warn(`Skipping suspicious filename: ${filename}`);
-      continue;
-    }
-    fs.writeFileSync(path.join(AUTH_DIR, filename), content);
-    written++;
-  }
-  console.log(`📦 Imported ${written} auth files from session package`);
-  return written;
-}
-
-export function clearSenderKeyMemory() {
-  if (!fs.existsSync(AUTH_DIR)) return 0;
-  const files = fs.readdirSync(AUTH_DIR).filter(f => f.startsWith('sender-key-memory-'));
-  let cleared = 0;
-  for (const file of files) {
-    const fullPath = path.join(AUTH_DIR, file);
-    try {
-      const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
-      if (content && typeof content === 'object') {
-        for (const jid of Object.keys(content)) content[jid] = null;
-        fs.writeFileSync(fullPath, JSON.stringify(content));
-        cleared++;
-      }
-    } catch (e) {
-      console.error(`Failed to clear ${file}:`, e.message);
-    }
-  }
-  console.log(`🔑 Cleared sender-key-memory in ${cleared} files`);
-  return cleared;
-}
-
-// ============================================================================
-// AUTH FOLDER HELPERS
-// ============================================================================
-function wipeAuthFolder() {
-  if (fs.existsSync(AUTH_DIR)) {
-    for (const f of fs.readdirSync(AUTH_DIR)) {
-      try { fs.unlinkSync(path.join(AUTH_DIR, f)); } catch (_) {}
-    }
-  }
-  ensureDirs();
-}
-
-// ============================================================================
-// SOCKET OPTIONS
-// ============================================================================
-const BROWSER_LABEL = ['Ubuntu', 'Chrome', '20.0.04'];
-
-function makeSocketOptions(authState) {
-  return {
-    auth: {
-      creds: authState.creds,
-      keys: makeCacheableSignalKeyStore(authState.keys, pino({ level: 'silent' })),
-    },
+/* ---------------- Connect ---------------- */
+export async function startBot() {
+  const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
+  const { version } = await fetchLatestBaileysVersion();
+  
+  sock = makeWASocket({
+    version,
+    logger,
     printQRInTerminal: false,
-    logger: pino({ level: 'silent' }),
-    browser: BROWSER_LABEL,
-    markOnlineOnConnect: false,
-    syncFullHistory: false,
-    generateHighQualityLinkPreview: false,
-    // ⭐ REQUIRED so retry receipts can be answered (fixes "Waiting for this message")
-    getMessage: async (key) => {
-      const stored = messageStore.get(`${key.remoteJid}:${key.id}`);
-      if (stored?.message) return stored.message;
-      // fallback: return empty so Baileys doesn't crash
-      return { conversation: '' };
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-  };
-}
-
-// ============================================================================
-// BOT LIFECYCLE
-// ============================================================================
-let activeSocket = null;
-let startingUp = false;
-
-export async function startBot(options = {}) {
-  if (startingUp) {
-    console.log('⚠️ startBot already in progress, skipping');
-    return activeSocket;
-  }
-  startingUp = true;
-
-  try {
-    ensureDirs();
-    if (!options.skipLoad) loadData();
-
-    if (activeSocket) {
-      try {
-        activeSocket.ev.removeAllListeners('connection.update');
-        activeSocket.ev.removeAllListeners('messages.upsert');
-        activeSocket.ev.removeAllListeners('messages.reaction');
-        activeSocket.ev.removeAllListeners('group-participants.update');
-        activeSocket.ev.removeAllListeners('creds.update');
-        activeSocket.end(undefined);
-      } catch (_) {}
-      activeSocket = null;
+    browser: ['Ubuntu', 'Chrome', '120.0.0'],
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: true,
+    getMessage: async () => ({ conversation: '' }),
+  });
+  
+  sock.ev.on('creds.update', saveCreds);
+  
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    
+    if (qr) {
+      const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
+      ioRef?.emit('qr', { qr: dataUrl });
+      await setStatus(SESSION_ID, 'qr');
     }
-    state.sock = null;
-    state.menuSent = false;
-
-    const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const { version } = await fetchLatestBaileysVersion();
-
-    const sock = makeWASocket({
-      version,
-      ...makeSocketOptions(authState),
-    });
-
-    activeSocket = sock;
-    state.sock = sock;
-
-    attachFullHandlers(sock, authState, saveCreds);
-
-    return sock;
-  } finally {
-    startingUp = false;
-  }
-}
-
-// ============================================================================
-// FULL HANDLERS
-// ============================================================================
-function attachFullHandlers(sock, authState, saveCreds) {
-
-  // --------------------------------------------------------------------------
-  // 1. Store EVERY incoming message (both notify & append) for retries & anti-delete
-  // --------------------------------------------------------------------------
-  sock.ev.on('messages.upsert', ({ messages, type }) => {
-    if (type !== 'notify' && type !== 'append') return;
-    for (const msg of messages) {
-      if (msg.message && !msg.key.fromMe) {
-        addToStore(msg);
-        state.msgCount = (state.msgCount || 0) + 1;
-      } else if (msg.message && msg.key.fromMe) {
-        // also store our own outgoing messages for anti-delete / retries
-        addToStore(msg);
+    
+    if (connection === 'open') {
+      const phone = sock.user?.id?.split(':')[0] || null;
+      await setStatus(SESSION_ID, 'connected', phone);
+      ioRef?.emit('status', { status: 'connected', phone });
+      await log(SESSION_ID, 'info', `Connected as ${phone}`);
+      console.log('✅ Connected:', phone);
+    }
+    
+    if (connection === 'close') {
+      const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      const shouldReconnect = code !== DisconnectReason.loggedOut;
+      await setStatus(SESSION_ID, shouldReconnect ? 'reconnecting' : 'disconnected');
+      ioRef?.emit('status', {
+        status: shouldReconnect ? 'reconnecting' : 'disconnected',
+      });
+      if (shouldReconnect) {
+        console.log('🔄 Reconnecting in 3s...');
+        setTimeout(startBot, 3000);
+      } else {
+        console.log('❌ Logged out');
+        await clearAuthState(SESSION_ID);
       }
     }
   });
-
-  // --------------------------------------------------------------------------
-  // 2. Command dispatch (only for notify)
-  // --------------------------------------------------------------------------
-  sock.ev.on('messages.upsert', (payload) => {
-    if (payload.type !== 'notify') return;
-    handleMessage(payload, sock, state).catch(e =>
-      console.error('handleMessage error:', e.message)
-    );
-  });
-
-  // --------------------------------------------------------------------------
-  // 3. Anti-delete + Anti-edit
-  // --------------------------------------------------------------------------
+  
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
-    for (const msg of messages) {
-      const proto = msg.message?.protocolMessage;
-      if (!proto) continue;
-
-      // ---- ANTI-DELETE ----
-      if (proto.type === 'REVOKE' && state.antidelete && state.ownerJid) {
-        const origKey = proto.key;
-        if (!origKey) continue;
-        const original = messageStore.get(`${origKey.remoteJid}:${origKey.id}`);
-        if (original) {
-          try {
-            const sent = await sock.sendMessage(state.ownerJid, {
-              forward: original,
-              text: `⚠️ *Deleted message recovered*\nChat: ${origKey.remoteJid}`,
-            });
-            if (sent?.key) scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
-          } catch (e) { console.error('anti-delete failed', e.message); }
-        }
-      }
-
-      // ---- ANTI-EDIT ----
-      if (proto.type === 'MESSAGE_EDIT' && state.antiedit && state.ownerJid) {
-        const origKey = proto.key;
-        const edited = proto.editedMessage;
-        if (!origKey || !edited) continue;
-        const original = messageStore.get(`${origKey.remoteJid}:${origKey.id}`);
-        const editedText = edited.conversation || edited.extendedTextMessage?.text || '[media]';
-        const originalText = original?.message?.conversation || original?.message?.extendedTextMessage?.text || '[media]';
-        try {
-          const sent = await sock.sendMessage(state.ownerJid, {
-            text: `✏️ *Message edited*\nChat: ${origKey.remoteJid}\n\n*Original:*\n${originalText}\n\n*Edited:*\n${editedText}`,
-          });
-          if (sent?.key) scheduleAutoDelete(sock, state.ownerJid, sent.key, 60 * 60 * 1000);
-        } catch (e) { console.error('anti-edit failed', e.message); }
-      }
-    }
-  });
-
-  // --------------------------------------------------------------------------
-  // 4. Reactions & group events
-  // --------------------------------------------------------------------------
-  sock.ev.on('messages.reaction', (reactions) => {
-    handleReaction(reactions, sock, state).catch(e =>
-      console.error('handleReaction error:', e.message)
-    );
-  });
-
-  sock.ev.on('group-participants.update', (update) => {
-    handleGroupParticipants(update, sock, state).catch(e =>
-      console.error('handleGroupParticipants error:', e.message)
-    );
-  });
-
-  // --------------------------------------------------------------------------
-  // 5. Credentials persistence
-  // --------------------------------------------------------------------------
-  sock.ev.on('creds.update', saveCreds);
-
-  // --------------------------------------------------------------------------
-  // 6. Connection lifecycle + auto-send menu
-  // --------------------------------------------------------------------------
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-
-    if (connection === 'open') {
-      state.connected = true;
-      state.isInitialConnection = false;
-      state.pairingCode = null;
-      state.pairingPhone = null;
-
-      // ⭐ Set owner JID from the bot's own identity — this is correct because
-      //    the bot IS the owner's WhatsApp account (linked device).
-      const meJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-      state.ownerJid = meJid;
-      state.ownerNumber = meJid.split('@')[0];
-      if (!state.sessionToken) generateToken();
-      saveData();
-
-      console.log('✅ Connected as', meJid);
-
-      // ⭐ Auto-send menu to the owner's own DM (the linked device's "Message yourself" chat)
-      if (!state.menuSent) {
-        state.menuSent = true;
-        setTimeout(async () => {
-          try {
-            const { buildMenu } = await import('./command.js');
-            const menuText = typeof buildMenu === 'function'
-              ? buildMenu(state)
-              : `🤖 *${state.botName}* is online.\nSend *${state.prefix}menu* to see commands.`;
-            await sock.sendMessage(meJid, { text: menuText });
-            console.log('📋 Menu sent to owner DM');
-          } catch (e) {
-            console.error('Failed to send startup menu:', e.message);
-            try {
-              await sock.sendMessage(meJid, {
-                text: `🤖 *${state.botName}* is online.\nSend *${state.prefix}menu* to see commands.`
-              });
-            } catch (_) {}
-          }
-        }, 1500);
-      }
-    }
-
-    if (connection === 'close') {
-      state.connected = false;
-      state.menuSent = false;
-      const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-
-      if (state.isInitialConnection && !authState.creds.registered) {
-        console.log('🔌 Pairing attempt closed (not registered yet)');
-        return;
-      }
-
-      if (code !== DisconnectReason.loggedOut) {
-        console.log('🔁 Reconnecting...');
-        state.isInitialConnection = false;
-        setTimeout(
-          () => startBot({ skipLoad: true }).catch(e => console.error('reconnect failed', e)),
-          2000
-        );
-      } else {
-        console.log('🚪 Logged out — not reconnecting');
-      }
-    }
-  });
-}
-
-// ============================================================================
-// PAIRING
-// ============================================================================
-export async function requestPairing(phoneNumber, force = true) {
-  const cleaned = String(phoneNumber).replace(/\D/g, '');
-  if (!cleaned || cleaned.length < 7) {
-    throw new Error('Invalid phone number (include country code, digits only)');
-  }
-
-  if (!force && state.pairingCode && state.pairingPhone === cleaned) {
-    return state.pairingCode;
-  }
-
-  console.log(`📱 Requesting fresh pairing code for ${cleaned}...`);
-
-  if (activeSocket) {
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
+    
+    const jid = jidNormalizedUser(msg.key.remoteJid);
+    if (jid === 'status@broadcast') return;
+    
+    // Handle view-once before command parsing
+    await handleViewOnce({ sock, msg, jid });
+    
+    const m = msg.message;
+    const text =
+      m.conversation ||
+      m.extendedTextMessage?.text ||
+      m.imageMessage?.caption ||
+      m.videoMessage?.caption ||
+      m.buttonsResponseMessage?.selectedButtonId ||
+      m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+      '';
+    
+    // Run automations (keyword triggers etc.)
     try {
-      activeSocket.ev.removeAllListeners('connection.update');
-      activeSocket.ev.removeAllListeners('messages.upsert');
-      activeSocket.ev.removeAllListeners('messages.reaction');
-      activeSocket.ev.removeAllListeners('group-participants.update');
-      activeSocket.ev.removeAllListeners('creds.update');
-      activeSocket.end(undefined);
-    } catch (_) {}
-    activeSocket = null;
-  }
-  state.sock = null;
-  state.connected = false;
-  state.pairingCode = null;
-  state.pairingPhone = null;
-  state.menuSent = false;
-
-  wipeAuthFolder();
-
-  const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
-    version,
-    ...makeSocketOptions(authState),
-  });
-
-  activeSocket = sock;
-  state.sock = sock;
-  state.isInitialConnection = true;
-
-  sock.ev.on('creds.update', saveCreds);
-
-  await new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (err) => {
-      if (done) return;
-      done = true;
-      err ? reject(err) : resolve();
+      await runAutomations({ sock, msg, jid, text });
+    } catch (e) { console.error('automation error', e); }
+    
+    if (!text) return;
+    
+    const prefix = text[0];
+    if (prefix !== '.' && prefix !== '!') return;
+    
+    const [rawCmd, ...args] = text.slice(1).trim().split(/\s+/);
+    const cmd = rawCmd.toLowerCase();
+    const handler = commands.get(cmd);
+    if (!handler) return;
+    
+    // Permission check
+    if (handler.ownerOnly && !isOwner(jid)) {
+      return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
+    }
+    
+    const ctx = {
+      sock,
+      msg,
+      jid,
+      text,
+      args,
+      isGroup: jid.endsWith('@g.us'),
+      sender: jidNormalizedUser(msg.key.participant || jid),
+      reply: (content, opts) => humanSend(jid, content, { quoted: msg, ...opts }),
+      react: (emoji) => sock.sendMessage(jid, { react: { text: emoji, key: msg.key } }),
     };
-
-    const handler = (u) => {
-      if (u.qr) {
-        console.log('📡 Socket ready (qr event received)');
-        finish();
-      }
-      if (u.connection === 'open') {
-        console.log('📡 Socket already open');
-        finish();
-      }
-      if (u.connection === 'close') {
-        const code = new Boom(u.lastDisconnect?.error)?.output?.statusCode;
-        if (code && code !== DisconnectReason.loggedOut) {
-          finish(new Error(`Connection closed during pairing setup (code ${code})`));
-        }
-      }
-    };
-
-    sock.ev.on('connection.update', handler);
-    setTimeout(() => finish(new Error('Timed out waiting for socket readiness (30s)')), 30000);
-  });
-
-  let code;
-  try {
-    code = await sock.requestPairingCode(cleaned);
-  } catch (e) {
-    console.error('requestPairingCode error:', e);
-    throw new Error(`Pairing request failed: ${e.message}`);
-  }
-
-  if (!code) throw new Error('WhatsApp returned an empty pairing code');
-
-  state.pairingCode = code;
-  state.pairingPhone = cleaned;
-  console.log(`🔑 Fresh pairing code for ${cleaned}: ${code}`);
-
-  attachFullHandlers(sock, authState, saveCreds);
-
-  return code;
-}
-
-// ============================================================================
-// RESTART
-// ============================================================================
-export async function restartBot(sessionPkg = null) {
-  console.log('🔄 Restarting bot...');
-  cancelAllAutoDeletes();
-
-  if (activeSocket) {
+    
     try {
-      activeSocket.ev.removeAllListeners('connection.update');
-      activeSocket.ev.removeAllListeners('messages.upsert');
-      activeSocket.ev.removeAllListeners('messages.reaction');
-      activeSocket.ev.removeAllListeners('group-participants.update');
-      activeSocket.ev.removeAllListeners('creds.update');
-      activeSocket.end(undefined);
-    } catch (_) {}
-    activeSocket = null;
-  }
-  state.sock = null;
-  state.connected = false;
-  state.isInitialConnection = true;
-  state.pairingCode = null;
-  state.pairingPhone = null;
-  state.menuSent = false;
-
-  if (sessionPkg) importSessionPackage(sessionPkg);
-
-  clearSenderKeyMemory();
-
-  await startBot({ skipLoad: true });
-  return true;
+      await handler(ctx);
+    } catch (err) {
+      console.error(`Command .${cmd} failed:`, err);
+      await humanSend(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
+    }
+  });
+  
+  sock.ev.on('messages.update', async (updates) => {
+    for (const u of updates) {
+      if (u.update?.message === null || u.update?.messageStubType) continue;
+    }
+  });
+  
+  return sock;
 }
 
-// ============================================================================
-// EXPORTS
-// ============================================================================
-export function persistConfig() { saveData(); }
-export function getToken() { return state.sessionToken; }
-export function regenerateToken() { return generateToken(); }
-export function getBotData() {
-  const data = {};
-  const fields = [
-    'ownerJid', 'ownerNumber', 'sessionToken', 'mode', 'antidelete', 'antiedit',
-    'welcome', 'goodbye', 'welcomeText', 'goodbyeText', 'prefix',
-    'bannerUrl', 'botName', 'msgCount'
-  ];
-  fields.forEach(f => { data[f] = state[f]; });
-  return data;
+export async function logout() {
+  if (sock) {
+    try { await sock.logout(); } catch {}
+    sock = null;
+  }
+  await clearAuthState(SESSION_ID);
 }

@@ -2,911 +2,1221 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#000000" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-  <meta name="apple-mobile-web-app-title" content="WA Bot" />
-  <link rel="manifest" href="/manifest.json" />
-  <link rel="apple-touch-icon" href="/icon-192.png" />
-  <title>WA Bot Console</title>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>WA Bot · Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: {
+              950: '#080c14',
+              900: '#0b1220',
+              850: '#0f172a',
+              800: '#131c2e',
+              700: '#1c2942',
+              600: '#2a3a5a',
+            },
+            accent: {
+              DEFAULT: '#10b981',
+              light: '#34d399',
+              dark: '#059669',
+            },
+          },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.25s ease-out',
+            'slide-up': 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+            'pulse-soft': 'pulseSoft 2s ease-in-out infinite',
+            'shimmer': 'shimmer 2s linear infinite',
+          },
+          keyframes: {
+            fadeIn: { '0%': { opacity: 0 }, '100%': { opacity: 1 } },
+            slideUp: {
+              '0%': { opacity: 0, transform: 'translateY(12px)' },
+              '100%': { opacity: 1, transform: 'translateY(0)' },
+            },
+            pulseSoft: {
+              '0%, 100%': { opacity: 1 },
+              '50%': { opacity: 0.5 },
+            },
+            shimmer: {
+              '0%': { backgroundPosition: '-1000px 0' },
+              '100%': { backgroundPosition: '1000px 0' },
+            },
+          },
+          boxShadow: {
+            glow: '0 0 30px -8px rgba(16, 185, 129, 0.5)',
+            card: '0 4px 24px -8px rgba(0, 0, 0, 0.4)',
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
-    * { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-    html, body { background: #000; color: #d4d4d4; }
-    body { min-height: 100vh; overflow-x: hidden; }
-
-    /* Green accent palette */
-    :root {
-      --g: #00ff88;
-      --g-dim: rgba(0,255,136,0.5);
-      --g-glow: rgba(0,255,136,0.4);
-    }
-    .text-g { color: var(--g); }
-    .border-g { border-color: rgba(0,255,136,0.3); }
-    .bg-g-soft { background: rgba(0,255,136,0.08); }
-
-    /* Grid background */
-    .grid-bg {
-      background-image:
-        linear-gradient(rgba(0, 255, 136, 0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 255, 136, 0.04) 1px, transparent 1px);
-      background-size: 32px 32px;
-    }
-
-    /* Glow effects */
-    .glow { box-shadow: 0 0 20px rgba(0,255,136,0.3), 0 0 40px rgba(0,255,136,0.1); }
-    .glow-sm { box-shadow: 0 0 10px rgba(0,255,136,0.4); }
-    .text-glow { text-shadow: 0 0 8px rgba(0,255,136,0.5); }
-
-    /* Terminal panel */
-    .panel {
-      background: rgba(8, 10, 8, 0.85);
-      border: 1px solid rgba(0,255,136,0.15);
-      backdrop-filter: blur(10px);
-      position: relative;
-    }
-    .panel::before {
-      content: '';
-      position: absolute; inset: 0;
-      background: linear-gradient(180deg, rgba(0,255,136,0.02), transparent 30%);
-      pointer-events: none;
-    }
-
-    /* Corner brackets on panels */
-    .corner { position: absolute; width: 10px; height: 10px; border-color: var(--g); }
-    .corner-tl { top: -1px; left: -1px; border-top: 2px solid; border-left: 2px solid; }
-    .corner-tr { top: -1px; right: -1px; border-top: 2px solid; border-right: 2px solid; }
-    .corner-bl { bottom: -1px; left: -1px; border-bottom: 2px solid; border-left: 2px solid; }
-    .corner-br { bottom: -1px; right: -1px; border-bottom: 2px solid; border-right: 2px solid; }
-
-    /* Inputs */
-    .input {
-      background: rgba(0, 15, 8, 0.6);
-      border: 1px solid rgba(0,255,136,0.2);
-      color: #d4d4d4;
-      transition: all 0.15s;
-    }
-    .input:focus {
-      border-color: var(--g);
-      box-shadow: 0 0 0 2px rgba(0,255,136,0.1), 0 0 15px rgba(0,255,136,0.2);
-      outline: none;
-    }
-    .input::placeholder { color: rgba(0,255,136,0.3); }
-
-    /* Buttons */
-    .btn-g {
-      background: var(--g);
-      color: #000;
-      font-weight: 700;
-      transition: all 0.15s;
-      letter-spacing: 0.05em;
-    }
-    .btn-g:hover { background: #00ffaa; box-shadow: 0 0 25px rgba(0,255,136,0.5); }
-    .btn-g:active { transform: translateY(1px); }
-    .btn-g:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    .btn-outline {
-      border: 1px solid rgba(0,255,136,0.3);
-      color: var(--g);
-      transition: all 0.15s;
-    }
-    .btn-outline:hover { border-color: var(--g); background: rgba(0,255,136,0.08); }
-
-    /* Scanlines overlay */
-    .scanlines {
-      position: fixed; inset: 0; z-index: 1; pointer-events: none;
-      background: repeating-linear-gradient(
-        0deg, rgba(0,255,100,0.02) 0px, rgba(0,255,100,0.02) 1px,
-        transparent 1px, transparent 3px
-      );
-      opacity: 0.5;
-    }
+    * { -webkit-tap-highlight-color: transparent; }
+    html, body { overscroll-behavior-y: contain; }
+    body { font-family: 'Inter', system-ui, sans-serif; }
 
     /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(0,255,136,0.3); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(0,255,136,0.5); }
+    ::-webkit-scrollbar-thumb { background: #1c2942; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2a3a5a; }
 
-    /* Animations */
-    @keyframes pulse-dot {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.5; transform: scale(1.3); }
+    /* Safe area for iOS */
+    .safe-top { padding-top: env(safe-area-inset-top); }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+    /* Nav items */
+    .nav-item {
+      position: relative;
+      transition: color 0.2s, background 0.2s;
     }
-    .pulse-dot { animation: pulse-dot 1.5s infinite; }
-
-    @keyframes boot-in {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
+    .nav-item.active { color: #34d399; }
+    .nav-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 25%; bottom: 25%;
+      width: 3px;
+      background: #10b981;
+      border-radius: 0 3px 3px 0;
     }
-    .boot-in { animation: boot-in 0.3s ease-out both; }
-
-    @keyframes shake {
-      10%, 90% { transform: translateX(-1px); }
-      20%, 80% { transform: translateX(2px); }
-      30%, 50%, 70% { transform: translateX(-4px); }
-      40%, 60% { transform: translateX(4px); }
+    .nav-item-mobile.active { color: #34d399; }
+    .nav-item-mobile.active .nav-icon {
+      background: rgba(16, 185, 129, 0.15);
+      transform: translateY(-2px);
     }
-    .shake { animation: shake 0.4s; }
 
-    @keyframes blink { 50% { opacity: 0; } }
-    .caret::after { content: '▊'; animation: blink 1s step-end infinite; color: var(--g); }
-
-    /* Toggle */
-    .toggle { width: 40px; height: 20px; border-radius: 10px; position: relative; transition: all 0.2s; }
-    .toggle span { position: absolute; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: white; transition: all 0.2s; }
-    .toggle.on { background: var(--g); box-shadow: 0 0 12px rgba(0,255,136,0.5); }
-    .toggle.on span { left: 22px; }
-    .toggle.off { background: #333; }
-    .toggle.off span { left: 2px; }
-
-    /* Toast */
-    .toast {
-      border-left: 3px solid var(--g);
-      background: rgba(8, 10, 8, 0.95);
-      animation: boot-in 0.2s ease-out;
+    /* Glass */
+    .glass {
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
-    .toast.error { border-color: #ff4444; }
-    .toast.warn { border-color: #ffaa00; }
 
-    /* Stat card */
-    .stat-card {
-      background: rgba(0, 10, 5, 0.5);
-      border: 1px solid rgba(0,255,136,0.15);
+    /* Card hover */
+    .hover-lift { transition: transform 0.15s, box-shadow 0.15s; }
+    .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 8px 30px -8px rgba(0,0,0,0.5); }
+
+    /* Shimmer skeleton */
+    .skeleton {
+      background: linear-gradient(90deg, #131c2e 0%, #1c2942 50%, #131c2e 100%);
+      background-size: 1000px 100%;
+      animation: shimmer 2s linear infinite;
     }
-    .stat-card:hover { border-color: rgba(0,255,136,0.4); }
 
-    /* Hidden */
-    .hidden { display: none !important; }
+    /* Toggle switch */
+    .toggle { width: 40px; height: 22px; border-radius: 999px; position: relative; transition: background 0.2s; flex-shrink: 0; }
+    .toggle input { position: absolute; opacity: 0; pointer-events: none; }
+    .toggle .knob {
+      width: 16px; height: 16px; background: #fff; border-radius: 50%;
+      position: absolute; top: 3px; left: 3px;
+      transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .toggle.on { background: #10b981; }
+    .toggle.on .knob { transform: translateX(18px); }
+    .toggle.off { background: #334155; }
+
+    /* QR glow */
+    .qr-frame {
+      position: relative;
+      padding: 14px;
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 0 0 1px rgba(16,185,129,0.2), 0 20px 60px -20px rgba(16,185,129,0.4);
+    }
+    .qr-frame::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #10b981, #059669, #10b981);
+      z-index: -1;
+      opacity: 0.6;
+      filter: blur(12px);
+    }
+
+    /* Log line */
+    .log-line { font-size: 11.5px; line-height: 1.5; padding: 6px 10px; border-left: 2px solid transparent; }
+    .log-info { border-left-color: #10b981; }
+    .log-error { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.05); }
+    .log-warn { border-left-color: #f59e0b; }
+
+    /* Chip */
+    .chip { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+
+    /* Prevent iOS zoom on input focus */
+    @media (max-width: 640px) {
+      input, select, textarea { font-size: 16px !important; }
+    }
 
     /* Modal backdrop */
     .modal-backdrop {
-      background: rgba(0,0,0,0.85);
+      background: rgba(8, 12, 20, 0.85);
       backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
     }
-
-    /* Progress bar */
-    .progress-bar { background: rgba(0,255,136,0.1); height: 2px; }
-    .progress-fill { background: var(--g); height: 100%; transition: width 0.3s; box-shadow: 0 0 8px var(--g); }
   </style>
 </head>
-<body class="grid-bg min-h-screen relative">
 
-  <div class="scanlines"></div>
+<body class="bg-ink-950 text-slate-100 min-h-screen antialiased selection:bg-emerald-500/30">
 
-  <!-- Top status bar -->
-  <div class="fixed top-0 inset-x-0 z-30 px-3 sm:px-4 py-2 flex items-center justify-between text-[10px] tracking-widest uppercase border-b border-g/20 bg-black/80 backdrop-blur-md">
-    <div class="flex items-center gap-2 sm:gap-3">
-      <div class="flex items-center gap-1.5">
-        <span id="connDot" class="w-1.5 h-1.5 rounded-full bg-neutral-600"></span>
-        <span id="connText" class="text-[10px]">OFFLINE</span>
-      </div>
-      <span class="text-g/40 hidden sm:inline">/</span>
-      <span class="text-g/60 hidden sm:inline" id="topOwner">—</span>
-    </div>
-    <div class="flex items-center gap-2 sm:gap-3">
-      <span class="text-g/60"><span id="topUptime">--:--</span></span>
-      <span class="text-g/40">/</span>
-      <span class="text-g/60"><span id="topClock">--:--:--</span></span>
-      <button id="logoutBtn" class="ml-2 text-g/60 hover:text-red-400 transition-colors" title="Logout">
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-      </button>
-    </div>
-  </div>
-
-  <!-- Main content -->
-  <main class="relative z-10 pt-14 pb-20 px-3 sm:px-4 max-w-4xl mx-auto space-y-3">
-
-    <!-- Header -->
-    <header class="flex items-center justify-between boot-in">
-      <div class="flex items-center gap-3">
-        <div class="relative">
-          <div class="w-10 h-10 rounded border border-g/40 flex items-center justify-center text-g text-lg font-bold bg-g-soft">W</div>
-          <div id="headerPulse" class="hidden absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-g glow-sm pulse-dot"></div>
+  <!-- ═══════════════════════════════════════════════════════
+       LOGIN
+       ═══════════════════════════════════════════════════════ -->
+  <div id="loginView" class="flex items-center justify-center min-h-screen p-5 animate-fade-in">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-glow mb-4">
+          <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+          </svg>
         </div>
+        <h1 class="text-2xl font-bold tracking-tight">WA Bot Dashboard</h1>
+        <p class="text-slate-400 text-sm mt-1.5">Sign in to manage your bot</p>
+      </div>
+
+      <div class="bg-ink-850 rounded-2xl p-6 border border-ink-700 shadow-card space-y-3">
         <div>
-          <h1 class="text-sm tracking-[0.2em] text-g text-glow">WA::CONSOLE</h1>
-          <p class="text-[10px] text-g/40 tracking-widest uppercase">v2.0.0 • SECURE SHELL</p>
-        </div>
-      </div>
-      <button id="installBtn" class="hidden btn-outline px-3 py-1.5 rounded text-[10px] tracking-widest uppercase">
-        ⬇ INSTALL
-      </button>
-    </header>
-
-    <!-- Skeleton -->
-    <div id="skeleton" class="space-y-3">
-      <div class="panel rounded p-5 h-32 animate-pulse"></div>
-      <div class="panel rounded p-5 h-48 animate-pulse"></div>
-    </div>
-
-    <!-- TOKEN CARD -->
-    <section id="tokenCard" class="hidden panel rounded p-5 space-y-4 boot-in">
-      <div class="corner corner-tl"></div>
-      <div class="corner corner-tr"></div>
-      <div class="corner corner-bl"></div>
-      <div class="corner corner-br"></div>
-
-      <div class="flex items-start gap-3">
-        <div class="w-8 h-8 rounded border border-g/40 bg-g-soft flex items-center justify-center text-g text-xs">🔑</div>
-        <div class="flex-1">
-          <h2 class="text-xs tracking-widest uppercase text-g">Session Token</h2>
-          <p class="text-[10px] text-g/50 mt-0.5">Paste saved token to reconnect instantly</p>
-        </div>
-      </div>
-
-      <div class="flex gap-2">
-        <div class="relative flex-1">
-          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-g text-xs select-none">$</span>
-          <input id="tokenInput" type="text" placeholder="paste token..." autocomplete="off" spellcheck="false"
-            class="input w-full pl-7 pr-3 py-2.5 rounded text-xs" />
-        </div>
-        <button id="tokenBtn" class="btn-g px-4 py-2.5 rounded text-xs">CONNECT</button>
-      </div>
-      <p class="text-[9px] text-g/40 tracking-widest uppercase"><kbd class="border border-g/30 px-1 rounded">CTRL</kbd>+<kbd class="border border-g/30 px-1 rounded">K</kbd> to focus</p>
-    </section>
-
-    <!-- PAIRING CARD -->
-    <section id="pairingCard" class="hidden panel rounded p-5 space-y-4 boot-in">
-      <div class="corner corner-tl"></div>
-      <div class="corner corner-tr"></div>
-      <div class="corner corner-bl"></div>
-      <div class="corner corner-br"></div>
-
-      <div class="flex items-start gap-3">
-        <div class="w-8 h-8 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center text-blue-400 text-xs">📱</div>
-        <div class="flex-1">
-          <h2 class="text-xs tracking-widest uppercase text-g">Pair New Device</h2>
-          <p class="text-[10px] text-g/50 mt-0.5">Phone with country code, digits only</p>
-        </div>
-      </div>
-
-      <!-- Method toggle -->
-      <div class="flex gap-1 bg-black/60 rounded p-1 border border-g/20">
-        <button data-method="code" class="methodBtn flex-1 px-3 py-1.5 rounded text-[10px] tracking-widest uppercase transition-all">📱 CODE</button>
-        <button data-method="qr" class="methodBtn flex-1 px-3 py-1.5 rounded text-[10px] tracking-widest uppercase transition-all">🔳 QR</button>
-      </div>
-
-      <div class="flex gap-2">
-        <div class="relative flex-1">
-          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-g text-xs select-none">$</span>
-          <input id="phone" type="tel" placeholder="2376XXXXXXXX" inputmode="numeric" autocomplete="off"
-            class="input w-full pl-7 pr-3 py-2.5 rounded text-sm" />
-        </div>
-        <button id="pairBtn" class="btn-g px-4 py-2.5 rounded text-xs">GENERATE</button>
-      </div>
-
-      <!-- Code display -->
-      <div id="codeBox" class="hidden space-y-3">
-        <div class="flex items-center justify-between text-[10px] tracking-widest uppercase">
-          <span class="text-g/60">→ Enter in Linked Devices</span>
-          <span class="text-amber-400">⏱ <span id="codeExpiry">--s</span></span>
-        </div>
-        <div class="flex items-center gap-2 p-1 bg-black/60 rounded border border-g/40 glow-sm">
-          <div id="codeValue" class="flex-1 py-3 px-4 text-center text-2xl text-g text-glow select-all tracking-[0.3em] font-bold"></div>
-          <button id="copyCodeBtn" class="p-3 mr-1 rounded bg-g-soft border border-g/30 text-g hover:bg-g/20 transition-colors" title="Copy">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-        </div>
-        <button id="regenBtn" class="w-full text-[10px] tracking-widest uppercase text-g/60 hover:text-g py-1 transition-colors">
-          ↻ REQUEST NEW CODE
-        </button>
-      </div>
-
-      <!-- QR display -->
-      <div id="qrBox" class="hidden text-center space-y-3">
-        <p class="text-[10px] tracking-widest uppercase text-g/60">Scan with WhatsApp → Linked Devices</p>
-        <div class="inline-block p-3 rounded bg-white">
-          <canvas id="qrCanvas" class="block"></canvas>
-        </div>
-      </div>
-
-      <p id="pairError" class="hidden text-[10px] text-red-400 tracking-wider uppercase"></p>
-    </section>
-
-    <!-- STATUS CARD -->
-    <section id="statusCard" class="hidden panel rounded p-5 space-y-4 boot-in">
-      <div class="corner corner-tl"></div>
-      <div class="corner corner-tr"></div>
-      <div class="corner corner-bl"></div>
-      <div class="corner corner-br"></div>
-
-      <!-- Header -->
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded border border-g/40 bg-g-soft flex items-center justify-center text-g text-xs">✓</div>
-          <div>
-            <h2 class="text-xs tracking-widest uppercase text-g">● Bot Online</h2>
-            <p class="text-[10px] text-g/50 mt-0.5">Connected &amp; running</p>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Username</label>
+          <div class="relative">
+            <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+            </svg>
+            <input id="username" autocomplete="username" placeholder="owner"
+              class="w-full pl-10 pr-3 py-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition placeholder-slate-500 text-[15px]" />
           </div>
         </div>
-        <div class="flex gap-1">
-          <button id="downloadSessionBtn" class="p-2 rounded border border-g/20 text-g/60 hover:text-g hover:border-g/50 transition-colors" title="Export session">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          </button>
-          <button id="refreshKeysBtn" class="p-2 rounded border border-g/20 text-g/60 hover:text-amber-400 hover:border-amber-400/50 transition-colors" title="Refresh sender keys">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-          </button>
-        </div>
-      </div>
 
-      <!-- Stats grid -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div class="stat-card rounded p-3">
-          <p class="text-[9px] tracking-widest uppercase text-g/40">Owner</p>
-          <p id="ownerJid" class="text-[11px] mt-1 truncate text-g">—</p>
-        </div>
-        <div class="stat-card rounded p-3">
-          <p class="text-[9px] tracking-widest uppercase text-g/40">Uptime</p>
-          <p id="uptime" class="text-[11px] mt-1 text-g">—</p>
-        </div>
-        <div class="stat-card rounded p-3">
-          <p class="text-[9px] tracking-widest uppercase text-g/40">Messages</p>
-          <p id="msgCount" class="text-[11px] mt-1 text-g">0</p>
-        </div>
-        <div class="stat-card rounded p-3">
-          <p class="text-[9px] tracking-widest uppercase text-g/40">Mode</p>
-          <p id="modeStat" class="text-[11px] mt-1 text-g uppercase">—</p>
-        </div>
-      </div>
-
-      <!-- Session token display -->
-      <div class="rounded bg-black/60 border border-g/20 p-3">
-        <div class="flex items-center justify-between mb-1.5">
-          <p class="text-[9px] tracking-widest uppercase text-g/40">Session Token</p>
-          <div class="flex gap-2">
-            <button id="regenTokenBtn" class="text-[9px] tracking-widest uppercase text-g/60 hover:text-amber-400 transition-colors">REGEN</button>
-            <button id="copyTokenBtn" class="text-g/60 hover:text-g transition-colors" title="Copy">
-              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
+          <div class="relative">
+            <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+            </svg>
+            <input id="password" type="password" autocomplete="current-password" placeholder="••••••••"
+              class="w-full pl-10 pr-11 py-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition placeholder-slate-500 text-[15px]" />
+            <button type="button" onclick="togglePw()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+              <svg id="pwEye" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+              </svg>
             </button>
           </div>
         </div>
-        <code id="sessionToken" class="text-[10px] text-g block truncate">—</code>
+
+        <button id="loginBtn" onclick="login()"
+          class="w-full bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 active:scale-[0.98] py-3 rounded-xl font-semibold shadow-glow transition-all flex items-center justify-center gap-2">
+          <span id="loginBtnText">Sign In</span>
+          <svg id="loginSpinner" class="w-4 h-4 animate-spin hidden" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+        </button>
+
+        <p id="loginError" class="text-red-400 text-xs text-center hidden bg-red-500/10 border border-red-500/30 rounded-lg py-2 px-3"></p>
       </div>
 
-      <!-- Settings row -->
-      <div class="grid grid-cols-2 gap-2">
-        <div class="rounded bg-black/60 border border-g/20 p-3 space-y-1">
-          <p class="text-[9px] tracking-widest uppercase text-g/40">Bot Name</p>
-          <input id="botNameInput" type="text" class="input w-full px-2 py-1 rounded text-xs" />
-        </div>
-        <div class="rounded bg-black/60 border border-g/20 p-3 space-y-1">
-          <p class="text-[9px] tracking-widest uppercase text-g/40">Prefix</p>
-          <input id="prefixInput" type="text" maxlength="2" class="input w-full px-2 py-1 rounded text-xs text-center" />
-        </div>
-      </div>
-      <button id="saveSettingsBtn" class="w-full btn-outline py-2 rounded text-[10px] tracking-widest uppercase">💾 SAVE SETTINGS</button>
+      <p class="text-center text-xs text-slate-500 mt-6">Secure · Owner-only access</p>
+    </div>
+  </div>
 
-      <!-- Mode toggle -->
-      <div class="flex items-center justify-between pt-3 border-t border-g/20">
-        <div>
-          <p class="text-xs text-g tracking-wider">MODE</p>
-          <p class="text-[10px] text-g/50" id="modeHint">—</p>
-        </div>
-        <div class="flex gap-1 bg-black/60 rounded p-1 border border-g/20">
-          <button data-mode="private" class="modeBtn px-3 py-1 rounded text-[10px] tracking-widest uppercase transition-all">PRIVATE</button>
-          <button data-mode="public" class="modeBtn px-3 py-1 rounded text-[10px] tracking-widest uppercase transition-all">PUBLIC</button>
-        </div>
-      </div>
+  <!-- ═══════════════════════════════════════════════════════
+       DASHBOARD
+       ═══════════════════════════════════════════════════════ -->
+  <div id="dashView" class="hidden min-h-screen pb-24 md:pb-0 md:pl-64">
 
-      <!-- Toggles -->
-      <div class="pt-3 border-t border-g/20 space-y-1">
-        <div class="flex items-center justify-between py-1.5">
-          <div class="flex items-center gap-2">
-            <span class="text-sm">🛡️</span>
-            <span class="text-xs text-g tracking-wider uppercase">Anti-Delete</span>
+    <!-- ══════════ SIDEBAR (desktop) ══════════ -->
+    <aside class="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-ink-900 border-r border-ink-800 z-30">
+      <div class="px-5 py-6 border-b border-ink-800">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-glow">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
           </div>
-          <button data-toggle="antidelete" class="toggleBtn toggle off"><span></span></button>
-        </div>
-        <div class="flex items-center justify-between py-1.5">
-          <div class="flex items-center gap-2">
-            <span class="text-sm">✏️</span>
-            <span class="text-xs text-g tracking-wider uppercase">Anti-Edit</span>
+          <div>
+            <div class="font-bold text-sm">WA Bot</div>
+            <div class="text-[10px] text-slate-500 uppercase tracking-wider">Dashboard</div>
           </div>
-          <button data-toggle="antiedit" class="toggleBtn toggle off"><span></span></button>
-        </div>
-        <div class="flex items-center justify-between py-1.5">
-          <div class="flex items-center gap-2">
-            <span class="text-sm">👋</span>
-            <span class="text-xs text-g tracking-wider uppercase">Welcome / Goodbye</span>
-          </div>
-          <button data-toggle="welcome" class="toggleBtn toggle off"><span></span></button>
         </div>
       </div>
 
-      <!-- Danger zone -->
-      <div class="pt-3 border-t border-g/20">
-        <p class="text-[9px] tracking-widest uppercase text-red-400/60 mb-2">DANGER ZONE</p>
-        <button id="logoutDeviceBtn" class="w-full py-2 rounded border border-red-500/40 text-red-400 text-[10px] tracking-widest uppercase hover:bg-red-500/10 transition-colors">
-          ⏻ LOG OUT WHATSAPP DEVICE
+      <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <button class="nav-item active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="connect">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>Connect</span>
+        </button>
+        <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="commands">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          <span>Commands</span>
+        </button>
+        <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="automations">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>Automations</span>
+        </button>
+        <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="storage">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2 1.5 3 3 3h10c1.5 0 3-1 3-3V7c0-2-1.5-3-3-3H7c-1.5 0-3 1-3 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M4 12h16M8 7h.01M8 17h.01"/></svg>
+          <span>Storage</span>
+        </button>
+        <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="logs">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span>Logs</span>
+        </button>
+        <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="system">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+          <span>System</span>
+        </button>
+      </nav>
+
+      <div class="p-4 border-t border-ink-800 space-y-3">
+        <div class="flex items-center justify-between text-xs">
+          <span class="text-slate-500">Status</span>
+          <span id="statusChipDesktop" class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+            <span class="text-slate-400">Offline</span>
+          </span>
+        </div>
+        <button onclick="logout()" class="w-full text-xs py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-slate-400 hover:text-white transition">Sign out</button>
+      </div>
+    </aside>
+
+    <!-- ══════════ TOP BAR (mobile) ══════════ -->
+    <header class="glass md:hidden sticky top-0 z-30 border-b border-ink-800 safe-top">
+      <div class="flex items-center justify-between px-4 py-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
+          </div>
+          <span class="font-bold text-sm">WA Bot</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="statusChipMobile" class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-ink-800 border border-ink-700">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+            <span class="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Offline</span>
+          </span>
+          <button onclick="logout()" class="p-2 rounded-lg hover:bg-ink-800 text-slate-400">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ══════════ MAIN CONTENT ══════════ -->
+    <main class="p-4 md:p-8 max-w-6xl mx-auto">
+
+      <!-- ═══════ CONNECT TAB ═══════ -->
+      <section id="tab-connect" class="tab-panel animate-slide-up">
+        <div class="md:hidden mb-5">
+          <h1 class="text-2xl font-bold tracking-tight">Connect</h1>
+          <p class="text-slate-400 text-sm mt-0.5">Link your WhatsApp account</p>
+        </div>
+        <div class="hidden md:block mb-6">
+          <h1 class="text-3xl font-bold tracking-tight">Connection</h1>
+          <p class="text-slate-400 text-sm mt-1">Link your WhatsApp account to get started</p>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-5">
+          <!-- Status / QR card -->
+          <div class="bg-ink-850 rounded-2xl border border-ink-700 p-6 shadow-card">
+            <div class="flex items-center justify-between mb-5">
+              <h2 class="font-semibold flex items-center gap-2">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-soft"></span>
+                Session
+              </h2>
+              <span id="sessionBadge" class="chip px-2 py-1 rounded-md bg-ink-800 text-slate-400 border border-ink-700">Idle</span>
+            </div>
+
+            <div class="text-center py-4">
+              <!-- QR -->
+              <div id="qrBox" class="hidden mx-auto inline-block">
+                <div class="qr-frame">
+                  <img id="qrImg" class="w-56 h-56 md:w-64 md:h-64 block" alt="QR" />
+                </div>
+                <div class="mt-4 flex items-center justify-center gap-2 text-xs text-slate-400">
+                  <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+                  </svg>
+                  <span id="qrTimer">Refreshing in 20s</span>
+                </div>
+              </div>
+
+              <!-- Connected -->
+              <div id="connectedBox" class="hidden">
+                <div class="relative inline-flex">
+                  <div class="absolute inset-0 bg-emerald-500/20 rounded-full blur-2xl"></div>
+                  <div class="relative w-24 h-24 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-glow">
+                    <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                    </svg>
+                  </div>
+                </div>
+                <p class="mt-4 text-emerald-400 font-semibold">Connected</p>
+                <p id="connectedPhone" class="text-slate-400 text-sm mt-0.5 font-mono"></p>
+              </div>
+
+              <!-- Idle -->
+              <div id="idleBox">
+                <div class="w-20 h-20 mx-auto rounded-2xl bg-ink-800 border border-ink-700 flex items-center justify-center mb-4">
+                  <svg class="w-9 h-9 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
+                  </svg>
+                </div>
+                <p id="connectHint" class="text-slate-400 text-sm">Click start to generate a QR code</p>
+              </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-2 mt-6">
+              <button onclick="startBot()" id="startBtn"
+                class="flex-1 bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 active:scale-[0.98] py-3 rounded-xl font-semibold shadow-glow transition-all flex items-center justify-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg>
+                Start Bot
+              </button>
+              <button onclick="logoutBot()"
+                class="flex-1 sm:flex-none sm:px-6 bg-ink-800 hover:bg-ink-700 border border-ink-700 active:scale-[0.98] py-3 rounded-xl font-medium transition-all">
+                Logout
+              </button>
+            </div>
+          </div>
+
+          <!-- Instructions -->
+          <div class="bg-ink-850 rounded-2xl border border-ink-700 p-6 shadow-card">
+            <h2 class="font-semibold mb-5 flex items-center gap-2">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              How to link
+            </h2>
+
+            <ol class="space-y-4">
+              <li class="flex gap-4">
+                <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">1</div>
+                <div class="pt-0.5">
+                  <p class="font-medium text-sm">Open WhatsApp on your phone</p>
+                  <p class="text-xs text-slate-400 mt-0.5">Make sure you're on the account you want to link</p>
+                </div>
+              </li>
+              <li class="flex gap-4">
+                <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">2</div>
+                <div class="pt-0.5">
+                  <p class="font-medium text-sm">Go to Settings → Linked Devices</p>
+                  <p class="text-xs text-slate-400 mt-0.5">Android: ⋮ menu · iOS: bottom tabs</p>
+                </div>
+              </li>
+              <li class="flex gap-4">
+                <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">3</div>
+                <div class="pt-0.5">
+                  <p class="font-medium text-sm">Tap "Link a Device"</p>
+                  <p class="text-xs text-slate-400 mt-0.5">Approve with your phone PIN if asked</p>
+                </div>
+              </li>
+              <li class="flex gap-4">
+                <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">4</div>
+                <div class="pt-0.5">
+                  <p class="font-medium text-sm">Point at the QR code</p>
+                  <p class="text-xs text-slate-400 mt-0.5">Auto-refreshes every ~20 seconds</p>
+                </div>
+              </li>
+            </ol>
+
+            <div class="mt-6 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex gap-3">
+              <svg class="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3l-6.93-12a2 2 0 00-3.48 0L2.33 16a2 2 0 001.74 3z"/></svg>
+              <p class="text-xs text-amber-200 leading-relaxed">
+                <b>Tip:</b> Keep this tab open during linking. If it closes, the QR will still refresh — just come back and rescan.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════ COMMANDS TAB ═══════ -->
+      <section id="tab-commands" class="tab-panel hidden">
+        <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Commands</h1>
+            <p class="text-slate-400 text-sm mt-0.5">Toggle which commands the bot responds to</p>
+          </div>
+          <button onclick="loadCommands()" class="text-xs bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg font-medium flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Refresh
+          </button>
+        </div>
+        <div id="cmdList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+      </section>
+
+      <!-- ═══════ AUTOMATIONS TAB ═══════ -->
+      <section id="tab-automations" class="tab-panel hidden">
+        <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Automations</h1>
+            <p class="text-slate-400 text-sm mt-0.5">Auto-reply rules for incoming messages</p>
+          </div>
+          <button onclick="openAutoModal()" class="text-xs bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 px-3.5 py-2 rounded-lg font-semibold shadow-glow flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+            New Rule
+          </button>
+        </div>
+        <div id="autoList" class="space-y-2.5"></div>
+      </section>
+
+      <!-- ═══════ STORAGE TAB ═══════ -->
+      <section id="tab-storage" class="tab-panel hidden">
+        <div class="mb-5">
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Storage</h1>
+          <p class="text-slate-400 text-sm mt-0.5">Persisted bot data</p>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-2 mb-4">
+          <select id="storageFilter" onchange="loadStorage()"
+            class="bg-ink-800 border border-ink-700 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-500">
+            <option value="">All types</option>
+            <option value="contact">Contacts</option>
+            <option value="group">Groups</option>
+            <option value="note">Notes</option>
+            <option value="anti">Anti-config</option>
+          </select>
+          <input id="storageSearch" placeholder="Search key..." oninput="renderStorage()"
+            class="flex-1 bg-ink-800 border border-ink-700 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-500 placeholder-slate-500" />
+          <button onclick="loadStorage()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-4 py-2.5 rounded-lg text-sm">Refresh</button>
+        </div>
+
+        <div id="storageList" class="space-y-2"></div>
+      </section>
+
+      <!-- ═══════ LOGS TAB ═══════ -->
+      <section id="tab-logs" class="tab-panel hidden">
+        <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Logs</h1>
+            <p class="text-slate-400 text-sm mt-0.5">Live activity stream</p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2 mb-4">
+          <button onclick="loadLogs()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg text-xs">Refresh</button>
+          <button onclick="clearLogsUI()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg text-xs">Clear</button>
+          <label class="flex items-center gap-2 text-xs bg-ink-800 border border-ink-700 px-3 py-2 rounded-lg cursor-pointer">
+            <input type="checkbox" id="liveLogs" checked class="accent-emerald-500"> Live tail
+          </label>
+        </div>
+
+        <div id="logList" class="bg-ink-950 rounded-xl border border-ink-800 font-mono max-h-[65vh] overflow-y-auto"></div>
+      </section>
+
+      <!-- ═══════ SYSTEM TAB ═══════ -->
+      <section id="tab-system" class="tab-panel hidden">
+        <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">System</h1>
+            <p class="text-slate-400 text-sm mt-0.5">Runtime & resource stats</p>
+          </div>
+          <button onclick="loadSystem()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg text-xs">Refresh</button>
+        </div>
+        <div id="systemInfo" class="grid grid-cols-2 lg:grid-cols-3 gap-3"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       BOTTOM NAV (mobile)
+       ═══════════════════════════════════════════════════════ -->
+  <nav id="mobileNav" class="hidden md:hidden fixed bottom-0 left-0 right-0 glass border-t border-ink-800 safe-bottom z-40">
+    <div class="grid grid-cols-6 px-2 py-2">
+      <button class="nav-item-mobile active flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="connect">
+        <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <span>Link</span>
+      </button>
+      <button class="nav-item-mobile flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="commands">
+        <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        </div>
+        <span>Cmd</span>
+      </button>
+      <button class="nav-item-mobile flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="automations">
+        <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <span>Auto</span>
+      </button>
+      <button class="nav-item-mobile flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="storage">
+        <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2 1.5 3 3 3h10c1.5 0 3-1 3-3V7c0-2-1.5-3-3-3H7c-1.5 0-3 1-3 3z"/></svg>
+        </div>
+        <span>Data</span>
+      </button>
+      <button class="nav-item-mobile flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="logs">
+        <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        </div>
+        <span>Logs</span>
+      </button>
+      <button class="nav-item-mobile flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="system">
+        <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        </div>
+        <span>Sys</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════════════
+       AUTOMATION MODAL
+       ═══════════════════════════════════════════════════════ -->
+  <div id="autoModal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-end md:items-center justify-center p-0 md:p-4 animate-fade-in">
+    <div class="bg-ink-850 w-full md:max-w-lg md:rounded-2xl rounded-t-3xl border-t border-x md:border border-ink-700 shadow-2xl max-h-[90vh] overflow-y-auto animate-slide-up">
+      <div class="sticky top-0 bg-ink-850 border-b border-ink-700 px-5 py-4 flex items-center justify-between z-10">
+        <h3 class="text-lg font-semibold">New Automation</h3>
+        <button onclick="closeAutoModal()" class="p-1.5 rounded-lg hover:bg-ink-800 text-slate-400">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
-    </section>
 
-    <!-- TERMINAL LOG -->
-    <section id="logCard" class="hidden panel rounded overflow-hidden boot-in">
-      <div class="corner corner-tl"></div>
-      <div class="corner corner-tr"></div>
-      <div class="corner corner-bl"></div>
-      <div class="corner corner-br"></div>
-
-      <div class="flex items-center justify-between px-4 py-2.5 border-b border-g/20">
-        <div class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 rounded-full bg-g pulse-dot"></span>
-          <h3 class="text-[10px] tracking-widest uppercase text-g">Activity Stream</h3>
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Trigger type</label>
+          <select id="autoTriggerType" class="w-full p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm">
+            <option value="keyword">Keyword (contains)</option>
+            <option value="exact">Exact match</option>
+            <option value="regex">Regex pattern</option>
+            <option value="from">From specific number</option>
+          </select>
         </div>
-        <button id="clearLogBtn" class="text-[9px] tracking-widest uppercase text-g/50 hover:text-g transition-colors">CLEAR</button>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Trigger value</label>
+          <input id="autoTriggerValue" placeholder="e.g. hello" class="w-full p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm placeholder-slate-500" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Action</label>
+          <select id="autoActionType" class="w-full p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm">
+            <option value="reply">Reply with text</option>
+            <option value="react">React with emoji</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Action value</label>
+          <input id="autoActionValue" placeholder="e.g. Hi there! 👋" class="w-full p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm placeholder-slate-500" />
+        </div>
       </div>
-      <div id="logList" class="max-h-64 overflow-y-auto p-3 space-y-1 text-[10px] font-mono leading-relaxed">
-        <p class="text-g/30 text-center py-4 tracking-widest uppercase">[ no activity ]</p>
-      </div>
-    </section>
 
-    <!-- Footer -->
-    <footer class="text-center text-[9px] tracking-[0.2em] uppercase text-g/30 py-3 flex items-center justify-center gap-2">
-      <span class="w-1 h-1 rounded-full bg-g pulse-dot"></span>
-      <span>AUTO-REFRESH 3S</span>
-      <span class="text-g/20">•</span>
-      <span id="bottomClock">--:--:--</span>
-    </footer>
-  </main>
-
-  <!-- TOASTS -->
-  <div id="toasts" class="fixed top-14 right-3 z-50 space-y-2 w-72 max-w-[calc(100vw-1.5rem)]"></div>
-
-  <!-- MODAL -->
-  <div id="modal" class="hidden fixed inset-0 z-40 items-center justify-center p-4 modal-backdrop">
-    <div class="panel rounded p-5 max-w-sm w-full boot-in">
-      <div class="corner corner-tl"></div>
-      <div class="corner corner-tr"></div>
-      <div class="corner corner-bl"></div>
-      <div class="corner corner-br"></div>
-      <h3 id="modalTitle" class="text-xs tracking-widest uppercase text-g mb-2">CONFIRM</h3>
-      <p id="modalBody" class="text-xs text-g/70 mb-5 leading-relaxed"></p>
-      <div class="flex gap-2 justify-end">
-        <button id="modalCancel" class="px-4 py-2 rounded text-[10px] tracking-widest uppercase text-g/60 hover:text-g border border-g/20 hover:border-g/50 transition-colors">CANCEL</button>
-        <button id="modalConfirm" class="btn-g px-4 py-2 rounded text-[10px] tracking-widest uppercase">CONFIRM</button>
+      <div class="sticky bottom-0 bg-ink-850 border-t border-ink-700 p-4 flex gap-2 safe-bottom">
+        <button onclick="closeAutoModal()" class="flex-1 py-3 rounded-xl bg-ink-800 hover:bg-ink-700 border border-ink-700 font-medium">Cancel</button>
+        <button onclick="saveAuto()" class="flex-1 py-3 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 font-semibold shadow-glow">Save Rule</button>
       </div>
     </div>
   </div>
 
-  <script>
-    // ============================================================================
-    // HELPERS
-    // ============================================================================
-    const $ = (id) => document.getElementById(id);
-    const API = {
-      async post(url, body) {
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: body ? JSON.stringify(body) : undefined,
-        });
-        if (r.status === 401) { window.location.href = '/login'; throw new Error('Unauthorized'); }
-        return r.json();
-      },
-      async get(url) {
-        const r = await fetch(url);
-        if (r.status === 401) { window.location.href = '/login'; throw new Error('Unauthorized'); }
-        return r.json();
-      },
+  <!-- ═══════════════════════════════════════════════════════
+       TOAST
+       ═══════════════════════════════════════════════════════ -->
+  <div id="toast" class="hidden fixed z-[60] left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 bottom-24 md:bottom-6 px-4 py-3 rounded-xl border shadow-2xl text-sm font-medium flex items-center gap-2.5 animate-slide-up max-w-[calc(100vw-2rem)]"></div>
+
+  <!-- Loading overlay for initial dashboard load -->
+  <div id="bootOverlay" class="hidden fixed inset-0 bg-ink-950 z-50 items-center justify-center">
+    <div class="text-center">
+      <div class="w-12 h-12 mx-auto rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center mb-3 animate-pulse-soft">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      </div>
+      <p class="text-slate-400 text-sm">Loading dashboard…</p>
+    </div>
+  </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   UTILITIES
+   ═══════════════════════════════════════════════════════════ */
+const $ = (id) => document.getElementById(id);
+const socket = io({ transports: ['websocket', 'polling'] });
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+function toast(msg, type = 'info') {
+  const t = $('toast');
+  const icons = {
+    success: '<svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>',
+    error: '<svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>',
+    info: '<svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+  };
+  const colors = {
+    success: 'bg-emerald-950 border-emerald-700 text-emerald-100',
+    error: 'bg-red-950 border-red-700 text-red-100',
+    info: 'bg-ink-850 border-ink-700 text-slate-100',
+  };
+  t.className = `fixed z-[60] left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 bottom-24 md:bottom-6 px-4 py-3 rounded-xl border shadow-2xl text-sm font-medium flex items-center gap-2.5 animate-slide-up max-w-[calc(100vw-2rem)] ${colors[type]}`;
+  t.innerHTML = `${icons[type]}<span>${escapeHtml(msg)}</span>`;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.add('hidden'), 3200);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function togglePw() {
+  const p = $('password');
+  p.type = p.type === 'password' ? 'text' : 'password';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   AUTH
+   ═══════════════════════════════════════════════════════════ */
+async function login() {
+  const username = $('username').value.trim();
+  const password = $('password').value;
+
+  if (!username || !password) {
+    const e = $('loginError');
+    e.textContent = 'Please enter both fields';
+    e.classList.remove('hidden');
+    return;
+  }
+
+  const btn = $('loginBtn');
+  const txt = $('loginBtnText');
+  const sp = $('loginSpinner');
+  btn.disabled = true;
+  txt.textContent = 'Signing in…';
+  sp.classList.remove('hidden');
+  $('loginError').classList.add('hidden');
+
+  try {
+    await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    await bootDashboard();
+  } catch (e) {
+    const er = $('loginError');
+    er.textContent = e.message;
+    er.classList.remove('hidden');
+    btn.disabled = false;
+    txt.textContent = 'Sign In';
+    sp.classList.add('hidden');
+  }
+}
+
+$('password')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') login();
+});
+
+async function logout() {
+  try { await api('/api/logout', { method: 'POST' }); } catch {}
+  location.reload();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DASHBOARD BOOT
+   ═══════════════════════════════════════════════════════════ */
+async function bootDashboard() {
+  $('bootOverlay').classList.remove('hidden');
+  $('bootOverlay').classList.add('flex');
+  $('loginView').classList.add('hidden');
+  $('dashView').classList.remove('hidden');
+  $('mobileNav').classList.remove('hidden');
+
+  await Promise.all([
+    refreshStatus().catch(() => {}),
+    loadCommands().catch(() => {}),
+  ]);
+  $('bootOverlay').classList.add('hidden');
+  $('bootOverlay').classList.remove('flex');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TABS
+   ═══════════════════════════════════════════════════════════ */
+function switchTab(tab) {
+  document.querySelectorAll('.tab-panel').forEach((p) => p.classList.add('hidden'));
+  const panel = $('tab-' + tab);
+  if (panel) {
+    panel.classList.remove('hidden');
+    panel.classList.add('animate-slide-up');
+  }
+
+  document.querySelectorAll('.nav-item').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll('.nav-item-mobile').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+
+  if (tab === 'storage') loadStorage();
+  if (tab === 'logs') loadLogs();
+  if (tab === 'automations') loadAutomations();
+  if (tab === 'system') loadSystem();
+}
+
+document.querySelectorAll('.nav-item, .nav-item-mobile').forEach((btn) => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+/* ═══════════════════════════════════════════════════════════
+   STATUS
+   ═══════════════════════════════════════════════════════════ */
+let lastStatus = 'disconnected';
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    if (s.status !== lastStatus) {
+      lastStatus = s.status;
+      setStatus(s.status, s.phone);
+    }
+  } catch {}
+}
+
+function setStatus(status, phone) {
+  // Chips
+  const chipColors = {
+    connected: 'emerald',
+    qr: 'yellow',
+    reconnecting: 'orange',
+    disconnected: 'slate',
+  };
+  const color = chipColors[status] || 'slate';
+
+  const mkChip = (el) => {
+    if (!el) return;
+    const dotColors = {
+      emerald: 'bg-emerald-400',
+      yellow: 'bg-yellow-400 animate-pulse-soft',
+      orange: 'bg-orange-400 animate-pulse-soft',
+      slate: 'bg-slate-500',
     };
+    el.innerHTML = `
+      <span class="w-1.5 h-1.5 rounded-full ${dotColors[color]}"></span>
+      <span class="text-[10px] font-medium text-${color}-400 uppercase tracking-wider">${status}</span>
+    `;
+  };
+  mkChip($('statusChipMobile'));
+  mkChip($('statusChipDesktop'));
 
-    // ============================================================================
-    // TOASTS
-    // ============================================================================
-    function toast(msg, type = 'info', duration = 3200) {
-      const el = document.createElement('div');
-      el.className = `toast rounded px-3 py-2.5 text-[11px] flex items-start gap-2 ${type === 'error' ? 'error' : type === 'warn' ? 'warn' : ''}`;
-      const icons = { info: 'ℹ', success: '✓', error: '✕', warn: '⚠' };
-      el.innerHTML = `
-        <span class="text-g font-bold">${icons[type] || 'ℹ'}</span>
-        <span class="flex-1 text-g/90 leading-relaxed">${msg}</span>
-        <button class="text-g/50 hover:text-g" onclick="this.parentElement.remove()">✕</button>
-      `;
-      $('toasts').appendChild(el);
-      setTimeout(() => {
-        el.style.transition = 'all 0.3s';
-        el.style.opacity = '0';
-        el.style.transform = 'translateX(20px)';
-        setTimeout(() => el.remove(), 300);
-      }, duration);
-    }
+  // Session badge
+  const badge = $('sessionBadge');
+  const badgeMap = {
+    connected: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    qr: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+    reconnecting: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
+    disconnected: 'bg-ink-800 text-slate-400 border-ink-700',
+  };
+  badge.className = `chip px-2 py-1 rounded-md border ${badgeMap[status] || badgeMap.disconnected}`;
+  badge.textContent = status;
 
-    // ============================================================================
-    // MODAL
-    // ============================================================================
-    function confirmModal(title, body) {
-      return new Promise(resolve => {
-        $('modalTitle').textContent = title;
-        $('modalBody').textContent = body;
-        $('modal').classList.remove('hidden');
-        $('modal').classList.add('flex');
-        const cleanup = (v) => {
-          $('modal').classList.add('hidden');
-          $('modal').classList.remove('flex');
-          $('modalConfirm').onclick = null;
-          $('modalCancel').onclick = null;
-          resolve(v);
-        };
-        $('modalConfirm').onclick = () => cleanup(true);
-        $('modalCancel').onclick = () => cleanup(false);
-      });
-    }
+  // Panels
+  const qrBox = $('qrBox');
+  const connectedBox = $('connectedBox');
+  const idleBox = $('idleBox');
+  const hint = $('connectHint');
 
-    // ============================================================================
-    // STATE
-    // ============================================================================
-    let currentMode = 'private';
-    let pairMethod = 'code';
-    let lastPairingCode = null;
-    let codeExpiresAt = 0;
-    let codeTimer = null;
-    const toggleState = { antidelete: false, antiedit: false, welcome: false };
-    let loadedSettings = false;
+  if (status === 'connected') {
+    qrBox.classList.add('hidden');
+    idleBox.classList.add('hidden');
+    connectedBox.classList.remove('hidden');
+    $('connectedPhone').textContent = phone || '';
+    hint.textContent = '';
+  } else if (status === 'qr') {
+    connectedBox.classList.add('hidden');
+    idleBox.classList.add('hidden');
+  } else {
+    connectedBox.classList.add('hidden');
+    qrBox.classList.add('hidden');
+    idleBox.classList.remove('hidden');
+    hint.textContent = status === 'reconnecting'
+      ? 'Reconnecting to WhatsApp…'
+      : 'Click start to generate a QR code';
+  }
+}
 
-    // ============================================================================
-    // LOG
-    // ============================================================================
-    const logEntries = [];
-    function logEvent(msg, type = 'info') {
-      logEntries.unshift({ msg, type, t: Date.now() });
-      if (logEntries.length > 50) logEntries.pop();
-      renderLog();
-    }
-    function renderLog() {
-      const list = $('logList');
-      if (!logEntries.length) {
-        list.innerHTML = '<p class="text-g/30 text-center py-4 tracking-widest uppercase">[ no activity ]</p>';
-        return;
-      }
-      const colors = { info: 'text-g/60', success: 'text-g', error: 'text-red-400', warn: 'text-amber-400' };
-      list.innerHTML = logEntries.map(e => {
-        const time = new Date(e.t).toTimeString().slice(0, 8);
-        const tag = { info: 'INF', success: 'OK ', error: 'ERR', warn: 'WRN' }[e.type] || 'INF';
-        const color = colors[e.type] || 'text-g/60';
-        return `<div class="flex gap-2 px-1 py-0.5 hover:bg-g/5 rounded transition-colors">
-          <span class="text-g/30">${time}</span>
-          <span class="${color}">[${tag}]</span>
-          <span class="${color} flex-1">${escapeHtml(e.msg)}</span>
+/* ═══════════════════════════════════════════════════════════
+   BOT CONTROL
+   ═══════════════════════════════════════════════════════════ */
+async function startBot() {
+  const btn = $('startBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg> Starting…';
+
+  try {
+    await api('/api/bot/start', { method: 'POST' });
+    toast('Bot starting — QR incoming', 'info');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg> Start Bot';
+  }
+}
+
+async function logoutBot() {
+  if (!confirm('Logout WhatsApp session? You will need to rescan the QR.')) return;
+  try {
+    await api('/api/bot/logout', { method: 'POST' });
+    toast('Logged out from WhatsApp', 'success');
+    setStatus('disconnected');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   COMMANDS
+   ═══════════════════════════════════════════════════════════ */
+async function loadCommands() {
+  try {
+    const cmds = await api('/api/commands');
+    const list = $('cmdList');
+    if (!cmds.length) {
+      list.innerHTML = `
+        <div class="col-span-full bg-ink-850 border border-ink-700 rounded-xl p-6 text-center">
+          <p class="text-slate-400 text-sm">No commands registered yet.</p>
+          <p class="text-slate-500 text-xs mt-1">The bot needs to be started at least once to sync.</p>
         </div>`;
-      }).join('');
+      return;
     }
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
+    list.innerHTML = cmds.map((c) => `
+      <div class="bg-ink-850 border border-ink-700 rounded-xl p-4 flex items-center justify-between hover-lift">
+        <div class="min-w-0">
+          <div class="font-mono text-sm text-emerald-400 truncate">.${escapeHtml(c.command)}</div>
+          <div class="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">${c.enabled ? 'Active' : 'Disabled'}</div>
+        </div>
+        <label class="toggle ${c.enabled ? 'on' : 'off'}">
+          <input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCmd('${c.command}', this.checked, this)">
+          <span class="knob"></span>
+        </label>
+      </div>
+    `).join('');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
 
-    // ============================================================================
-    // UI HELPERS
-    // ============================================================================
-    function fmtUptime(s) {
-      if (s < 60) return s + 's';
-      if (s < 3600) return Math.floor(s / 60) + 'm';
-      const h = Math.floor(s / 3600);
-      const d = Math.floor(h / 24);
-      if (d > 0) return `${d}d ${h % 24}h`;
-      return `${h}h ${Math.floor((s % 3600) / 60)}m`;
-    }
-
-    function setModeUI(mode) {
-      currentMode = mode;
-      document.querySelectorAll('.modeBtn').forEach(btn => {
-        const active = btn.dataset.mode === mode;
-        btn.className = 'modeBtn px-3 py-1 rounded text-[10px] tracking-widest uppercase transition-all ' +
-          (active ? 'bg-g text-black font-bold glow-sm' : 'text-g/60 hover:text-g');
-      });
-      $('modeHint').textContent = mode === 'private' ? 'Only responds to owner' : 'Responds to everyone';
-    }
-
-    function setToggleUI(key, val) {
-      toggleState[key] = val;
-      document.querySelectorAll('.toggleBtn').forEach(btn => {
-        if (btn.dataset.toggle !== key) return;
-        btn.className = 'toggleBtn toggle ' + (val ? 'on' : 'off');
-      });
-    }
-
-    function setMethodUI(method) {
-      pairMethod = method;
-      document.querySelectorAll('.methodBtn').forEach(btn => {
-        const active = btn.dataset.method === method;
-        btn.className = 'methodBtn flex-1 px-3 py-1.5 rounded text-[10px] tracking-widest uppercase transition-all ' +
-          (active ? 'bg-g text-black font-bold' : 'text-g/60 hover:text-g');
-      });
-      if (method === 'qr') {
-        $('codeBox').classList.add('hidden');
-      } else {
-        $('qrBox').classList.add('hidden');
-      }
-    }
-
-    function showCard(id) {
-      ['tokenCard', 'pairingCard', 'statusCard', 'logCard'].forEach(c => {
-        $(c).classList.toggle('hidden', c !== id);
-      });
-    }
-
-    function startCodeExpiry(seconds = 60) {
-      codeExpiresAt = Date.now() + seconds * 1000;
-      if (codeTimer) clearInterval(codeTimer);
-      const tick = () => {
-        const left = Math.max(0, Math.floor((codeExpiresAt - Date.now()) / 1000));
-        $('codeExpiry').textContent = left > 0 ? `${left}s` : 'expired';
-        if (left === 0 && codeTimer) { clearInterval(codeTimer); codeTimer = null; }
-      };
-      tick();
-      codeTimer = setInterval(tick, 1000);
-    }
-
-    // ============================================================================
-    // REFRESH
-    // ============================================================================
-    let consecutiveErrors = 0;
-    async function refresh() {
-      try {
-        const r = await API.get('/api/status');
-        consecutiveErrors = 0;
-        $('skeleton').classList.add('hidden');
-
-        $('topOwner').textContent = r.ownerNumber || '—';
-        $('topUptime').textContent = fmtUptime(r.uptime);
-
-        if (r.connected) {
-          $('connDot').className = 'w-1.5 h-1.5 rounded-full bg-g glow-sm pulse-dot';
-          $('connText').textContent = 'ONLINE';
-          $('headerPulse').classList.remove('hidden');
-          showCard('statusCard');
-
-          $('ownerJid').textContent = (r.ownerNumber || '—');
-          $('uptime').textContent = fmtUptime(r.uptime);
-          $('msgCount').textContent = r.msgCount || 0;
-          $('modeStat').textContent = (r.mode || '—').toUpperCase();
-          $('sessionToken').textContent = r.sessionToken || 'not generated';
-
-          setModeUI(r.mode);
-          setToggleUI('antidelete', r.antidelete);
-          setToggleUI('antiedit', r.antiedit);
-          setToggleUI('welcome', r.welcome);
-
-          if (!loadedSettings) {
-            $('botNameInput').value = r.botName || 'WA Bot';
-            $('prefixInput').value = r.prefix || '!';
-            loadedSettings = true;
-          }
-        } else {
-          $('connDot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
-          $('connText').textContent = 'OFFLINE';
-          $('headerPulse').classList.add('hidden');
-
-          if (r.sessionToken) showCard('tokenCard');
-          else showCard('pairingCard');
-
-          if (r.pairingCode) {
-            if (r.pairingCode !== lastPairingCode) {
-              lastPairingCode = r.pairingCode;
-              logEvent(`Code: ${r.pairingCode}`, 'success');
-              startCodeExpiry(60);
-            }
-            $('codeBox').classList.remove('hidden');
-            $('codeValue').textContent = r.pairingCode;
-          }
-        }
-      } catch (e) {
-        consecutiveErrors++;
-        if (consecutiveErrors === 1) {
-          logEvent('Status fetch failed', 'error');
-        }
-      }
-    }
-
-    // ============================================================================
-    // ACTIONS
-    // ============================================================================
-    async function connectToken() {
-      const token = $('tokenInput').value.trim();
-      if (!token) { toast('Enter a token', 'warn'); return; }
-      const btn = $('tokenBtn');
-      btn.disabled = true; btn.textContent = '...';
-      try {
-        const r = await API.post('/api/token/import', { token });
-        if (r.ok) {
-          toast(r.message || 'Token accepted', 'success');
-          logEvent('Token imported', 'success');
-          $('tokenInput').value = '';
-          setTimeout(refresh, 500);
-        } else {
-          toast(r.error || 'Invalid token', 'error');
-        }
-      } catch (e) { toast('Network error', 'error'); }
-      finally { btn.disabled = false; btn.textContent = 'CONNECT'; }
-    }
-
-    async function pairDevice(force = true) {
-      const phone = $('phone').value.trim();
-      if (!phone) { toast('Enter phone number', 'warn'); return; }
-      const btn = $('pairBtn');
-      btn.disabled = true; btn.textContent = '...';
-      $('pairError').classList.add('hidden');
-      try {
-        const r = await API.post('/api/pair', { phone, force });
-        if (r.code) {
-          $('codeBox').classList.remove('hidden');
-          $('codeValue').textContent = r.code;
-          lastPairingCode = r.code;
-          startCodeExpiry(60);
-          toast('Code generated', 'success');
-          logEvent(`Code for ${phone}`, 'success');
-        } else {
-          $('pairError').textContent = r.error || 'Failed';
-          $('pairError').classList.remove('hidden');
-          toast(r.error || 'Pairing failed', 'error');
-        }
-      } catch (e) { toast('Network error', 'error'); }
-      finally { btn.disabled = false; btn.textContent = 'GENERATE'; }
-    }
-
-    async function copyText(text, label = 'Copy') {
-      try {
-        await navigator.clipboard.writeText(text);
-        toast('Copied', 'success', 1500);
-      } catch (e) { toast('Copy failed', 'error'); }
-    }
-
-    // ============================================================================
-    // EVENTS
-    // ============================================================================
-    $('tokenBtn').addEventListener('click', connectToken);
-    $('tokenInput').addEventListener('keydown', e => { if (e.key === 'Enter') connectToken(); });
-
-    $('pairBtn').addEventListener('click', () => pairDevice(true));
-    $('phone').addEventListener('keydown', e => { if (e.key === 'Enter') pairDevice(true); });
-
-    $('regenBtn').addEventListener('click', async () => {
-      const ok = await confirmModal('NEW CODE?', 'This invalidates the current code.');
-      if (ok) pairDevice(true);
+async function toggleCmd(name, enabled, input) {
+  const label = input.closest('.toggle');
+  label.className = `toggle ${enabled ? 'on' : 'off'}`;
+  try {
+    await api('/api/commands/' + name, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
     });
+  } catch (e) {
+    toast(e.message, 'error');
+    input.checked = !enabled;
+    label.className = `toggle ${!enabled ? 'on' : 'off'}`;
+  }
+}
 
-    $('copyCodeBtn').addEventListener('click', () => {
-      const code = $('codeValue').textContent;
-      if (code) copyText(code.replace(/-/g, ''));
-    });
-
-    $('copyTokenBtn').addEventListener('click', () => {
-      const t = $('sessionToken').textContent;
-      if (t && t !== '—' && t !== 'not generated') copyText(t);
-    });
-
-    $('downloadSessionBtn').addEventListener('click', () => {
-      window.location.href = '/api/session/export';
-      logEvent('Session exported', 'info');
-    });
-
-    $('refreshKeysBtn').addEventListener('click', async () => {
-      const ok = await confirmModal('REFRESH KEYS?', 'Restarts bot & clears sender-key-memory. Fixes "Waiting for message".');
-      if (!ok) return;
-      try {
-        const r = await API.post('/api/session/refresh');
-        toast(r.message || 'Restarted', 'success');
-        logEvent('Keys refreshed', 'warn');
-        refresh();
-      } catch (e) { toast('Failed: ' + e.message, 'error'); }
-    });
-
-    $('regenTokenBtn').addEventListener('click', async () => {
-      const ok = await confirmModal('REGENERATE TOKEN?', 'Old token stops working.');
-      if (!ok) return;
-      const r = await API.post('/api/token/regenerate');
-      if (r.token) {
-        $('sessionToken').textContent = r.token;
-        toast('New token', 'success');
-        logEvent('Token regenerated', 'warn');
-      }
-    });
-
-    $('saveSettingsBtn').addEventListener('click', async () => {
-      const botName = $('botNameInput').value.trim();
-      const prefix = $('prefixInput').value.trim();
-      const r = await API.post('/api/settings', { botName, prefix });
-      if (r.ok) {
-        toast('Settings saved', 'success');
-        logEvent(`Settings: ${r.botName} / ${r.prefix}`, 'info');
-      }
-    });
-
-    $('clearLogBtn').addEventListener('click', () => {
-      logEntries.length = 0;
-      renderLog();
-    });
-
-    $('logoutBtn').addEventListener('click', async () => {
-      const ok = await confirmModal('LOG OUT?', 'You will need your password again.');
-      if (!ok) return;
-      await API.post('/api/logout');
-      window.location.href = '/login';
-    });
-
-    $('logoutDeviceBtn').addEventListener('click', async () => {
-      const ok = await confirmModal('UNLINK WHATSAPP?', 'This logs the bot out from your WhatsApp. You will need to re-pair.');
-      if (!ok) return;
-      const r = await API.post('/api/logout-device');
-      if (r.ok) {
-        toast('Device unlinked', 'warn');
-        setTimeout(() => window.location.reload(), 1000);
-      } else {
-        toast(r.error || 'Failed', 'error');
-      }
-    });
-
-    document.querySelectorAll('.modeBtn').forEach(btn => btn.addEventListener('click', async () => {
-      const mode = btn.dataset.mode;
-      if (mode === currentMode) return;
-      setModeUI(mode);
-      await API.post('/api/mode', { mode });
-      toast(`Mode: ${mode}`, 'success');
-      logEvent(`Mode → ${mode}`, 'info');
-    }));
-
-    document.querySelectorAll('.toggleBtn').forEach(btn => btn.addEventListener('click', async () => {
-      const key = btn.dataset.toggle;
-      const next = !toggleState[key];
-      setToggleUI(key, next);
-      await API.post('/api/toggle', { key, value: next });
-      toast(`${key}: ${next ? 'ON' : 'OFF'}`, next ? 'success' : 'info', 1800);
-      logEvent(`${key} → ${next ? 'on' : 'off'}`, 'info');
-    }));
-
-    document.querySelectorAll('.methodBtn').forEach(btn => btn.addEventListener('click', () => setMethodUI(btn.dataset.method)));
-
-    document.addEventListener('keydown', e => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); $('tokenInput')?.focus(); }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'p') { e.preventDefault(); $('phone')?.focus(); }
-      if (e.key === 'Escape') {
-        $('modal').classList.add('hidden');
-        $('modal').classList.remove('flex');
-      }
-    });
-
-    // Clock
-    function tickClock() {
-      const t = new Date().toTimeString().slice(0, 8);
-      $('topClock').textContent = t;
-      $('bottomClock').textContent = t;
+/* ═══════════════════════════════════════════════════════════
+   AUTOMATIONS
+   ═══════════════════════════════════════════════════════════ */
+async function loadAutomations() {
+  try {
+    const rules = await api('/api/automations');
+    const list = $('autoList');
+    if (!rules.length) {
+      list.innerHTML = `
+        <div class="bg-ink-850 border border-dashed border-ink-700 rounded-xl p-8 text-center">
+          <svg class="w-10 h-10 mx-auto text-slate-600 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <p class="text-slate-400 text-sm font-medium">No rules yet</p>
+          <p class="text-slate-500 text-xs mt-1">Create your first auto-reply rule</p>
+        </div>`;
+      return;
     }
-    tickClock();
-    setInterval(tickClock, 1000);
+    list.innerHTML = rules.map((r) => `
+      <div class="bg-ink-850 border border-ink-700 rounded-xl p-4 hover-lift">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="text-[9px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">${escapeHtml(r.trigger.type)}</span>
+              <span class="font-mono text-sm text-slate-200 truncate">${escapeHtml(r.trigger.value)}</span>
+            </div>
+            <div class="flex items-start gap-2 text-xs text-slate-400">
+              <svg class="w-3 h-3 mt-0.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+              <span class="truncate">${escapeHtml(r.action.text || r.action.emoji || '')}</span>
+            </div>
+          </div>
+          <label class="toggle ${r.enabled ? 'on' : 'off'} mt-0.5">
+            <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleAuto(${r.id}, this.checked, this)">
+            <span class="knob"></span>
+          </label>
+        </div>
+        <div class="mt-3 pt-3 border-t border-ink-800 flex justify-end">
+          <button onclick="deleteAuto(${r.id})" class="text-[11px] text-red-400 hover:text-red-300 flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg>
+            Delete
+          </button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
 
-    // ============================================================================
-    // PWA INSTALL
-    // ============================================================================
-    let deferredPrompt;
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      $('installBtn').classList.remove('hidden');
-    });
-    $('installBtn').addEventListener('click', async () => {
-      if (!deferredPrompt) return;
-      deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      $('installBtn').classList.add('hidden');
-    });
+function openAutoModal() {
+  $('autoModal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+function closeAutoModal() {
+  $('autoModal').classList.add('hidden');
+  document.body.style.overflow = '';
+}
 
-    // Register service worker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+async function saveAuto() {
+  const trigger = {
+    type: $('autoTriggerType').value,
+    value: $('autoTriggerValue').value.trim(),
+  };
+  const actionType = $('autoActionType').value;
+  const actionValue = $('autoActionValue').value.trim();
+  const action = actionType === 'reply'
+    ? { type: 'reply', text: actionValue }
+    : { type: 'react', emoji: actionValue };
+
+  if (!trigger.value || !actionValue) {
+    toast('Fill in all fields', 'error');
+    return;
+  }
+  try {
+    await api('/api/automations', {
+      method: 'POST',
+      body: JSON.stringify({ trigger, action }),
+    });
+    closeAutoModal();
+    $('autoTriggerValue').value = '';
+    $('autoActionValue').value = '';
+    toast('Rule created', 'success');
+    loadAutomations();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function toggleAuto(id, enabled, input) {
+  const label = input.closest('.toggle');
+  label.className = `toggle ${enabled ? 'on' : 'off'}`;
+  try {
+    await api('/api/automations/' + id, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    });
+  } catch (e) {
+    toast(e.message, 'error');
+    input.checked = !enabled;
+    label.className = `toggle ${!enabled ? 'on' : 'off'}`;
+  }
+}
+
+async function deleteAuto(id) {
+  if (!confirm('Delete this rule?')) return;
+  try {
+    await api('/api/automations/' + id, { method: 'DELETE' });
+    toast('Rule deleted', 'success');
+    loadAutomations();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STORAGE
+   ═══════════════════════════════════════════════════════════ */
+let storageCache = [];
+async function loadStorage() {
+  try {
+    const type = $('storageFilter').value;
+    storageCache = await api('/api/storage' + (type ? '?type=' + type : ''));
+    renderStorage();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function renderStorage() {
+  const q = $('storageSearch').value.toLowerCase();
+  const data = q ? storageCache.filter((s) => s.key.toLowerCase().includes(q)) : storageCache;
+  const list = $('storageList');
+
+  if (!data.length) {
+    list.innerHTML = `
+      <div class="bg-ink-850 border border-dashed border-ink-700 rounded-xl p-8 text-center">
+        <p class="text-slate-400 text-sm">No entries</p>
+      </div>`;
+    return;
+  }
+
+  const typeColors = {
+    contact: 'bg-sky-500/10 text-sky-400 border-sky-500/30',
+    group: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+    note: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+    anti: 'bg-red-500/10 text-red-400 border-red-500/30',
+    key: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+  };
+
+  list.innerHTML = data.map((s) => `
+    <div class="bg-ink-850 border border-ink-700 rounded-xl p-3.5 flex items-start gap-3 hover-lift">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${typeColors[s.type] || typeColors.key}">${escapeHtml(s.type)}</span>
+          <span class="text-[10px] text-slate-500">${new Date(s.created_at).toLocaleString()}</span>
+        </div>
+        <div class="font-mono text-xs text-slate-300 break-all">${escapeHtml(s.key)}</div>
+      </div>
+      <button onclick="delStorage(${s.id})" class="shrink-0 p-1.5 rounded-lg text-red-400 hover:bg-red-500/10">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg>
+      </button>
+    </div>
+  `).join('');
+}
+
+async function delStorage(id) {
+  if (!confirm('Delete this entry?')) return;
+  try {
+    await api('/api/storage/' + id, { method: 'DELETE' });
+    loadStorage();
+    toast('Deleted', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LOGS
+   ═══════════════════════════════════════════════════════════ */
+async function loadLogs() {
+  try {
+    const logs = await api('/api/logs');
+    const el = $('logList');
+    if (!logs.length) {
+      el.innerHTML = '<div class="p-6 text-center text-slate-500 text-sm">No logs yet</div>';
+      return;
     }
+    el.innerHTML = logs.map(logLine).join('');
+    el.scrollTop = el.scrollHeight;
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
 
-    // ============================================================================
-    // BOOT
-    // ============================================================================
-    setMethodUI('code');
-    refresh();
-    setInterval(refresh, 3000);
-    logEvent('Console loaded', 'info');
-  </script>
+function logLine(l) {
+  const cls = l.level === 'error' ? 'log-error' : l.level === 'warn' ? 'log-warn' : 'log-info';
+  const lvlColor = l.level === 'error' ? 'text-red-400' : l.level === 'warn' ? 'text-amber-400' : 'text-emerald-400';
+  const time = new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return `<div class="log-line ${cls}">
+    <span class="text-slate-600">${time}</span>
+    <span class="${lvlColor} font-semibold uppercase">${escapeHtml(l.level)}</span>
+    <span class="text-slate-300">${escapeHtml(l.message)}</span>
+  </div>`;
+}
+
+function clearLogsUI() {
+  $('logList').innerHTML = '<div class="p-6 text-center text-slate-500 text-sm">Cleared</div>';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SYSTEM
+   ═══════════════════════════════════════════════════════════ */
+async function loadSystem() {
+  try {
+    const s = await api('/api/system');
+    const card = (label, value, sub = '') => `
+      <div class="bg-ink-850 border border-ink-700 rounded-xl p-4">
+        <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">${label}</div>
+        <div class="font-semibold text-sm truncate">${escapeHtml(value)}</div>
+        ${sub ? `<div class="text-[10px] text-slate-500 mt-0.5">${escapeHtml(sub)}</div>` : ''}
+      </div>
+    `;
+    $('systemInfo').innerHTML = [
+      card('Platform', `${s.platform} ${s.arch}`),
+      card('Node', s.node),
+      card('Uptime', s.uptime),
+      card('RAM', `${s.memUsed} / ${s.memTotal} GB`),
+      card('CPU Cores', s.cpus),
+      card('Storage Rows', s.dbStorage),
+    ].join('');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SOCKET.IO
+   ═══════════════════════════════════════════════════════════ */
+let qrDeadline = 0;
+
+socket.on('qr', ({ qr, expiresIn }) => {
+  $('qrBox').classList.remove('hidden');
+  $('connectedBox').classList.add('hidden');
+  $('idleBox').classList.add('hidden');
+  $('qrImg').src = qr;
+  qrDeadline = Date.now() + (expiresIn || 20000);
+  setStatus('qr');
+});
+
+setInterval(() => {
+  if (!qrDeadline) return;
+  const left = Math.max(0, Math.ceil((qrDeadline - Date.now()) / 1000));
+  const el = $('qrTimer');
+  if (el) el.textContent = left > 0 ? `Refreshing in ${left}s` : 'Refreshing…';
+  if (left === 0) qrDeadline = 0;
+}, 500);
+
+socket.on('status', ({ status, phone }) => setStatus(status, phone));
+
+socket.on('log', (entry) => {
+  if (!$('liveLogs')?.checked) return;
+  const logsTab = $('tab-logs');
+  if (!logsTab || logsTab.classList.contains('hidden')) return;
+  const el = $('logList');
+  el.insertAdjacentHTML('beforeend', logLine(entry));
+  el.scrollTop = el.scrollHeight;
+  // Trim
+  while (el.children.length > 500) el.removeChild(el.firstChild);
+});
+
+socket.on('connect', () => console.log('🔌 Socket connected'));
+socket.on('disconnect', () => toast('Connection lost — retrying…', 'error'));
+
+/* ═══════════════════════════════════════════════════════════
+   BOOT
+   ═══════════════════════════════════════════════════════════ */
+(async () => {
+  try {
+    await api('/api/me');
+    await bootDashboard();
+    setInterval(refreshStatus, 8000);
+  } catch {
+    // Not logged in — stay on login
+  }
+})();
+</script>
 </body>
 </html>
