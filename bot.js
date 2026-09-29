@@ -9,10 +9,35 @@ import pino from 'pino';
 import { Boom } from '@hapi/boom';
 import { usePostgresAuthState, clearAuthState } from './auth.js';
 import { setStatus, log } from './db.js';
-import { isOwner } from './commands/access.js';
+import { isOwner, isCommandEnabled } from './commands/access.js';
 import { handleViewOnce } from './view.js';
 import { runAutomations } from './engine.js';
 import { antiCheck } from './commands/anti.js';
+
+/* ═══════════════════════════════════════════════
+   Global handler — silence benign Baileys noise
+   ═══════════════════════════════════════════════ */
+const BENIGN_ERRORS = [
+  'Timed Out',
+  'Connection Closed',
+  'Connection Terminated',
+  'Connection Failure',
+  'Bad MAC',
+  'decrypt',
+  'Stream Errored',
+  'Socket Errored',
+  'EPIPE',
+  'ECONNRESET',
+];
+
+process.on('unhandledRejection', (err) => {
+  const msg = err?.message || String(err);
+  if (BENIGN_ERRORS.some((e) => msg.includes(e))) {
+    console.log('⚠️  Baileys non-fatal:', msg);
+    return;
+  }
+  console.error('Unhandled rejection:', err);
+});
 
 const SESSION_ID = 'owner';
 const logger = pino({ level: 'silent' });
@@ -57,7 +82,6 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
   const { version } = await fetchLatestBaileysVersion();
   
-  // Mode is explicit now: 'qr' or 'pair'. If creds exist, pairing is pointless.
   const hasCreds = !!state.creds?.me;
   const usePairing = mode === 'pair' && !!phoneNumber && !hasCreds;
   const useQR = !usePairing;
@@ -81,7 +105,6 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   
   sock.ev.on('creds.update', saveCreds);
   
-  // PAIRING CODE — only in pair mode, and only if not already registered
   if (usePairing && !sock.authState.creds.registered) {
     const cleaned = phoneNumber.replace(/\D/g, '');
     setTimeout(async () => {
@@ -101,7 +124,6 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     
-    // Only emit QR when we're NOT in pairing mode
     if (qr && useQR) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
       ioRef?.emit('qr', { qr: dataUrl, expiresIn: 20000 });
@@ -134,7 +156,7 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   });
   
   /* ════════════════════════════════════════════════
-     MESSAGE HANDLER — anti-check + automations + commands
+     MESSAGE HANDLER
      ════════════════════════════════════════════════ */
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
@@ -154,14 +176,17 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       m.listResponseMessage?.singleSelectReply?.selectedRowId ||
       '';
     
-    // 1️⃣ View-once extraction
+    // Diagnostic — log every incoming message
+    console.log(`📩 [${jid.endsWith('@g.us') ? 'GROUP' : 'DM'}] ${jid.split('@')[0]}: "${text.slice(0, 60)}"`);
+    
+    // 1️⃣ View-once
     try {
       await handleViewOnce({ sock, msg, jid });
     } catch (e) {
       console.error('view-once handler error:', e.message);
     }
     
-    // 2️⃣ Anti-link / anti-spam
+    // 2️⃣ Anti-check
     if (text) {
       try {
         const blocked = await antiCheck({ sock, msg, jid, text });
@@ -180,7 +205,7 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       }
     }
     
-    // 4️⃣ Commands
+    // 4️⃣ Command parsing
     if (!text) return;
     const prefix = text[0];
     if (prefix !== '.' && prefix !== '!') return;
@@ -188,9 +213,18 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     const [rawCmd, ...args] = text.slice(1).trim().split(/\s+/);
     const cmd = rawCmd.toLowerCase();
     const handler = commands.get(cmd);
-    if (!handler) return;
+    if (!handler) {
+      console.log(`❓ Unknown command: .${cmd}`);
+      return;
+    }
     
-    // 5️⃣ Permission check
+    // 5️⃣ Command enabled check (dashboard toggle)
+    if (!(await isCommandEnabled(cmd))) {
+      console.log(`⏸️  Command .${cmd} is disabled`);
+      return;
+    }
+    
+    // 6️⃣ Permission check
     if (handler.ownerOnly && !isOwner(jid)) {
       return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
     }
@@ -207,10 +241,12 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       react: (emoji) => sock.sendMessage(jid, { react: { text: emoji, key: msg.key } }),
     };
     
+    console.log(`▶️  Executing .${cmd}`);
     try {
       await handler(ctx);
+      console.log(`✅ .${cmd} completed`);
     } catch (err) {
-      console.error(`Command .${cmd} failed:`, err);
+      console.error(`❌ Command .${cmd} failed:`, err);
       await humanSend(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
     }
   });
