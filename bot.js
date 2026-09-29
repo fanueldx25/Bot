@@ -15,8 +15,6 @@ import { handleViewOnce } from './view.js';
 import { runAutomations } from './engine.js';
 import { antiCheck } from './commands/anti.js';
 
-// inside messages.upsert handler, after handleViewOnce:
-if (await antiCheck({ sock, msg, jid, text })) return;
 const SESSION_ID = 'owner';
 const logger = pino({ level: 'silent' });
 
@@ -34,7 +32,7 @@ const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const PRESENCE_JITTER = { min: 500, max: 1800 };
-const TYPING_RATE = { min: 20, max: 55 }; // chars per second
+const TYPING_RATE = { min: 20, max: 55 };
 
 async function humanTyping(jid, text = '') {
   if (!sock) return;
@@ -82,7 +80,7 @@ export async function startBot() {
     
     if (qr) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
-      ioRef?.emit('qr', { qr: dataUrl });
+      ioRef?.emit('qr', { qr: dataUrl, expiresIn: 20000 });
       await setStatus(SESSION_ID, 'qr');
     }
     
@@ -111,6 +109,9 @@ export async function startBot() {
     }
   });
   
+  /* ════════════════════════════════════════════════
+     MESSAGE HANDLER — anti-check + automations + commands
+     ════════════════════════════════════════════════ */
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const msg = messages[0];
@@ -119,9 +120,7 @@ export async function startBot() {
     const jid = jidNormalizedUser(msg.key.remoteJid);
     if (jid === 'status@broadcast') return;
     
-    // Handle view-once before command parsing
-    await handleViewOnce({ sock, msg, jid });
-    
+    // Extract text
     const m = msg.message;
     const text =
       m.conversation ||
@@ -132,13 +131,34 @@ export async function startBot() {
       m.listResponseMessage?.singleSelectReply?.selectedRowId ||
       '';
     
-    // Run automations (keyword triggers etc.)
+    // 1️⃣ View-once extraction
     try {
-      await runAutomations({ sock, msg, jid, text });
-    } catch (e) { console.error('automation error', e); }
+      await handleViewOnce({ sock, msg, jid });
+    } catch (e) {
+      console.error('view-once handler error:', e.message);
+    }
     
+    // 2️⃣ Anti-link / anti-spam guards
+    if (text) {
+      try {
+        const blocked = await antiCheck({ sock, msg, jid, text });
+        if (blocked) return;
+      } catch (e) {
+        console.error('antiCheck error:', e.message);
+      }
+    }
+    
+    // 3️⃣ Run automations
+    if (text) {
+      try {
+        await runAutomations({ sock, msg, jid, text });
+      } catch (e) {
+        console.error('automation error:', e.message);
+      }
+    }
+    
+    // 4️⃣ Command parsing
     if (!text) return;
-    
     const prefix = text[0];
     if (prefix !== '.' && prefix !== '!') return;
     
@@ -147,7 +167,7 @@ export async function startBot() {
     const handler = commands.get(cmd);
     if (!handler) return;
     
-    // Permission check
+    // 5️⃣ Permission check
     if (handler.ownerOnly && !isOwner(jid)) {
       return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
     }
@@ -169,12 +189,6 @@ export async function startBot() {
     } catch (err) {
       console.error(`Command .${cmd} failed:`, err);
       await humanSend(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
-    }
-  });
-  
-  sock.ev.on('messages.update', async (updates) => {
-    for (const u of updates) {
-      if (u.update?.message === null || u.update?.messageStubType) continue;
     }
   });
   
