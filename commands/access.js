@@ -1,32 +1,54 @@
 import { pool } from '../db.js';
 
 /* ═══════════════════════════════════════════════
-   Owner check
+   PRIVATE BOT OWNERSHIP
    ═══════════════════════════════════════════════
-   Reads OWNER_NUMBERS from env (comma-separated digits, no + or spaces).
-   Example: OWNER_NUMBERS=2348012345678,15551234567
-   
-   If empty, everyone is treated as owner (dev mode).
+   Owner resolution order:
+   1. OWNER_NUMBERS env var (comma-separated) — if set, that wins
+   2. The linked WhatsApp number (set when bot connects)
+   3. Dev fallback — allow all
+
+   Private mode = bot's own linked number is the owner.
 */
+
+let linkedNumber = null; // set on connect
+
+export function setLinkedNumber(num) {
+  linkedNumber = num ? String(num).split('@')[0].split(':')[0] : null;
+  console.log(`👑 Owner set to linked number: ${linkedNumber}`);
+}
+
+export function getLinkedNumber() {
+  return linkedNumber;
+}
+
 export function isOwner(jid) {
-  const owners = (process.env.OWNER_NUMBERS || '')
+  if (!jid) return false;
+
+  const envOwners = (process.env.OWNER_NUMBERS || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
 
-  if (!owners.length) return true;
+  const num = String(jid).split('@')[0].split(':')[0];
 
-  // jid is like "2348012345678@s.whatsapp.net" or "2348012345678:12@s.whatsapp.net"
-  const num = jid.split('@')[0].split(':')[0];
-  return owners.includes(num);
+  // 1. Explicit env list wins
+  if (envOwners.length) {
+    return envOwners.includes(num);
+  }
+
+  // 2. Private bot: linked number = owner
+  if (linkedNumber) {
+    return num === linkedNumber;
+  }
+
+  // 3. Dev fallback
+  return true;
 }
 
 /* ═══════════════════════════════════════════════
-   Command toggle check
-   ═══════════════════════════════════════════════
-   Reads command_settings table. If no row exists, command defaults to enabled.
-   Called from bot.js before running each command handler.
-*/
+   COMMAND TOGGLES
+   ═══════════════════════════════════════════════ */
 export async function isCommandEnabled(cmd) {
   try {
     const { rows } = await pool.query(
@@ -34,20 +56,13 @@ export async function isCommandEnabled(cmd) {
        WHERE session_id='owner' AND command=$1`,
       [cmd]
     );
-    // Default to true when no explicit setting exists
     return rows[0]?.enabled ?? true;
   } catch (e) {
     console.error('isCommandEnabled failed:', e.message);
-    return true; // fail-open so DB errors don't break all commands
+    return true;
   }
 }
 
-/* ═══════════════════════════════════════════════
-   Enable / disable a command
-   ═══════════════════════════════════════════════
-   Not used by the bot itself, but exposed for programmatic use
-   (e.g. future commands like .disable ping)
-*/
 export async function setCommandEnabled(cmd, enabled) {
   await pool.query(
     `INSERT INTO command_settings (session_id, command, enabled)
@@ -57,12 +72,6 @@ export async function setCommandEnabled(cmd, enabled) {
   );
 }
 
-/* ═══════════════════════════════════════════════
-   Register a new command with metadata
-   ═══════════════════════════════════════════════
-   Called by commands/index.js at load time so every command
-   appears in the dashboard, even before it's toggled.
-*/
 export async function registerCommandSetting(cmd, enabled = true) {
   try {
     await pool.query(
@@ -77,14 +86,27 @@ export async function registerCommandSetting(cmd, enabled = true) {
 }
 
 /* ═══════════════════════════════════════════════
-   Commands
+   COMMANDS
    ═══════════════════════════════════════════════ */
 
 const commands = {
   owner: async ({ jid, reply }) => {
-    await reply({
-      text: isOwner(jid) ? '✅ You are owner.' : '❌ Not owner.',
-    });
+    const num = String(jid).split('@')[0].split(':')[0];
+    const linked = getLinkedNumber();
+
+    if (isOwner(jid)) {
+      await reply({
+        text:
+          `✅ *You are owner.*\n` +
+          `Your number: \`${num}\`\n` +
+          (linked ? `Linked bot: \`${linked}\`\n` : '') +
+          (process.env.OWNER_NUMBERS
+            ? `Mode: explicit (\`OWNER_NUMBERS\`)`
+            : `Mode: private (bot account = owner)`),
+      });
+    } else {
+      await reply({ text: '❌ Not owner.' });
+    }
   },
 
   access: {
