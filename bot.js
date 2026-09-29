@@ -54,10 +54,11 @@ const logger = pino({ level: 'silent' });
 
 let sock = null;
 let ioRef = null;
+let myNumber = null; // own JID number, set on connect
 const commands = new Map();
 
 /* ═══════════════════════════════════════════════
-   Named exports (used by server.js)
+   Named exports
    ═══════════════════════════════════════════════ */
 export const setIO = (io) => { ioRef = io; };
 export const getSock = () => sock;
@@ -91,6 +92,18 @@ export async function humanSend(jid, content, opts = {}) {
   const text = content?.text || content?.caption || '';
   await humanTyping(jid, text);
   return sock.sendMessage(jid, content, opts);
+}
+
+/* ═══════════════════════════════════════════════
+   Send a message to yourself
+   ═══════════════════════════════════════════════ */
+export async function sendToSelf(content) {
+  if (!sock) throw new Error('Socket not connected');
+  const num = myNumber || sock.user?.id?.split(':')[0];
+  if (!num) throw new Error('Own number unknown');
+  const selfJid = `${num}@s.whatsapp.net`;
+  console.log(`📤 Sending to self: ${selfJid}`);
+  return sock.sendMessage(selfJid, content);
 }
 
 /* ═══════════════════════════════════════════════
@@ -152,12 +165,30 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
 
     if (connection === 'open') {
       const phone = sock.user?.id?.split(':')[0] || null;
+      myNumber = phone;
       setLinkedNumber(phone);
-      console.log(`👑 Linked number set to owner: ${phone}`);
+      console.log(`👑 Own number: ${myNumber}`);
+      console.log(`👑 Linked number set: ${getLinkedNumber()}`);
       await setStatus(SESSION_ID, 'connected', phone);
       ioRef?.emit('status', { status: 'connected', phone });
       await log(SESSION_ID, 'info', `Connected as ${phone}`);
       console.log('✅ Connected:', phone);
+
+      // Send a welcome self-message so you know it's alive
+      setTimeout(async () => {
+        try {
+          await sendToSelf({
+            text:
+              `🤖 *Bot connected*\n` +
+              `Number: \`${phone}\`\n` +
+              `Send \`.ping\` to test.\n` +
+              `Send \`.selftest\` to verify replies.`,
+          });
+          console.log('📤 Welcome message sent to self');
+        } catch (e) {
+          console.error('welcome self-send failed:', e.message);
+        }
+      }, 3000);
     }
 
     if (connection === 'close') {
@@ -172,6 +203,7 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
         setTimeout(() => startBot({ mode }), 3000);
       } else {
         console.log('❌ Logged out');
+        myNumber = null;
         setLinkedNumber(null);
         await clearAuthState(SESSION_ID);
       }
@@ -180,121 +212,140 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
 
   /* ════════════════════════════════════════════════
      MESSAGE HANDLER — PRIVATE MODE
-     Allows messages from the bot's own number
      ════════════════════════════════════════════════ */
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
-    const msg = messages[0];
-    if (!msg.message) return;
 
-    const jid = jidNormalizedUser(msg.key.remoteJid);
-    if (jid === 'status@broadcast') return;
-
-    const fromMe = !!msg.key.fromMe;
-    const senderJid = jidNormalizedUser(msg.key.participant || jid);
-    const senderNum = senderJid.split('@')[0].split(':')[0];
-
-    // In private mode, the bot's own linked number IS the owner.
-    // Allow self-messages only when the sender matches the linked number.
-    const linked = getLinkedNumber();
-    const isSelfMessage = fromMe && linked && senderNum === linked;
-
-    if (fromMe && !isSelfMessage) {
-      // Message sent by us to someone else — ignore
-      return;
-    }
-
-    const m = msg.message;
-    const text =
-      m.conversation ||
-      m.extendedTextMessage?.text ||
-      m.imageMessage?.caption ||
-      m.videoMessage?.caption ||
-      m.buttonsResponseMessage?.selectedButtonId ||
-      m.listResponseMessage?.singleSelectReply?.selectedRowId ||
-      '';
-
-    // Diagnostic log
-    console.log(
-      `📩 [${jid.endsWith('@g.us') ? 'GROUP' : isSelfMessage ? 'SELF' : 'DM'}] ` +
-      `${senderNum}: "${text.slice(0, 60)}"`
-    );
-
-    // 1️⃣ View-once extraction
-    try {
-      await handleViewOnce({ sock, msg, jid });
-    } catch (e) {
-      console.error('view-once handler error:', e.message);
-    }
-
-    // 2️⃣ Anti-link / anti-spam
-    if (text) {
+    for (const msg of messages) {
       try {
-        const blocked = await antiCheck({ sock, msg, jid, text });
-        if (blocked) return;
+        await handleMessage(msg);
       } catch (e) {
-        console.error('antiCheck error:', e.message);
+        console.error('handleMessage error:', e);
       }
-    }
-
-    // 3️⃣ Automations — skip for self-messages
-    if (text && !isSelfMessage) {
-      try {
-        await runAutomations({ sock, msg, jid, text });
-      } catch (e) {
-        console.error('automation error:', e.message);
-      }
-    }
-
-    // 4️⃣ Command parsing
-    if (!text) return;
-    const prefix = text[0];
-    if (prefix !== '.' && prefix !== '!') return;
-
-    const [rawCmd, ...args] = text.slice(1).trim().split(/\s+/);
-    const cmd = rawCmd.toLowerCase();
-    const handler = commands.get(cmd);
-    if (!handler) {
-      console.log(`❓ Unknown command: .${cmd}`);
-      return;
-    }
-
-    // 5️⃣ Command enabled check (dashboard toggle)
-    if (!(await isCommandEnabled(cmd))) {
-      console.log(`⏸️  Command .${cmd} is disabled`);
-      return;
-    }
-
-    // 6️⃣ Permission check
-    if (handler.ownerOnly && !isOwner(senderJid)) {
-      console.log(`🔒 .${cmd} blocked — not owner (${senderNum})`);
-      return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
-    }
-
-    const ctx = {
-      sock,
-      msg,
-      jid,
-      text,
-      args,
-      isGroup: jid.endsWith('@g.us'),
-      isSelfMessage,
-      sender: senderJid,
-      reply: (content, opts) => humanSend(jid, content, { quoted: msg, ...opts }),
-      react: (emoji) => sock.sendMessage(jid, { react: { text: emoji, key: msg.key } }),
-    };
-
-    console.log(`▶️  Executing .${cmd}`);
-    try {
-      await handler(ctx);
-      console.log(`✅ .${cmd} completed`);
-    } catch (err) {
-      console.error(`❌ Command .${cmd} failed:`, err);
-      await humanSend(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
     }
   });
 
   return sock;
+}
+
+/* ═══════════════════════════════════════════════
+   Message handler (separated for clarity)
+   ═══════════════════════════════════════════════ */
+async function handleMessage(msg) {
+  if (!msg.message) return;
+
+  const jid = jidNormalizedUser(msg.key.remoteJid);
+  if (jid === 'status@broadcast') return;
+
+  const fromMe = !!msg.key.fromMe;
+  const senderJid = jidNormalizedUser(msg.key.participant || jid);
+  const senderNum = senderJid.split('@')[0].split(':')[0];
+
+  // Live fallback — use own number from socket if getLinkedNumber() is null
+  const linked = getLinkedNumber() || myNumber || sock?.user?.id?.split(':')[0] || null;
+  const isSelfMessage = fromMe && linked && senderNum === linked;
+
+  // Extract text early for logging
+  const m = msg.message;
+  const text =
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    m.videoMessage?.caption ||
+    m.buttonsResponseMessage?.selectedButtonId ||
+    m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    '';
+
+  // Verbose debug line
+  console.log(
+    `📩 [${jid.endsWith('@g.us') ? 'GROUP' : isSelfMessage ? 'SELF' : 'DM'}] ` +
+    `fromMe=${fromMe} sender=${senderNum} linked=${linked} ` +
+    `text="${text.slice(0, 40)}"`
+  );
+
+  if (fromMe && !isSelfMessage) {
+    console.log('⏭️  Skipped (outgoing to someone else)');
+    return;
+  }
+
+  // 1️⃣ View-once
+  try {
+    await handleViewOnce({ sock, msg, jid });
+  } catch (e) {
+    console.error('view-once handler error:', e.message);
+  }
+
+  // 2️⃣ Anti-check (skip for self)
+  if (text && !isSelfMessage) {
+    try {
+      const blocked = await antiCheck({ sock, msg, jid, text });
+      if (blocked) return;
+    } catch (e) {
+      console.error('antiCheck error:', e.message);
+    }
+  }
+
+  // 3️⃣ Automations (skip for self)
+  if (text && !isSelfMessage) {
+    try {
+      await runAutomations({ sock, msg, jid, text });
+    } catch (e) {
+      console.error('automation error:', e.message);
+    }
+  }
+
+  // 4️⃣ Commands
+  if (!text) return;
+  const prefix = text[0];
+  if (prefix !== '.' && prefix !== '!') {
+    console.log('⏭️  Not a command (no prefix)');
+    return;
+  }
+
+  const [rawCmd, ...args] = text.slice(1).trim().split(/\s+/);
+  const cmd = rawCmd.toLowerCase();
+  const handler = commands.get(cmd);
+  if (!handler) {
+    console.log(`❓ Unknown command: .${cmd}`);
+    return;
+  }
+
+  // 5️⃣ Enabled check
+  if (!(await isCommandEnabled(cmd))) {
+    console.log(`⏸️  Command .${cmd} is disabled`);
+    return;
+  }
+
+  // 6️⃣ Permission check
+  if (handler.ownerOnly && !isOwner(senderJid)) {
+    console.log(`🔒 .${cmd} blocked — not owner`);
+    return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
+  }
+
+  const ctx = {
+    sock,
+    msg,
+    jid,
+    text,
+    args,
+    isGroup: jid.endsWith('@g.us'),
+    isSelfMessage,
+    sender: senderJid,
+    reply: (content, opts) => humanSend(jid, content, { quoted: msg, ...opts }),
+    react: (emoji) => sock.sendMessage(jid, { react: { text: emoji, key: msg.key } }),
+    sendToSelf,
+  };
+
+  console.log(`▶️  Executing .${cmd}`);
+  try {
+    await handler(ctx);
+    console.log(`✅ .${cmd} completed`);
+  } catch (err) {
+    console.error(`❌ Command .${cmd} failed:`, err);
+    try {
+      await humanSend(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
+    } catch {}
+  }
 }
 
 /* ═══════════════════════════════════════════════
@@ -305,7 +356,7 @@ export async function logout() {
     try { await sock.logout(); } catch {}
     sock = null;
   }
+  myNumber = null;
   setLinkedNumber(null);
   await clearAuthState(SESSION_ID);
 }
-
