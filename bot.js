@@ -308,3 +308,6 @@ export async function logout() {
   setLinkedNumber(null);
   await clearAuthState(SESSION_ID);
 }
+
+// Inside messages.upsert, right after computing senderNum
+const linked = getLinkedNumber() || sock.user?.id?.split(':')[0] || null;
