@@ -14,48 +14,26 @@
       theme: {
         extend: {
           colors: {
-            ink: {
-              950: '#080c14',
-              900: '#0b1220',
-              850: '#0f172a',
-              800: '#131c2e',
-              700: '#1c2942',
-              600: '#2a3a5a',
-            },
-            accent: {
-              DEFAULT: '#10b981',
-              light: '#34d399',
-              dark: '#059669',
-            },
+            ink: { 950:'#080c14', 900:'#0b1220', 850:'#0f172a', 800:'#131c2e', 700:'#1c2942', 600:'#2a3a5a' },
+            accent: { DEFAULT:'#10b981', light:'#34d399', dark:'#059669' },
           },
           fontFamily: {
-            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
-            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+            sans: ['Inter','ui-sans-serif','system-ui','-apple-system','sans-serif'],
+            mono: ['ui-monospace','SFMono-Regular','Menlo','monospace'],
           },
           animation: {
             'fade-in': 'fadeIn 0.25s ease-out',
             'slide-up': 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
             'pulse-soft': 'pulseSoft 2s ease-in-out infinite',
-            'shimmer': 'shimmer 2s linear infinite',
           },
           keyframes: {
-            fadeIn: { '0%': { opacity: 0 }, '100%': { opacity: 1 } },
-            slideUp: {
-              '0%': { opacity: 0, transform: 'translateY(12px)' },
-              '100%': { opacity: 1, transform: 'translateY(0)' },
-            },
-            pulseSoft: {
-              '0%, 100%': { opacity: 1 },
-              '50%': { opacity: 0.5 },
-            },
-            shimmer: {
-              '0%': { backgroundPosition: '-1000px 0' },
-              '100%': { backgroundPosition: '1000px 0' },
-            },
+            fadeIn: { '0%':{opacity:0}, '100%':{opacity:1} },
+            slideUp: { '0%':{opacity:0,transform:'translateY(12px)'}, '100%':{opacity:1,transform:'translateY(0)'} },
+            pulseSoft: { '0%,100%':{opacity:1}, '50%':{opacity:0.5} },
           },
           boxShadow: {
-            glow: '0 0 30px -8px rgba(16, 185, 129, 0.5)',
-            card: '0 4px 24px -8px rgba(0, 0, 0, 0.4)',
+            glow: '0 0 30px -8px rgba(16,185,129,0.5)',
+            card: '0 4px 24px -8px rgba(0,0,0,0.4)',
           },
         },
       },
@@ -68,56 +46,23 @@
     * { -webkit-tap-highlight-color: transparent; }
     html, body { overscroll-behavior-y: contain; }
     body { font-family: 'Inter', system-ui, sans-serif; }
-
-    /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #1c2942; border-radius: 999px; }
     ::-webkit-scrollbar-thumb:hover { background: #2a3a5a; }
-
-    /* Safe area for iOS */
     .safe-top { padding-top: env(safe-area-inset-top); }
     .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
-
-    /* Nav items */
-    .nav-item {
-      position: relative;
-      transition: color 0.2s, background 0.2s;
-    }
+    .nav-item { position: relative; transition: color 0.2s, background 0.2s; }
     .nav-item.active { color: #34d399; }
     .nav-item.active::before {
-      content: '';
-      position: absolute;
-      left: 0; top: 25%; bottom: 25%;
-      width: 3px;
-      background: #10b981;
-      border-radius: 0 3px 3px 0;
+      content: ''; position: absolute; left: 0; top: 25%; bottom: 25%;
+      width: 3px; background: #10b981; border-radius: 0 3px 3px 0;
     }
     .nav-item-mobile.active { color: #34d399; }
-    .nav-item-mobile.active .nav-icon {
-      background: rgba(16, 185, 129, 0.15);
-      transform: translateY(-2px);
-    }
-
-    /* Glass */
-    .glass {
-      background: rgba(15, 23, 42, 0.72);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-    }
-
-    /* Card hover */
+    .nav-item-mobile.active .nav-icon { background: rgba(16,185,129,0.15); transform: translateY(-2px); }
+    .glass { background: rgba(15,23,42,0.72); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
     .hover-lift { transition: transform 0.15s, box-shadow 0.15s; }
     .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 8px 30px -8px rgba(0,0,0,0.5); }
-
-    /* Shimmer skeleton */
-    .skeleton {
-      background: linear-gradient(90deg, #131c2e 0%, #1c2942 50%, #131c2e 100%);
-      background-size: 1000px 100%;
-      animation: shimmer 2s linear infinite;
-    }
-
-    /* Toggle switch */
     .toggle { width: 40px; height: 22px; border-radius: 999px; position: relative; transition: background 0.2s; flex-shrink: 0; }
     .toggle input { position: absolute; opacity: 0; pointer-events: none; }
     .toggle .knob {
@@ -129,54 +74,26 @@
     .toggle.on { background: #10b981; }
     .toggle.on .knob { transform: translateX(18px); }
     .toggle.off { background: #334155; }
-
-    /* QR glow */
     .qr-frame {
-      position: relative;
-      padding: 14px;
-      background: #fff;
-      border-radius: 20px;
+      position: relative; padding: 14px; background: #fff; border-radius: 20px;
       box-shadow: 0 0 0 1px rgba(16,185,129,0.2), 0 20px 60px -20px rgba(16,185,129,0.4);
     }
-    .qr-frame::before {
-      content: '';
-      position: absolute;
-      inset: -1px;
-      border-radius: 20px;
-      background: linear-gradient(135deg, #10b981, #059669, #10b981);
-      z-index: -1;
-      opacity: 0.6;
-      filter: blur(12px);
-    }
-
-    /* Log line */
     .log-line { font-size: 11.5px; line-height: 1.5; padding: 6px 10px; border-left: 2px solid transparent; }
     .log-info { border-left-color: #10b981; }
-    .log-error { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.05); }
+    .log-error { border-left-color: #ef4444; background: rgba(239,68,68,0.05); }
     .log-warn { border-left-color: #f59e0b; }
-
-    /* Chip */
     .chip { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-
-    /* Prevent iOS zoom on input focus */
-    @media (max-width: 640px) {
-      input, select, textarea { font-size: 16px !important; }
-    }
-
-    /* Modal backdrop */
+    @media (max-width: 640px) { input, select, textarea { font-size: 16px !important; } }
     .modal-backdrop {
-      background: rgba(8, 12, 20, 0.85);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      background: rgba(8,12,20,0.85);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     }
   </style>
 </head>
 
 <body class="bg-ink-950 text-slate-100 min-h-screen antialiased selection:bg-emerald-500/30">
 
-  <!-- ═══════════════════════════════════════════════════════
-       LOGIN
-       ═══════════════════════════════════════════════════════ -->
+  <!-- LOGIN -->
   <div id="loginView" class="flex items-center justify-center min-h-screen p-5 animate-fade-in">
     <div class="w-full max-w-sm">
       <div class="text-center mb-8">
@@ -188,36 +105,17 @@
         <h1 class="text-2xl font-bold tracking-tight">WA Bot Dashboard</h1>
         <p class="text-slate-400 text-sm mt-1.5">Sign in to manage your bot</p>
       </div>
-
       <div class="bg-ink-850 rounded-2xl p-6 border border-ink-700 shadow-card space-y-3">
         <div>
           <label class="block text-xs font-medium text-slate-400 mb-1.5">Username</label>
-          <div class="relative">
-            <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-            </svg>
-            <input id="username" autocomplete="username" placeholder="owner"
-              class="w-full pl-10 pr-3 py-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition placeholder-slate-500 text-[15px]" />
-          </div>
+          <input id="username" autocomplete="username" placeholder="owner"
+            class="w-full px-3 py-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition placeholder-slate-500 text-[15px]" />
         </div>
-
         <div>
           <label class="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
-          <div class="relative">
-            <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-            </svg>
-            <input id="password" type="password" autocomplete="current-password" placeholder="••••••••"
-              class="w-full pl-10 pr-11 py-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition placeholder-slate-500 text-[15px]" />
-            <button type="button" onclick="togglePw()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
-              <svg id="pwEye" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-              </svg>
-            </button>
-          </div>
+          <input id="password" type="password" autocomplete="current-password" placeholder="••••••••"
+            class="w-full px-3 py-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition placeholder-slate-500 text-[15px]" />
         </div>
-
         <button id="loginBtn" onclick="login()"
           class="w-full bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 active:scale-[0.98] py-3 rounded-xl font-semibold shadow-glow transition-all flex items-center justify-center gap-2">
           <span id="loginBtnText">Sign In</span>
@@ -226,20 +124,15 @@
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
           </svg>
         </button>
-
         <p id="loginError" class="text-red-400 text-xs text-center hidden bg-red-500/10 border border-red-500/30 rounded-lg py-2 px-3"></p>
       </div>
-
-      <p class="text-center text-xs text-slate-500 mt-6">Secure · Owner-only access</p>
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════════════════════
-       DASHBOARD
-       ═══════════════════════════════════════════════════════ -->
+  <!-- DASHBOARD -->
   <div id="dashView" class="hidden min-h-screen pb-24 md:pb-0 md:pl-64">
 
-    <!-- ══════════ SIDEBAR (desktop) ══════════ -->
+    <!-- SIDEBAR (desktop) -->
     <aside class="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-ink-900 border-r border-ink-800 z-30">
       <div class="px-5 py-6 border-b border-ink-800">
         <div class="flex items-center gap-3">
@@ -254,7 +147,6 @@
           </div>
         </div>
       </div>
-
       <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         <button class="nav-item active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="connect">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -269,19 +161,22 @@
           <span>Automations</span>
         </button>
         <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="storage">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2 1.5 3 3 3h10c1.5 0 3-1 3-3V7c0-2-1.5-3-3-3H7c-1.5 0-3 1-3 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M4 12h16M8 7h.01M8 17h.01"/></svg>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2 1.5 3 3 3h10c1.5 0 3-1 3-3V7c0-2-1.5-3-3-3H7c-1.5 0-3 1-3 3z"/></svg>
           <span>Storage</span>
         </button>
         <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="logs">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
           <span>Logs</span>
         </button>
+        <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="ping">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>Self-Ping</span>
+        </button>
         <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-ink-800 hover:text-white text-sm font-medium" data-tab="system">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
           <span>System</span>
         </button>
       </nav>
-
       <div class="p-4 border-t border-ink-800 space-y-3">
         <div class="flex items-center justify-between text-xs">
           <span class="text-slate-500">Status</span>
@@ -294,7 +189,7 @@
       </div>
     </aside>
 
-    <!-- ══════════ TOP BAR (mobile) ══════════ -->
+    <!-- MOBILE HEADER -->
     <header class="glass md:hidden sticky top-0 z-30 border-b border-ink-800 safe-top">
       <div class="flex items-center justify-between px-4 py-3">
         <div class="flex items-center gap-2.5">
@@ -319,22 +214,17 @@
       </div>
     </header>
 
-    <!-- ══════════ MAIN CONTENT ══════════ -->
+    <!-- MAIN -->
     <main class="p-4 md:p-8 max-w-6xl mx-auto">
 
-      <!-- ═══════ CONNECT TAB ═══════ -->
+      <!-- ═══ CONNECT ═══ -->
       <section id="tab-connect" class="tab-panel animate-slide-up">
-        <div class="md:hidden mb-5">
-          <h1 class="text-2xl font-bold tracking-tight">Connect</h1>
-          <p class="text-slate-400 text-sm mt-0.5">Link your WhatsApp account</p>
-        </div>
-        <div class="hidden md:block mb-6">
-          <h1 class="text-3xl font-bold tracking-tight">Connection</h1>
-          <p class="text-slate-400 text-sm mt-1">Link your WhatsApp account to get started</p>
+        <div class="mb-5">
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Connect</h1>
+          <p class="text-slate-400 text-sm mt-0.5">Link WhatsApp with QR or pairing code</p>
         </div>
 
         <div class="grid lg:grid-cols-2 gap-5">
-          <!-- Status / QR card -->
           <div class="bg-ink-850 rounded-2xl border border-ink-700 p-6 shadow-card">
             <div class="flex items-center justify-between mb-5">
               <h2 class="font-semibold flex items-center gap-2">
@@ -344,7 +234,7 @@
               <span id="sessionBadge" class="chip px-2 py-1 rounded-md bg-ink-800 text-slate-400 border border-ink-700">Idle</span>
             </div>
 
-            <div class="text-center py-4">
+            <div class="text-center py-2">
               <!-- QR -->
               <div id="qrBox" class="hidden mx-auto inline-block">
                 <div class="qr-frame">
@@ -356,6 +246,15 @@
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
                   </svg>
                   <span id="qrTimer">Refreshing in 20s</span>
+                </div>
+              </div>
+
+              <!-- Pairing code -->
+              <div id="pairingBox" class="hidden mb-4">
+                <div class="inline-block px-6 py-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-700/10 border-2 border-emerald-500/40">
+                  <div class="text-[10px] uppercase tracking-widest text-emerald-400 mb-1">Pairing code</div>
+                  <div id="pairingCode" class="font-mono text-3xl font-bold tracking-widest text-emerald-300">--------</div>
+                  <div class="text-[10px] text-slate-400 mt-2">WhatsApp → Linked Devices → Link with phone number</div>
                 </div>
               </div>
 
@@ -373,14 +272,26 @@
                 <p id="connectedPhone" class="text-slate-400 text-sm mt-0.5 font-mono"></p>
               </div>
 
-              <!-- Idle -->
+              <!-- Idle / Pairing input -->
               <div id="idleBox">
-                <div class="w-20 h-20 mx-auto rounded-2xl bg-ink-800 border border-ink-700 flex items-center justify-center mb-4">
-                  <svg class="w-9 h-9 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
-                  </svg>
+                <div class="text-left max-w-xs mx-auto">
+                  <label class="block text-xs font-medium text-slate-400 mb-1.5">Connect with phone number</label>
+                  <div class="flex gap-2 mb-3">
+                    <input id="phoneInput" type="tel" inputmode="tel" placeholder="2348012345678"
+                      class="flex-1 p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm placeholder-slate-500 font-mono" />
+                    <button onclick="requestPairing()"
+                      class="px-4 py-3 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-sm font-semibold whitespace-nowrap">
+                      Get Code
+                    </button>
+                  </div>
+                  <p class="text-[10px] text-slate-500 mb-3">Format: country code + number, no + or spaces</p>
+                  <div class="flex items-center gap-3 my-3">
+                    <div class="flex-1 h-px bg-ink-700"></div>
+                    <span class="text-[10px] text-slate-500 uppercase tracking-wider">or</span>
+                    <div class="flex-1 h-px bg-ink-700"></div>
+                  </div>
                 </div>
-                <p id="connectHint" class="text-slate-400 text-sm">Click start to generate a QR code</p>
+                <p id="connectHint" class="text-slate-400 text-sm text-center">Scan QR with WhatsApp → Linked Devices</p>
               </div>
             </div>
 
@@ -397,13 +308,11 @@
             </div>
           </div>
 
-          <!-- Instructions -->
           <div class="bg-ink-850 rounded-2xl border border-ink-700 p-6 shadow-card">
             <h2 class="font-semibold mb-5 flex items-center gap-2">
               <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               How to link
             </h2>
-
             <ol class="space-y-4">
               <li class="flex gap-4">
                 <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">1</div>
@@ -422,69 +331,66 @@
               <li class="flex gap-4">
                 <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">3</div>
                 <div class="pt-0.5">
-                  <p class="font-medium text-sm">Tap "Link a Device"</p>
-                  <p class="text-xs text-slate-400 mt-0.5">Approve with your phone PIN if asked</p>
+                  <p class="font-medium text-sm">Choose "Link a Device" or "Link with phone number"</p>
+                  <p class="text-xs text-slate-400 mt-0.5">Phone number method: enter the 8-digit code</p>
                 </div>
               </li>
               <li class="flex gap-4">
                 <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">4</div>
                 <div class="pt-0.5">
-                  <p class="font-medium text-sm">Point at the QR code</p>
-                  <p class="text-xs text-slate-400 mt-0.5">Auto-refreshes every ~20 seconds</p>
+                  <p class="font-medium text-sm">Approve the link</p>
+                  <p class="text-xs text-slate-400 mt-0.5">You'll see a green checkmark when connected</p>
                 </div>
               </li>
             </ol>
-
             <div class="mt-6 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex gap-3">
               <svg class="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3l-6.93-12a2 2 0 00-3.48 0L2.33 16a2 2 0 001.74 3z"/></svg>
               <p class="text-xs text-amber-200 leading-relaxed">
-                <b>Tip:</b> Keep this tab open during linking. If it closes, the QR will still refresh — just come back and rescan.
+                <b>Tip:</b> Pairing codes expire in ~5 minutes. QR codes refresh every ~20s.
               </p>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- ═══════ COMMANDS TAB ═══════ -->
+      <!-- ═══ COMMANDS ═══ -->
       <section id="tab-commands" class="tab-panel hidden">
         <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
           <div>
             <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Commands</h1>
             <p class="text-slate-400 text-sm mt-0.5">Toggle which commands the bot responds to</p>
           </div>
-          <button onclick="loadCommands()" class="text-xs bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg font-medium flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-            Refresh
-          </button>
+          <button onclick="loadCommands()" class="text-xs bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg font-medium">Refresh</button>
         </div>
         <div id="cmdList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
       </section>
 
-      <!-- ═══════ AUTOMATIONS TAB ═══════ -->
+      <!-- ═══ AUTOMATIONS ═══ -->
       <section id="tab-automations" class="tab-panel hidden">
         <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
           <div>
             <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Automations</h1>
             <p class="text-slate-400 text-sm mt-0.5">Auto-reply rules for incoming messages</p>
           </div>
-          <button onclick="openAutoModal()" class="text-xs bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 px-3.5 py-2 rounded-lg font-semibold shadow-glow flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-            New Rule
-          </button>
+          <button onclick="openAutoModal()" class="text-xs bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 px-3.5 py-2 rounded-lg font-semibold shadow-glow">+ New Rule</button>
         </div>
         <div id="autoList" class="space-y-2.5"></div>
       </section>
 
-      <!-- ═══════ STORAGE TAB ═══════ -->
+      <!-- ═══ STORAGE ═══ -->
       <section id="tab-storage" class="tab-panel hidden">
-        <div class="mb-5">
-          <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Storage</h1>
-          <p class="text-slate-400 text-sm mt-0.5">Persisted bot data</p>
+        <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Storage</h1>
+            <p class="text-slate-400 text-sm mt-0.5">Persisted bot data & database metrics</p>
+          </div>
+          <button onclick="runCleanup()" class="text-xs bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg">🧹 Cleanup</button>
         </div>
 
+        <div id="storageStats" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"></div>
+
         <div class="flex flex-col sm:flex-row gap-2 mb-4">
-          <select id="storageFilter" onchange="loadStorage()"
-            class="bg-ink-800 border border-ink-700 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-500">
+          <select id="storageFilter" onchange="loadStorage()" class="bg-ink-800 border border-ink-700 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-500">
             <option value="">All types</option>
             <option value="contact">Contacts</option>
             <option value="group">Groups</option>
@@ -495,19 +401,15 @@
             class="flex-1 bg-ink-800 border border-ink-700 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-500 placeholder-slate-500" />
           <button onclick="loadStorage()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-4 py-2.5 rounded-lg text-sm">Refresh</button>
         </div>
-
         <div id="storageList" class="space-y-2"></div>
       </section>
 
-      <!-- ═══════ LOGS TAB ═══════ -->
+      <!-- ═══ LOGS ═══ -->
       <section id="tab-logs" class="tab-panel hidden">
-        <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
-          <div>
-            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Logs</h1>
-            <p class="text-slate-400 text-sm mt-0.5">Live activity stream</p>
-          </div>
+        <div class="mb-5">
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Logs</h1>
+          <p class="text-slate-400 text-sm mt-0.5">Live activity stream</p>
         </div>
-
         <div class="flex flex-wrap gap-2 mb-4">
           <button onclick="loadLogs()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg text-xs">Refresh</button>
           <button onclick="clearLogsUI()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg text-xs">Clear</button>
@@ -515,18 +417,31 @@
             <input type="checkbox" id="liveLogs" checked class="accent-emerald-500"> Live tail
           </label>
         </div>
-
         <div id="logList" class="bg-ink-950 rounded-xl border border-ink-800 font-mono max-h-[65vh] overflow-y-auto"></div>
       </section>
 
-      <!-- ═══════ SYSTEM TAB ═══════ -->
+      <!-- ═══ PING ═══ -->
+      <section id="tab-ping" class="tab-panel hidden">
+        <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Self-Ping</h1>
+            <p class="text-slate-400 text-sm mt-0.5">Keeps the service awake + monitors uptime</p>
+          </div>
+          <button onclick="loadPing()" class="text-xs bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg">Refresh</button>
+        </div>
+        <div id="pingStats" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"></div>
+        <h3 class="font-semibold text-sm mb-3">Recent pings</h3>
+        <div id="pingHistory" class="bg-ink-850 rounded-xl border border-ink-800 overflow-hidden"></div>
+      </section>
+
+      <!-- ═══ SYSTEM ═══ -->
       <section id="tab-system" class="tab-panel hidden">
         <div class="mb-5 flex items-end justify-between gap-3 flex-wrap">
           <div>
             <h1 class="text-2xl md:text-3xl font-bold tracking-tight">System</h1>
             <p class="text-slate-400 text-sm mt-0.5">Runtime & resource stats</p>
           </div>
-          <button onclick="loadSystem()" class="bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg text-xs">Refresh</button>
+          <button onclick="loadSystem()" class="text-xs bg-ink-800 hover:bg-ink-700 border border-ink-700 px-3 py-2 rounded-lg">Refresh</button>
         </div>
         <div id="systemInfo" class="grid grid-cols-2 lg:grid-cols-3 gap-3"></div>
       </section>
@@ -534,11 +449,9 @@
     </main>
   </div>
 
-  <!-- ═══════════════════════════════════════════════════════
-       BOTTOM NAV (mobile)
-       ═══════════════════════════════════════════════════════ -->
+  <!-- MOBILE BOTTOM NAV -->
   <nav id="mobileNav" class="hidden md:hidden fixed bottom-0 left-0 right-0 glass border-t border-ink-800 safe-bottom z-40">
-    <div class="grid grid-cols-6 px-2 py-2">
+    <div class="grid grid-cols-7 px-1 py-2">
       <button class="nav-item-mobile active flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="connect">
         <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -569,6 +482,12 @@
         </div>
         <span>Logs</span>
       </button>
+      <button class="nav-item-mobile flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="ping">
+        <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <span>Ping</span>
+      </button>
       <button class="nav-item-mobile flex flex-col items-center gap-1 py-1.5 text-slate-400 text-[10px] font-medium" data-tab="system">
         <div class="nav-icon w-9 h-9 rounded-xl flex items-center justify-center transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
@@ -578,9 +497,7 @@
     </div>
   </nav>
 
-  <!-- ═══════════════════════════════════════════════════════
-       AUTOMATION MODAL
-       ═══════════════════════════════════════════════════════ -->
+  <!-- AUTOMATION MODAL -->
   <div id="autoModal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-end md:items-center justify-center p-0 md:p-4 animate-fade-in">
     <div class="bg-ink-850 w-full md:max-w-lg md:rounded-2xl rounded-t-3xl border-t border-x md:border border-ink-700 shadow-2xl max-h-[90vh] overflow-y-auto animate-slide-up">
       <div class="sticky top-0 bg-ink-850 border-b border-ink-700 px-5 py-4 flex items-center justify-between z-10">
@@ -589,7 +506,6 @@
           <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
-
       <div class="p-5 space-y-4">
         <div>
           <label class="block text-xs font-medium text-slate-400 mb-1.5">Trigger type</label>
@@ -616,7 +532,6 @@
           <input id="autoActionValue" placeholder="e.g. Hi there! 👋" class="w-full p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm placeholder-slate-500" />
         </div>
       </div>
-
       <div class="sticky bottom-0 bg-ink-850 border-t border-ink-700 p-4 flex gap-2 safe-bottom">
         <button onclick="closeAutoModal()" class="flex-1 py-3 rounded-xl bg-ink-800 hover:bg-ink-700 border border-ink-700 font-medium">Cancel</button>
         <button onclick="saveAuto()" class="flex-1 py-3 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 font-semibold shadow-glow">Save Rule</button>
@@ -624,12 +539,10 @@
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════════════════════
-       TOAST
-       ═══════════════════════════════════════════════════════ -->
+  <!-- TOAST -->
   <div id="toast" class="hidden fixed z-[60] left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 bottom-24 md:bottom-6 px-4 py-3 rounded-xl border shadow-2xl text-sm font-medium flex items-center gap-2.5 animate-slide-up max-w-[calc(100vw-2rem)]"></div>
 
-  <!-- Loading overlay for initial dashboard load -->
+  <!-- BOOT OVERLAY -->
   <div id="bootOverlay" class="hidden fixed inset-0 bg-ink-950 z-50 items-center justify-center">
     <div class="text-center">
       <div class="w-12 h-12 mx-auto rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center mb-3 animate-pulse-soft">
@@ -640,9 +553,7 @@
   </div>
 
 <script>
-/* ═══════════════════════════════════════════════════════════
-   UTILITIES
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ UTILITIES ═══════════════ */
 const $ = (id) => document.getElementById(id);
 const socket = io({ transports: ['websocket', 'polling'] });
 
@@ -678,228 +589,157 @@ function toast(msg, type = 'info') {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
+  return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-function togglePw() {
-  const p = $('password');
-  p.type = p.type === 'password' ? 'text' : 'password';
-}
-
-/* ═══════════════════════════════════════════════════════════
-   AUTH
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ AUTH ═══════════════ */
 async function login() {
   const username = $('username').value.trim();
   const password = $('password').value;
-
   if (!username || !password) {
     const e = $('loginError');
     e.textContent = 'Please enter both fields';
     e.classList.remove('hidden');
     return;
   }
-
-  const btn = $('loginBtn');
-  const txt = $('loginBtnText');
-  const sp = $('loginSpinner');
-  btn.disabled = true;
-  txt.textContent = 'Signing in…';
-  sp.classList.remove('hidden');
+  const btn = $('loginBtn'), txt = $('loginBtnText'), sp = $('loginSpinner');
+  btn.disabled = true; txt.textContent = 'Signing in…'; sp.classList.remove('hidden');
   $('loginError').classList.add('hidden');
-
   try {
-    await api('/api/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    });
+    await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
     await bootDashboard();
   } catch (e) {
     const er = $('loginError');
-    er.textContent = e.message;
-    er.classList.remove('hidden');
-    btn.disabled = false;
-    txt.textContent = 'Sign In';
-    sp.classList.add('hidden');
+    er.textContent = e.message; er.classList.remove('hidden');
+    btn.disabled = false; txt.textContent = 'Sign In'; sp.classList.add('hidden');
   }
 }
-
-$('password')?.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') login();
-});
+$('password')?.addEventListener('keypress', (e) => { if (e.key === 'Enter') login(); });
 
 async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch {}
   location.reload();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   DASHBOARD BOOT
-   ═══════════════════════════════════════════════════════════ */
 async function bootDashboard() {
   $('bootOverlay').classList.remove('hidden');
   $('bootOverlay').classList.add('flex');
   $('loginView').classList.add('hidden');
   $('dashView').classList.remove('hidden');
   $('mobileNav').classList.remove('hidden');
-
-  await Promise.all([
-    refreshStatus().catch(() => {}),
-    loadCommands().catch(() => {}),
-  ]);
+  await Promise.all([refreshStatus().catch(() => {}), loadCommands().catch(() => {})]);
   $('bootOverlay').classList.add('hidden');
   $('bootOverlay').classList.remove('flex');
 }
 
-/* ═══════════════════════════════════════════════════════════
-   TABS
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ TABS ═══════════════ */
 function switchTab(tab) {
   document.querySelectorAll('.tab-panel').forEach((p) => p.classList.add('hidden'));
   const panel = $('tab-' + tab);
-  if (panel) {
-    panel.classList.remove('hidden');
-    panel.classList.add('animate-slide-up');
-  }
-
-  document.querySelectorAll('.nav-item').forEach((b) => {
-    b.classList.toggle('active', b.dataset.tab === tab);
-  });
-  document.querySelectorAll('.nav-item-mobile').forEach((b) => {
-    b.classList.toggle('active', b.dataset.tab === tab);
-  });
+  if (panel) { panel.classList.remove('hidden'); panel.classList.add('animate-slide-up'); }
+  document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.nav-item-mobile').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
 
   if (tab === 'storage') loadStorage();
   if (tab === 'logs') loadLogs();
   if (tab === 'automations') loadAutomations();
   if (tab === 'system') loadSystem();
+  if (tab === 'ping') loadPing();
 }
-
 document.querySelectorAll('.nav-item, .nav-item-mobile').forEach((btn) => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
-/* ═══════════════════════════════════════════════════════════
-   STATUS
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ STATUS ═══════════════ */
 let lastStatus = 'disconnected';
 async function refreshStatus() {
   try {
     const s = await api('/api/status');
-    if (s.status !== lastStatus) {
-      lastStatus = s.status;
-      setStatus(s.status, s.phone);
-    }
+    if (s.status !== lastStatus) { lastStatus = s.status; setStatus(s.status, s.phone); }
   } catch {}
 }
-
 function setStatus(status, phone) {
-  // Chips
-  const chipColors = {
-    connected: 'emerald',
-    qr: 'yellow',
-    reconnecting: 'orange',
-    disconnected: 'slate',
-  };
+  const chipColors = { connected:'emerald', qr:'yellow', reconnecting:'orange', disconnected:'slate' };
   const color = chipColors[status] || 'slate';
-
   const mkChip = (el) => {
     if (!el) return;
     const dotColors = {
-      emerald: 'bg-emerald-400',
-      yellow: 'bg-yellow-400 animate-pulse-soft',
-      orange: 'bg-orange-400 animate-pulse-soft',
-      slate: 'bg-slate-500',
+      emerald:'bg-emerald-400', yellow:'bg-yellow-400 animate-pulse-soft',
+      orange:'bg-orange-400 animate-pulse-soft', slate:'bg-slate-500',
     };
-    el.innerHTML = `
-      <span class="w-1.5 h-1.5 rounded-full ${dotColors[color]}"></span>
-      <span class="text-[10px] font-medium text-${color}-400 uppercase tracking-wider">${status}</span>
-    `;
+    el.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${dotColors[color]}"></span><span class="text-[10px] font-medium text-${color}-400 uppercase tracking-wider">${status}</span>`;
   };
-  mkChip($('statusChipMobile'));
-  mkChip($('statusChipDesktop'));
+  mkChip($('statusChipMobile')); mkChip($('statusChipDesktop'));
 
-  // Session badge
   const badge = $('sessionBadge');
   const badgeMap = {
-    connected: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-    qr: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
-    reconnecting: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
-    disconnected: 'bg-ink-800 text-slate-400 border-ink-700',
+    connected:'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    qr:'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+    reconnecting:'bg-orange-500/15 text-orange-400 border-orange-500/30',
+    disconnected:'bg-ink-800 text-slate-400 border-ink-700',
   };
   badge.className = `chip px-2 py-1 rounded-md border ${badgeMap[status] || badgeMap.disconnected}`;
   badge.textContent = status;
 
-  // Panels
-  const qrBox = $('qrBox');
-  const connectedBox = $('connectedBox');
-  const idleBox = $('idleBox');
-  const hint = $('connectHint');
+  const qrBox = $('qrBox'), connectedBox = $('connectedBox'), idleBox = $('idleBox');
+  const pairingBox = $('pairingBox');
 
   if (status === 'connected') {
-    qrBox.classList.add('hidden');
-    idleBox.classList.add('hidden');
-    connectedBox.classList.remove('hidden');
+    qrBox.classList.add('hidden'); idleBox.classList.add('hidden');
+    pairingBox.classList.add('hidden'); connectedBox.classList.remove('hidden');
     $('connectedPhone').textContent = phone || '';
-    hint.textContent = '';
   } else if (status === 'qr') {
-    connectedBox.classList.add('hidden');
-    idleBox.classList.add('hidden');
+    connectedBox.classList.add('hidden'); idleBox.classList.add('hidden');
+    pairingBox.classList.add('hidden');
   } else {
-    connectedBox.classList.add('hidden');
-    qrBox.classList.add('hidden');
+    connectedBox.classList.add('hidden'); qrBox.classList.add('hidden');
     idleBox.classList.remove('hidden');
-    hint.textContent = status === 'reconnecting'
+    $('connectHint').textContent = status === 'reconnecting'
       ? 'Reconnecting to WhatsApp…'
-      : 'Click start to generate a QR code';
+      : 'Scan QR with WhatsApp → Linked Devices';
   }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   BOT CONTROL
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ BOT CONTROL ═══════════════ */
 async function startBot() {
   const btn = $('startBtn');
   btn.disabled = true;
   btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg> Starting…';
-
   try {
-    await api('/api/bot/start', { method: 'POST' });
+    await api('/api/bot/start', { method: 'POST', body: JSON.stringify({}) });
     toast('Bot starting — QR incoming', 'info');
-  } catch (e) {
-    toast(e.message, 'error');
-  } finally {
+  } catch (e) { toast(e.message, 'error'); }
+  finally {
     btn.disabled = false;
     btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg> Start Bot';
   }
 }
 
+async function requestPairing() {
+  const phone = $('phoneInput').value.trim();
+  if (!phone || phone.length < 8) return toast('Enter a valid phone number with country code', 'error');
+  try {
+    await api('/api/bot/start', { method: 'POST', body: JSON.stringify({ phone }) });
+    toast('Requesting pairing code...', 'info');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 async function logoutBot() {
-  if (!confirm('Logout WhatsApp session? You will need to rescan the QR.')) return;
+  if (!confirm('Logout WhatsApp session? You will need to rescan.')) return;
   try {
     await api('/api/bot/logout', { method: 'POST' });
     toast('Logged out from WhatsApp', 'success');
     setStatus('disconnected');
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  } catch (e) { toast(e.message, 'error'); }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COMMANDS
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ COMMANDS ═══════════════ */
 async function loadCommands() {
   try {
     const cmds = await api('/api/commands');
     const list = $('cmdList');
     if (!cmds.length) {
-      list.innerHTML = `
-        <div class="col-span-full bg-ink-850 border border-ink-700 rounded-xl p-6 text-center">
-          <p class="text-slate-400 text-sm">No commands registered yet.</p>
-          <p class="text-slate-500 text-xs mt-1">The bot needs to be started at least once to sync.</p>
-        </div>`;
+      list.innerHTML = '<div class="col-span-full bg-ink-850 border border-ink-700 rounded-xl p-6 text-center"><p class="text-slate-400 text-sm">No commands registered yet.</p></div>';
       return;
     }
     list.innerHTML = cmds.map((c) => `
@@ -912,42 +752,27 @@ async function loadCommands() {
           <input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCmd('${c.command}', this.checked, this)">
           <span class="knob"></span>
         </label>
-      </div>
-    `).join('');
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+      </div>`).join('');
+  } catch (e) { toast(e.message, 'error'); }
 }
-
 async function toggleCmd(name, enabled, input) {
   const label = input.closest('.toggle');
   label.className = `toggle ${enabled ? 'on' : 'off'}`;
   try {
-    await api('/api/commands/' + name, {
-      method: 'POST',
-      body: JSON.stringify({ enabled }),
-    });
+    await api('/api/commands/' + name, { method: 'POST', body: JSON.stringify({ enabled }) });
   } catch (e) {
-    toast(e.message, 'error');
-    input.checked = !enabled;
+    toast(e.message, 'error'); input.checked = !enabled;
     label.className = `toggle ${!enabled ? 'on' : 'off'}`;
   }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   AUTOMATIONS
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ AUTOMATIONS ═══════════════ */
 async function loadAutomations() {
   try {
     const rules = await api('/api/automations');
     const list = $('autoList');
     if (!rules.length) {
-      list.innerHTML = `
-        <div class="bg-ink-850 border border-dashed border-ink-700 rounded-xl p-8 text-center">
-          <svg class="w-10 h-10 mx-auto text-slate-600 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-          <p class="text-slate-400 text-sm font-medium">No rules yet</p>
-          <p class="text-slate-500 text-xs mt-1">Create your first auto-reply rule</p>
-        </div>`;
+      list.innerHTML = '<div class="bg-ink-850 border border-dashed border-ink-700 rounded-xl p-8 text-center"><p class="text-slate-400 text-sm">No rules yet</p><p class="text-slate-500 text-xs mt-1">Create your first auto-reply rule</p></div>';
       return;
     }
     list.innerHTML = rules.map((r) => `
@@ -958,10 +783,7 @@ async function loadAutomations() {
               <span class="text-[9px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">${escapeHtml(r.trigger.type)}</span>
               <span class="font-mono text-sm text-slate-200 truncate">${escapeHtml(r.trigger.value)}</span>
             </div>
-            <div class="flex items-start gap-2 text-xs text-slate-400">
-              <svg class="w-3 h-3 mt-0.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
-              <span class="truncate">${escapeHtml(r.action.text || r.action.emoji || '')}</span>
-            </div>
+            <div class="text-xs text-slate-400 truncate">→ ${escapeHtml(r.action.text || r.action.emoji || '')}</div>
           </div>
           <label class="toggle ${r.enabled ? 'on' : 'off'} mt-0.5">
             <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleAuto(${r.id}, this.checked, this)">
@@ -969,118 +791,84 @@ async function loadAutomations() {
           </label>
         </div>
         <div class="mt-3 pt-3 border-t border-ink-800 flex justify-end">
-          <button onclick="deleteAuto(${r.id})" class="text-[11px] text-red-400 hover:text-red-300 flex items-center gap-1">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg>
-            Delete
-          </button>
+          <button onclick="deleteAuto(${r.id})" class="text-[11px] text-red-400 hover:text-red-300">Delete</button>
         </div>
-      </div>
-    `).join('');
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+      </div>`).join('');
+  } catch (e) { toast(e.message, 'error'); }
 }
-
-function openAutoModal() {
-  $('autoModal').classList.remove('hidden');
-  document.body.style.overflow = 'hidden';
-}
-function closeAutoModal() {
-  $('autoModal').classList.add('hidden');
-  document.body.style.overflow = '';
-}
+function openAutoModal() { $('autoModal').classList.remove('hidden'); document.body.style.overflow = 'hidden'; }
+function closeAutoModal() { $('autoModal').classList.add('hidden'); document.body.style.overflow = ''; }
 
 async function saveAuto() {
-  const trigger = {
-    type: $('autoTriggerType').value,
-    value: $('autoTriggerValue').value.trim(),
-  };
+  const trigger = { type: $('autoTriggerType').value, value: $('autoTriggerValue').value.trim() };
   const actionType = $('autoActionType').value;
   const actionValue = $('autoActionValue').value.trim();
-  const action = actionType === 'reply'
-    ? { type: 'reply', text: actionValue }
-    : { type: 'react', emoji: actionValue };
-
-  if (!trigger.value || !actionValue) {
-    toast('Fill in all fields', 'error');
-    return;
-  }
+  const action = actionType === 'reply' ? { type:'reply', text: actionValue } : { type:'react', emoji: actionValue };
+  if (!trigger.value || !actionValue) return toast('Fill in all fields', 'error');
   try {
-    await api('/api/automations', {
-      method: 'POST',
-      body: JSON.stringify({ trigger, action }),
-    });
+    await api('/api/automations', { method: 'POST', body: JSON.stringify({ trigger, action }) });
     closeAutoModal();
-    $('autoTriggerValue').value = '';
-    $('autoActionValue').value = '';
-    toast('Rule created', 'success');
-    loadAutomations();
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+    $('autoTriggerValue').value = ''; $('autoActionValue').value = '';
+    toast('Rule created', 'success'); loadAutomations();
+  } catch (e) { toast(e.message, 'error'); }
 }
-
 async function toggleAuto(id, enabled, input) {
   const label = input.closest('.toggle');
   label.className = `toggle ${enabled ? 'on' : 'off'}`;
-  try {
-    await api('/api/automations/' + id, {
-      method: 'PATCH',
-      body: JSON.stringify({ enabled }),
-    });
-  } catch (e) {
-    toast(e.message, 'error');
-    input.checked = !enabled;
-    label.className = `toggle ${!enabled ? 'on' : 'off'}`;
-  }
+  try { await api('/api/automations/' + id, { method: 'PATCH', body: JSON.stringify({ enabled }) }); }
+  catch (e) { toast(e.message, 'error'); input.checked = !enabled; label.className = `toggle ${!enabled ? 'on' : 'off'}`; }
 }
-
 async function deleteAuto(id) {
   if (!confirm('Delete this rule?')) return;
-  try {
-    await api('/api/automations/' + id, { method: 'DELETE' });
-    toast('Rule deleted', 'success');
-    loadAutomations();
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  try { await api('/api/automations/' + id, { method: 'DELETE' }); toast('Rule deleted', 'success'); loadAutomations(); }
+  catch (e) { toast(e.message, 'error'); }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   STORAGE
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ STORAGE ═══════════════ */
 let storageCache = [];
 async function loadStorage() {
   try {
     const type = $('storageFilter').value;
-    storageCache = await api('/api/storage' + (type ? '?type=' + type : ''));
+    const [data, stats] = await Promise.all([
+      api('/api/storage' + (type ? '?type=' + type : '')),
+      api('/api/storage/stats').catch(() => null),
+    ]);
+    storageCache = data;
+    if (stats) renderStorageStats(stats);
     renderStorage();
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  } catch (e) { toast(e.message, 'error'); }
 }
-
+function renderStorageStats(s) {
+  const card = (label, value, sub = '', color = 'emerald') => `
+    <div class="bg-ink-850 border border-ink-700 rounded-xl p-4">
+      <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">${label}</div>
+      <div class="font-bold text-lg text-${color}-400">${value}</div>
+      ${sub ? `<div class="text-[10px] text-slate-500 mt-0.5">${sub}</div>` : ''}
+    </div>`;
+  const tableRows = s.tables.reduce((a, t) => a + t.rows, 0);
+  $('storageStats').innerHTML = [
+    card('Database size', s.db.pretty),
+    card('Total rows', tableRows.toLocaleString()),
+    card('Sessions', s.sessions.connected, `${s.sessions.total} total`, 'sky'),
+    card('Biggest entry', s.biggest[0] ? `${(s.biggest[0].bytes / 1024).toFixed(1)} KB` : '—', s.biggest[0]?.type || '', 'amber'),
+  ].join('');
+}
 function renderStorage() {
   const q = $('storageSearch').value.toLowerCase();
   const data = q ? storageCache.filter((s) => s.key.toLowerCase().includes(q)) : storageCache;
   const list = $('storageList');
-
   if (!data.length) {
-    list.innerHTML = `
-      <div class="bg-ink-850 border border-dashed border-ink-700 rounded-xl p-8 text-center">
-        <p class="text-slate-400 text-sm">No entries</p>
-      </div>`;
+    list.innerHTML = '<div class="bg-ink-850 border border-dashed border-ink-700 rounded-xl p-8 text-center"><p class="text-slate-400 text-sm">No entries</p></div>';
     return;
   }
-
   const typeColors = {
-    contact: 'bg-sky-500/10 text-sky-400 border-sky-500/30',
-    group: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
-    note: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-    anti: 'bg-red-500/10 text-red-400 border-red-500/30',
-    key: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+    contact:'bg-sky-500/10 text-sky-400 border-sky-500/30',
+    group:'bg-purple-500/10 text-purple-400 border-purple-500/30',
+    note:'bg-amber-500/10 text-amber-400 border-amber-500/30',
+    anti:'bg-red-500/10 text-red-400 border-red-500/30',
+    key:'bg-slate-500/10 text-slate-400 border-slate-500/30',
+    ping:'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
   };
-
   list.innerHTML = data.map((s) => `
     <div class="bg-ink-850 border border-ink-700 rounded-xl p-3.5 flex items-start gap-3 hover-lift">
       <div class="flex-1 min-w-0">
@@ -1093,94 +881,112 @@ function renderStorage() {
       <button onclick="delStorage(${s.id})" class="shrink-0 p-1.5 rounded-lg text-red-400 hover:bg-red-500/10">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg>
       </button>
-    </div>
-  `).join('');
+    </div>`).join('');
 }
-
 async function delStorage(id) {
   if (!confirm('Delete this entry?')) return;
+  try { await api('/api/storage/' + id, { method: 'DELETE' }); loadStorage(); toast('Deleted', 'success'); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function runCleanup() {
+  if (!confirm('Prune logs older than 7 days + old pings?')) return;
   try {
-    await api('/api/storage/' + id, { method: 'DELETE' });
+    const r = await api('/api/storage/cleanup', { method: 'POST', body: JSON.stringify({ logsOlderThanDays: 7, keepPings: 200 }) });
+    toast(`Cleaned: ${r.logsDeleted} logs, ${r.pingsDeleted} pings`, 'success');
     loadStorage();
-    toast('Deleted', 'success');
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  } catch (e) { toast(e.message, 'error'); }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   LOGS
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ LOGS ═══════════════ */
 async function loadLogs() {
   try {
     const logs = await api('/api/logs');
     const el = $('logList');
-    if (!logs.length) {
-      el.innerHTML = '<div class="p-6 text-center text-slate-500 text-sm">No logs yet</div>';
-      return;
-    }
+    if (!logs.length) { el.innerHTML = '<div class="p-6 text-center text-slate-500 text-sm">No logs yet</div>'; return; }
     el.innerHTML = logs.map(logLine).join('');
     el.scrollTop = el.scrollHeight;
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  } catch (e) { toast(e.message, 'error'); }
 }
-
 function logLine(l) {
   const cls = l.level === 'error' ? 'log-error' : l.level === 'warn' ? 'log-warn' : 'log-info';
   const lvlColor = l.level === 'error' ? 'text-red-400' : l.level === 'warn' ? 'text-amber-400' : 'text-emerald-400';
-  const time = new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = new Date(l.created_at).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
   return `<div class="log-line ${cls}">
     <span class="text-slate-600">${time}</span>
     <span class="${lvlColor} font-semibold uppercase">${escapeHtml(l.level)}</span>
     <span class="text-slate-300">${escapeHtml(l.message)}</span>
   </div>`;
 }
+function clearLogsUI() { $('logList').innerHTML = '<div class="p-6 text-center text-slate-500 text-sm">Cleared</div>'; }
 
-function clearLogsUI() {
-  $('logList').innerHTML = '<div class="p-6 text-center text-slate-500 text-sm">Cleared</div>';
+/* ═══════════════ PING ═══════════════ */
+async function loadPing() {
+  try {
+    const [stats, history] = await Promise.all([api('/api/ping/stats'), api('/api/ping/history')]);
+    const stat = (label, value, sub = '', color = 'emerald') => `
+      <div class="bg-ink-850 border border-ink-700 rounded-xl p-4">
+        <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">${label}</div>
+        <div class="font-bold text-lg text-${color}-400">${value}</div>
+        ${sub ? `<div class="text-[10px] text-slate-500 mt-0.5">${sub}</div>` : ''}
+      </div>`;
+    $('pingStats').innerHTML = [
+      stat('Uptime', `${stats.uptime}%`, `${stats.ok}/${stats.total} OK`),
+      stat('Avg latency', `${stats.avgMs}ms`, 'last 100 pings', 'sky'),
+      stat('Failures', stats.fail, 'last 100 pings', stats.fail ? 'red' : 'emerald'),
+      stat('Last ping', history.length ? timeAgo(history[history.length - 1].at) : '—', '', 'amber'),
+    ].join('');
+
+    $('pingHistory').innerHTML = history.slice().reverse().map((p) => `
+      <div class="flex items-center justify-between px-4 py-2.5 border-b border-ink-800 last:border-0 text-xs">
+        <div class="flex items-center gap-2.5">
+          <span class="w-2 h-2 rounded-full ${p.ok ? 'bg-emerald-500' : 'bg-red-500'}"></span>
+          <span class="text-slate-300 font-mono">${new Date(p.at).toLocaleTimeString()}</span>
+        </div>
+        <div class="flex items-center gap-3 text-slate-400">
+          <span>${p.status || '—'}</span>
+          <span class="font-mono ${p.ok ? 'text-emerald-400' : 'text-red-400'}">${p.ms}ms</span>
+        </div>
+      </div>`).join('') || '<div class="p-6 text-center text-slate-500 text-sm">No pings yet</div>';
+  } catch (e) { toast(e.message, 'error'); }
+}
+function timeAgo(iso) {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SYSTEM
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ SYSTEM ═══════════════ */
 async function loadSystem() {
   try {
     const s = await api('/api/system');
-    const card = (label, value, sub = '') => `
+    const card = (label, value) => `
       <div class="bg-ink-850 border border-ink-700 rounded-xl p-4">
         <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">${label}</div>
         <div class="font-semibold text-sm truncate">${escapeHtml(value)}</div>
-        ${sub ? `<div class="text-[10px] text-slate-500 mt-0.5">${escapeHtml(sub)}</div>` : ''}
-      </div>
-    `;
+      </div>`;
     $('systemInfo').innerHTML = [
       card('Platform', `${s.platform} ${s.arch}`),
       card('Node', s.node),
       card('Uptime', s.uptime),
       card('RAM', `${s.memUsed} / ${s.memTotal} GB`),
-      card('CPU Cores', s.cpus),
-      card('Storage Rows', s.dbStorage),
+      card('CPU Cores', String(s.cpus)),
+      card('Storage Rows', String(s.dbStorage)),
     ].join('');
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  } catch (e) { toast(e.message, 'error'); }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SOCKET.IO
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ SOCKET.IO ═══════════════ */
 let qrDeadline = 0;
-
 socket.on('qr', ({ qr, expiresIn }) => {
   $('qrBox').classList.remove('hidden');
   $('connectedBox').classList.add('hidden');
   $('idleBox').classList.add('hidden');
+  $('pairingBox').classList.add('hidden');
   $('qrImg').src = qr;
   qrDeadline = Date.now() + (expiresIn || 20000);
   setStatus('qr');
 });
-
 setInterval(() => {
   if (!qrDeadline) return;
   const left = Math.max(0, Math.ceil((qrDeadline - Date.now()) / 1000));
@@ -1189,8 +995,24 @@ setInterval(() => {
   if (left === 0) qrDeadline = 0;
 }, 500);
 
-socket.on('status', ({ status, phone }) => setStatus(status, phone));
+socket.on('pairing-code', ({ code }) => {
+  $('pairingBox').classList.remove('hidden');
+  $('pairingCode').textContent = code.match(/.{1,4}/g)?.join(' ') || code;
+  $('idleBox').classList.add('hidden');
+  $('qrBox').classList.add('hidden');
+  toast('Pairing code ready — enter it on your phone', 'success');
+});
+socket.on('pairing-code-error', ({ error }) => {
+  toast('Pairing failed: ' + error, 'error');
+  $('pairingBox').classList.add('hidden');
+  $('idleBox').classList.remove('hidden');
+});
 
+socket.on('status', ({ status, phone }) => setStatus(status, phone));
+socket.on('ping', () => {
+  const tab = $('tab-ping');
+  if (tab && !tab.classList.contains('hidden')) loadPing();
+});
 socket.on('log', (entry) => {
   if (!$('liveLogs')?.checked) return;
   const logsTab = $('tab-logs');
@@ -1198,24 +1020,18 @@ socket.on('log', (entry) => {
   const el = $('logList');
   el.insertAdjacentHTML('beforeend', logLine(entry));
   el.scrollTop = el.scrollHeight;
-  // Trim
   while (el.children.length > 500) el.removeChild(el.firstChild);
 });
-
 socket.on('connect', () => console.log('🔌 Socket connected'));
 socket.on('disconnect', () => toast('Connection lost — retrying…', 'error'));
 
-/* ═══════════════════════════════════════════════════════════
-   BOOT
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════ BOOT ═══════════════ */
 (async () => {
   try {
     await api('/api/me');
     await bootDashboard();
     setInterval(refreshStatus, 8000);
-  } catch {
-    // Not logged in — stay on login
-  }
+  } catch {}
 })();
 </script>
 </body>

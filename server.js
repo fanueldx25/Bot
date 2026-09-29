@@ -3,17 +3,17 @@ import http from 'http';
 import { Server as SocketServer } from 'socket.io';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
-import bcrypt from 'bcrypt';
 import dotenv from 'dotenv';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 
 import { pool, initDb, getStatus, log } from './db.js';
-import { startBot, setIO, logout, getSock, getIO } from './bot.js';
+import { startBot, setIO, logout, getSock } from './bot.js';
 import { loadCommands } from './commands/index.js';
 import { loadAntiSettings } from './commands/anti.js';
 import { invalidateAutomationCache } from './engine.js';
+import { startSelfPing, getPingHistory, getPingStats } from './ping.js';
 
 dotenv.config();
 
@@ -48,7 +48,6 @@ const sessionMiddleware = session({
 });
 app.use(sessionMiddleware);
 
-/* Share session with Socket.IO */
 io.engine.use(sessionMiddleware);
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -98,7 +97,9 @@ app.post('/api/bot/start', requireAuth, async (req, res) => {
   try {
     const existing = getSock();
     if (existing?.user) return res.json({ ok: true, message: 'Already connected' });
-    await startBot();
+
+    const { phone } = req.body || {};
+    await startBot({ phoneNumber: phone || null });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -151,7 +152,7 @@ app.get('/api/storage', requireAuth, async (req, res) => {
          WHERE session_id='owner' AND type=$1
          ORDER BY id DESC LIMIT 300`
       : `SELECT id, type, key, value, created_at FROM storage
-         WHERE session_id='owner' AND type NOT IN ('key')
+         WHERE session_id='owner' AND type NOT IN ('key','ping')
          ORDER BY id DESC LIMIT 300`;
     const { rows } = await pool.query(q, type ? [type] : []);
     res.json(rows);
@@ -164,6 +165,110 @@ app.delete('/api/storage/:id', requireAuth, async (req, res) => {
   try {
     await pool.query('DELETE FROM storage WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ═══════════════ Storage Metrics ═══════════════ */
+app.get('/api/storage/stats', requireAuth, async (req, res) => {
+  try {
+    const sizeQ = await pool.query(`
+      SELECT
+        pg_size_pretty(pg_database_size(current_database())) AS db_size,
+        pg_database_size(current_database()) AS db_bytes
+    `);
+
+    const countsQ = await pool.query(`
+      SELECT type, COUNT(*)::int AS count
+      FROM storage
+      WHERE session_id='owner'
+      GROUP BY type
+      ORDER BY count DESC
+    `);
+
+    const tablesQ = await pool.query(`
+      SELECT 'storage'       AS table, COUNT(*)::int AS rows FROM storage
+      UNION ALL SELECT 'logs',        COUNT(*)::int FROM logs
+      UNION ALL SELECT 'automations', COUNT(*)::int FROM automations
+      UNION ALL SELECT 'sessions',    COUNT(*)::int FROM sessions
+      UNION ALL SELECT 'command_settings', COUNT(*)::int FROM command_settings
+    `);
+
+    const biggestQ = await pool.query(`
+      SELECT type, key, pg_column_size(value)::int AS bytes
+      FROM storage
+      WHERE session_id='owner'
+      ORDER BY bytes DESC
+      LIMIT 10
+    `);
+
+    const sessionsQ = await pool.query(`
+      SELECT COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE status='connected')::int AS connected
+      FROM sessions
+    `);
+
+    res.json({
+      db: {
+        pretty: sizeQ.rows[0].db_size,
+        bytes: Number(sizeQ.rows[0].db_bytes),
+      },
+      byType: countsQ.rows,
+      tables: tablesQ.rows,
+      biggest: biggestQ.rows,
+      sessions: sessionsQ.rows[0],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/storage/cleanup', requireAuth, async (req, res) => {
+  try {
+    const { logsOlderThanDays = 7, keepPings = 200 } = req.body || {};
+
+    const logsDel = await pool.query(
+      `DELETE FROM logs
+       WHERE session_id='owner'
+         AND created_at < NOW() - ($1 || ' days')::interval`,
+      [logsOlderThanDays]
+    );
+
+    const pingsDel = await pool.query(
+      `DELETE FROM storage
+       WHERE id IN (
+         SELECT id FROM storage
+         WHERE session_id='owner' AND type='ping'
+         ORDER BY id DESC OFFSET $1
+       )`,
+      [keepPings]
+    );
+
+    res.json({
+      ok: true,
+      logsDeleted: logsDel.rowCount,
+      pingsDeleted: pingsDel.rowCount,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ═══════════════ Self-Ping ═══════════════ */
+app.get('/api/ping/history', requireAuth, async (req, res) => {
+  try {
+    const history = await getPingHistory(50);
+    res.json(history);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/ping/stats', requireAuth, async (req, res) => {
+  try {
+    const stats = await getPingStats();
+    res.json(stats);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -274,9 +379,7 @@ io.on('connection', (socket) => {
   socket.emit('ready');
 });
 
-/* ═══════════════ Log broadcaster ═══════════════ */
-// Wrap db log() to also emit to sockets
-const originalLog = log;
+/* ═══════════════ Emit log helper ═══════════════ */
 global.__emitLog = (entry) => io.emit('log', entry);
 
 /* ═══════════════ Boot ═══════════════ */
@@ -295,9 +398,9 @@ async function boot() {
   server.listen(PORT, () => {
     console.log(`🚀 Server listening on port ${PORT}`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    startSelfPing(io);
   });
 
-  // Auto-start bot on boot (it will use stored creds if available)
   try {
     await startBot();
   } catch (e) {

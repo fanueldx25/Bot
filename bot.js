@@ -3,7 +3,6 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   jidNormalizedUser,
-  getContentType,
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import pino from 'pino';
@@ -54,9 +53,12 @@ export async function humanSend(jid, content, opts = {}) {
 }
 
 /* ---------------- Connect ---------------- */
-export async function startBot() {
+export async function startBot({ phoneNumber = null } = {}) {
   const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
   const { version } = await fetchLatestBaileysVersion();
+  
+  const hasCreds = !!state.creds?.me;
+  const usePairing = !!phoneNumber && !hasCreds;
   
   sock = makeWASocket({
     version,
@@ -75,10 +77,27 @@ export async function startBot() {
   
   sock.ev.on('creds.update', saveCreds);
   
+  // PAIRING CODE — must be requested before registration, after socket init
+  if (usePairing && !sock.authState.creds.registered) {
+    const cleaned = phoneNumber.replace(/\D/g, '');
+    setTimeout(async () => {
+      try {
+        const code = await sock.requestPairingCode(cleaned);
+        console.log('🔑 Pairing code:', code);
+        ioRef?.emit('pairing-code', { code, phone: cleaned });
+        await log(SESSION_ID, 'info', `Pairing code issued for ${cleaned}: ${code}`);
+      } catch (e) {
+        console.error('pairing code failed:', e);
+        ioRef?.emit('pairing-code-error', { error: e.message });
+        await log(SESSION_ID, 'error', `Pairing code failed: ${e.message}`);
+      }
+    }, 3000);
+  }
+  
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     
-    if (qr) {
+    if (qr && !usePairing) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
       ioRef?.emit('qr', { qr: dataUrl, expiresIn: 20000 });
       await setStatus(SESSION_ID, 'qr');
@@ -101,7 +120,7 @@ export async function startBot() {
       });
       if (shouldReconnect) {
         console.log('🔄 Reconnecting in 3s...');
-        setTimeout(startBot, 3000);
+        setTimeout(() => startBot(), 3000);
       } else {
         console.log('❌ Logged out');
         await clearAuthState(SESSION_ID);
@@ -109,9 +128,6 @@ export async function startBot() {
     }
   });
   
-  /* ════════════════════════════════════════════════
-     MESSAGE HANDLER — anti-check + automations + commands
-     ════════════════════════════════════════════════ */
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const msg = messages[0];
@@ -120,7 +136,6 @@ export async function startBot() {
     const jid = jidNormalizedUser(msg.key.remoteJid);
     if (jid === 'status@broadcast') return;
     
-    // Extract text
     const m = msg.message;
     const text =
       m.conversation ||
@@ -138,7 +153,7 @@ export async function startBot() {
       console.error('view-once handler error:', e.message);
     }
     
-    // 2️⃣ Anti-link / anti-spam guards
+    // 2️⃣ Anti-link / anti-spam
     if (text) {
       try {
         const blocked = await antiCheck({ sock, msg, jid, text });
@@ -148,7 +163,7 @@ export async function startBot() {
       }
     }
     
-    // 3️⃣ Run automations
+    // 3️⃣ Automations
     if (text) {
       try {
         await runAutomations({ sock, msg, jid, text });
@@ -157,7 +172,7 @@ export async function startBot() {
       }
     }
     
-    // 4️⃣ Command parsing
+    // 4️⃣ Commands
     if (!text) return;
     const prefix = text[0];
     if (prefix !== '.' && prefix !== '!') return;
@@ -167,7 +182,6 @@ export async function startBot() {
     const handler = commands.get(cmd);
     if (!handler) return;
     
-    // 5️⃣ Permission check
     if (handler.ownerOnly && !isOwner(jid)) {
       return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
     }
