@@ -9,7 +9,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 
 import { pool, initDb, getStatus, log } from './db.js';
-import { startBot, setIO, logout, getSock } from './bot.js';
+import { startBot, setIO, logout, getSock, getRegisteredCommands } from './bot.js';
 import { loadCommands } from './commands/index.js';
 import { loadAntiSettings } from './commands/anti.js';
 import { invalidateAutomationCache } from './engine.js';
@@ -125,12 +125,38 @@ app.post('/api/bot/logout', requireAuth, async (req, res) => {
 /* ═══════════════ Commands ═══════════════ */
 app.get('/api/commands', requireAuth, async (req, res) => {
   try {
+    // 1. Pull from DB
     const { rows } = await pool.query(
       `SELECT command, enabled, config FROM command_settings
        WHERE session_id='owner' ORDER BY command`
     );
+
+    // 2. In-memory registry (source of truth right now)
+    const inMemory = getRegisteredCommands();
+    const dbNames = new Set(rows.map((r) => r.command));
+
+    // 3. Backfill any registered command missing from DB
+    const missing = inMemory.filter((name) => !dbNames.has(name));
+    for (const name of missing) {
+      rows.push({ command: name, enabled: true, config: {} });
+      try {
+        await pool.query(
+          `INSERT INTO command_settings (session_id, command, enabled)
+           VALUES ('owner', $1, TRUE)
+           ON CONFLICT (session_id, command) DO NOTHING`,
+          [name]
+        );
+      } catch (e) {
+        console.error('backfill failed for', name, e.message);
+      }
+    }
+
+    // 4. Sort alphabetically
+    rows.sort((a, b) => a.command.localeCompare(b.command));
+
     res.json(rows);
   } catch (e) {
+    console.error('/api/commands failed:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -226,7 +252,6 @@ app.get('/api/storage/stats', requireAuth, async (req, res) => {
       FROM sessions
     `);
 
-    // Breakdown: auth keys vs user data
     const breakdownQ = await pool.query(`
       SELECT
         COALESCE(SUM(pg_column_size(value)) FILTER (WHERE type='key'), 0)::bigint AS auth_bytes,
@@ -279,13 +304,9 @@ app.post('/api/storage/cleanup', requireAuth, async (req, res) => {
       [keepPings]
     );
 
-    // Also prune expired express sessions
     const sessDel = await pool.query(
       `DELETE FROM session WHERE expire < NOW()`
     );
-
-    // VACUUM can't run inside a transaction, so use a separate connection
-    // Just log — let Postgres autovacuum handle it
 
     res.json({
       ok: true,
@@ -433,7 +454,6 @@ global.__emitLog = (entry) => io.emit('log', entry);
 /* ═══════════════ DB Maintenance ═══════════════ */
 async function runMaintenance() {
   try {
-    // Prune logs older than 14 days (keeps your 1GB DB lean)
     const logsPruned = await pool.query(
       `DELETE FROM logs
        WHERE created_at < NOW() - INTERVAL '14 days'`
@@ -442,7 +462,6 @@ async function runMaintenance() {
       console.log(`🧹 Pruned ${logsPruned.rowCount} old logs`);
     }
 
-    // Prune expired express sessions
     const sessPruned = await pool.query(
       `DELETE FROM session WHERE expire < NOW()`
     );
@@ -450,7 +469,6 @@ async function runMaintenance() {
       console.log(`🧹 Pruned ${sessPruned.rowCount} expired sessions`);
     }
 
-    // Prune old pings — keep last 500
     const pingsPruned = await pool.query(
       `DELETE FROM storage
        WHERE id IN (
@@ -476,10 +494,7 @@ async function boot() {
     await loadAntiSettings();
     console.log('⚙️  Commands + anti settings loaded');
 
-    // One-time maintenance on boot
     await runMaintenance();
-
-    // Then every 6 hours
     setInterval(runMaintenance, 6 * 60 * 60 * 1000);
   } catch (e) {
     console.error('❌ Boot prep failed:', e);

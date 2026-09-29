@@ -9,7 +9,7 @@ import pino from 'pino';
 import { Boom } from '@hapi/boom';
 import { usePostgresAuthState, clearAuthState } from './auth.js';
 import { setStatus, log } from './db.js';
-import { isOwner, isCommandEnabled } from './commands/access.js';
+import { isOwner, isCommandEnabled, setLinkedNumber, getLinkedNumber } from './commands/access.js';
 import { handleViewOnce } from './view.js';
 import { runAutomations } from './engine.js';
 import { antiCheck } from './commands/anti.js';
@@ -28,6 +28,8 @@ const BENIGN_ERRORS = [
   'Socket Errored',
   'EPIPE',
   'ECONNRESET',
+  'Socket Connection Closed',
+  'Unexpected server response',
 ];
 
 process.on('unhandledRejection', (err) => {
@@ -132,6 +134,8 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     
     if (connection === 'open') {
       const phone = sock.user?.id?.split(':')[0] || null;
+      setLinkedNumber(phone); // 👈 register owner
+      console.log(`👑 Linked number set to owner: ${phone}`);
       await setStatus(SESSION_ID, 'connected', phone);
       ioRef?.emit('status', { status: 'connected', phone });
       await log(SESSION_ID, 'info', `Connected as ${phone}`);
@@ -150,21 +154,38 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
         setTimeout(() => startBot({ mode }), 3000);
       } else {
         console.log('❌ Logged out');
+        setLinkedNumber(null);
         await clearAuthState(SESSION_ID);
       }
     }
   });
   
   /* ════════════════════════════════════════════════
-     MESSAGE HANDLER
+     MESSAGE HANDLER — PRIVATE MODE
+     Allows messages from the bot's own number
      ════════════════════════════════════════════════ */
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const msg = messages[0];
-    if (!msg.message || msg.key.fromMe) return;
+    if (!msg.message) return;
     
     const jid = jidNormalizedUser(msg.key.remoteJid);
     if (jid === 'status@broadcast') return;
+    
+    const fromMe = !!msg.key.fromMe;
+    const senderJid = jidNormalizedUser(msg.key.participant || jid);
+    const senderNum = senderJid.split('@')[0].split(':')[0];
+    
+    // In private mode, the bot's own number IS the owner.
+    // Allow "fromMe" messages only when the sender is the owner.
+    // (When you message yourself, remoteJid = your own JID, fromMe = true.)
+    const linked = getLinkedNumber();
+    const isSelfMessage = fromMe && linked && senderNum === linked;
+    
+    if (fromMe && !isSelfMessage) {
+      // message sent by us to someone else — ignore
+      return;
+    }
     
     const m = msg.message;
     const text =
@@ -176,8 +197,11 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       m.listResponseMessage?.singleSelectReply?.selectedRowId ||
       '';
     
-    // Diagnostic — log every incoming message
-    console.log(`📩 [${jid.endsWith('@g.us') ? 'GROUP' : 'DM'}] ${jid.split('@')[0]}: "${text.slice(0, 60)}"`);
+    // Diagnostic log
+    console.log(
+      `📩 [${jid.endsWith('@g.us') ? 'GROUP' : isSelfMessage ? 'SELF' : 'DM'}] ` +
+      `${senderNum}: "${text.slice(0, 60)}"`
+    );
     
     // 1️⃣ View-once
     try {
@@ -196,8 +220,8 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       }
     }
     
-    // 3️⃣ Automations
-    if (text) {
+    // 3️⃣ Automations — skip for self-messages
+    if (text && !isSelfMessage) {
       try {
         await runAutomations({ sock, msg, jid, text });
       } catch (e) {
@@ -218,14 +242,15 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       return;
     }
     
-    // 5️⃣ Command enabled check (dashboard toggle)
+    // 5️⃣ Command enabled check
     if (!(await isCommandEnabled(cmd))) {
       console.log(`⏸️  Command .${cmd} is disabled`);
       return;
     }
     
     // 6️⃣ Permission check
-    if (handler.ownerOnly && !isOwner(jid)) {
+    if (handler.ownerOnly && !isOwner(senderJid)) {
+      console.log(`🔒 .${cmd} blocked — not owner (${senderNum})`);
       return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
     }
     
@@ -236,7 +261,8 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       text,
       args,
       isGroup: jid.endsWith('@g.us'),
-      sender: jidNormalizedUser(msg.key.participant || jid),
+      isSelfMessage,
+      sender: senderJid,
       reply: (content, opts) => humanSend(jid, content, { quoted: msg, ...opts }),
       react: (emoji) => sock.sendMessage(jid, { react: { text: emoji, key: msg.key } }),
     };
@@ -259,5 +285,6 @@ export async function logout() {
     try { await sock.logout(); } catch {}
     sock = null;
   }
+  setLinkedNumber(null);
   await clearAuthState(SESSION_ID);
 }

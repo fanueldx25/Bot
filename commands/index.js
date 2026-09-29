@@ -1,4 +1,5 @@
 import { registerCommand } from '../bot.js';
+import { registerCommandSetting } from './access.js';
 import info from './info.js';
 import group from './group.js';
 import access from './access.js';
@@ -7,21 +8,11 @@ import owner from './owner.js';
 import system from './system.js';
 import ai from './ai.js';
 
-const modules = {
-  info,
-  group,
-  access,
-  anti,
-  owner,
-  system,
-  ai,
-};
+const modules = { info, group, access, anti, owner, system, ai };
 
 /**
- * Loads all command modules and registers them with the bot.
- * Supports both:
- *   export default { ping: async (ctx) => {} }                 ← plain function
- *   export default { restart: { ownerOnly: true, handler } }   ← with metadata
+ * Loads all command modules, registers them in memory with the bot,
+ * AND writes each one to the command_settings table so the dashboard can list them.
  */
 export async function loadCommands() {
   let count = 0;
@@ -37,10 +28,12 @@ export async function loadCommands() {
     for (const [name, value] of Object.entries(map)) {
       if (typeof value === 'function') {
         registerCommand(name, value);
+        await registerCommandSetting(name, true);
         count++;
       } else if (value && typeof value.handler === 'function') {
         value.handler.ownerOnly = !!value.ownerOnly;
         registerCommand(name, value.handler);
+        await registerCommandSetting(name, true);
         count++;
         if (value.ownerOnly) ownerCount++;
       } else {
