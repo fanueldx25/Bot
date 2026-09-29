@@ -1,3 +1,21 @@
+/* ═══════════════════════════════════════════════════════════════════
+   WhatsApp Bot — bot.js
+   ---------------------------------------------------------------
+   Sections:
+   1. Imports
+   2. Global error handling
+   3. Module state
+   4. Named exports (for server.js)
+   5. Human-like helpers
+   6. Self-message helper
+   7. Connection manager
+   8. Incoming message handler
+   9. Logout
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────────────────────
+   1. IMPORTS
+   ───────────────────────────────────────────────────────────── */
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
@@ -7,6 +25,7 @@ import makeWASocket, {
 import QRCode from 'qrcode';
 import pino from 'pino';
 import { Boom } from '@hapi/boom';
+
 import { usePostgresAuthState, clearAuthState } from './auth.js';
 import { setStatus, log } from './db.js';
 import {
@@ -19,9 +38,9 @@ import { handleViewOnce } from './view.js';
 import { runAutomations } from './engine.js';
 import { antiCheck } from './commands/anti.js';
 
-/* ═══════════════════════════════════════════════
-   Global handler — silence benign Baileys noise
-   ═══════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────
+   2. GLOBAL ERROR HANDLING
+   ───────────────────────────────────────────────────────────── */
 const BENIGN_ERRORS = [
   'Timed Out',
   'Connection Closed',
@@ -46,29 +65,31 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
 });
 
-/* ═══════════════════════════════════════════════
-   State
-   ═══════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────
+   3. MODULE STATE
+   ───────────────────────────────────────────────────────────── */
 const SESSION_ID = 'owner';
 const logger = pino({ level: 'silent' });
 
 let sock = null;
 let ioRef = null;
-let myNumber = null; // own JID number, set on connect
+let myNumber = null;              // own JID number (set on connect)
+let socketCounter = 0;            // for detecting zombie sockets
 const commands = new Map();
 
-/* ═══════════════════════════════════════════════
-   Named exports
-   ═══════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────
+   4. NAMED EXPORTS (used by server.js)
+   ───────────────────────────────────────────────────────────── */
 export const setIO = (io) => { ioRef = io; };
 export const getSock = () => sock;
 export const getIO = () => ioRef;
+export const getMyNumber = () => myNumber;
 export const registerCommand = (name, handler) => commands.set(name, handler);
 export const getRegisteredCommands = () => Array.from(commands.keys());
 
-/* ═══════════════════════════════════════════════
-   Human-like helpers
-   ═══════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────
+   5. HUMAN-LIKE HELPERS
+   ───────────────────────────────────────────────────────────── */
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -94,9 +115,9 @@ export async function humanSend(jid, content, opts = {}) {
   return sock.sendMessage(jid, content, opts);
 }
 
-/* ═══════════════════════════════════════════════
-   Send a message to yourself
-   ═══════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────
+   6. SELF-MESSAGE HELPER
+   ───────────────────────────────────────────────────────────── */
 export async function sendToSelf(content) {
   if (!sock) throw new Error('Socket not connected');
   const num = myNumber || sock.user?.id?.split(':')[0];
@@ -106,10 +127,25 @@ export async function sendToSelf(content) {
   return sock.sendMessage(selfJid, content);
 }
 
-/* ═══════════════════════════════════════════════
-   Connect
-   ═══════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────
+   7. CONNECTION MANAGER
+   ───────────────────────────────────────────────────────────── */
 export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
+  // ── 7a. Clean up previous socket ──
+  if (sock) {
+    console.log('♻️  Closing previous socket');
+    try {
+      sock.ev.removeAllListeners('messages.upsert');
+      sock.ev.removeAllListeners('connection.update');
+      sock.ev.removeAllListeners('creds.update');
+      sock.end?.(new Error('replaced'));
+    } catch (e) {
+      console.warn('socket close error:', e.message);
+    }
+    sock = null;
+  }
+
+  // ── 7b. Load auth state ──
   const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
   const { version } = await fetchLatestBaileysVersion();
 
@@ -117,8 +153,13 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   const usePairing = mode === 'pair' && !!phoneNumber && !hasCreds;
   const useQR = !usePairing;
 
-  console.log(`🚀 startBot mode=${mode} usePairing=${usePairing} useQR=${useQR}`);
+  socketCounter++;
+  console.log(
+    `🚀 startBot #${socketCounter} mode=${mode} ` +
+    `usePairing=${usePairing} useQR=${useQR} hasCreds=${hasCreds}`
+  );
 
+  // ── 7c. Create socket ──
   sock = makeWASocket({
     version,
     logger,
@@ -134,9 +175,24 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     getMessage: async () => ({ conversation: '' }),
   });
 
+  // ── 7d. Event trace (debug) ──
+  const origOn = sock.ev.on.bind(sock.ev);
+  sock.ev.on = (event, handler) => {
+    if (event !== 'creds.update') {
+      console.log(`📡 Attached: ${event}`);
+    }
+    return origOn(event, (...args) => {
+      if (event === 'messages.upsert') {
+        const p = args[0];
+        console.log(`🔔 messages.upsert: type=${p?.type} count=${p?.messages?.length || 0}`);
+      }
+      return handler(...args);
+    });
+  };
+
   sock.ev.on('creds.update', saveCreds);
 
-  /* ---------- Pairing code ---------- */
+  // ── 7e. Pairing code ──
   if (usePairing && !sock.authState.creds.registered) {
     const cleaned = phoneNumber.replace(/\D/g, '');
     setTimeout(async () => {
@@ -153,7 +209,7 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     }, 3000);
   }
 
-  /* ---------- Connection updates ---------- */
+  // ── 7f. Connection lifecycle ──
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -167,22 +223,25 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       const phone = sock.user?.id?.split(':')[0] || null;
       myNumber = phone;
       setLinkedNumber(phone);
+
       console.log(`👑 Own number: ${myNumber}`);
       console.log(`👑 Linked number set: ${getLinkedNumber()}`);
+      console.log('✅ Connected:', phone);
+
       await setStatus(SESSION_ID, 'connected', phone);
       ioRef?.emit('status', { status: 'connected', phone });
       await log(SESSION_ID, 'info', `Connected as ${phone}`);
-      console.log('✅ Connected:', phone);
 
-      // Send a welcome self-message so you know it's alive
+      // Send welcome self-message after 3s
       setTimeout(async () => {
         try {
           await sendToSelf({
             text:
               `🤖 *Bot connected*\n` +
-              `Number: \`${phone}\`\n` +
+              `Number: \`${phone}\`\n\n` +
               `Send \`.ping\` to test.\n` +
-              `Send \`.selftest\` to verify replies.`,
+              `Send \`.selftest\` to verify replies.\n` +
+              `Send \`.help\` for all commands.`,
           });
           console.log('📤 Welcome message sent to self');
         } catch (e) {
@@ -194,12 +253,15 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
+
+      console.log(`⚠️  Connection closed (code=${code}, reconnect=${shouldReconnect})`);
+
       await setStatus(SESSION_ID, shouldReconnect ? 'reconnecting' : 'disconnected');
       ioRef?.emit('status', {
         status: shouldReconnect ? 'reconnecting' : 'disconnected',
       });
+
       if (shouldReconnect) {
-        console.log('🔄 Reconnecting in 3s...');
         setTimeout(() => startBot({ mode }), 3000);
       } else {
         console.log('❌ Logged out');
@@ -210,17 +272,14 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     }
   });
 
-  /* ════════════════════════════════════════════════
-     MESSAGE HANDLER — PRIVATE MODE
-     ════════════════════════════════════════════════ */
+  // ── 7g. Incoming messages ──
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
-
     for (const msg of messages) {
       try {
-        await handleMessage(msg);
+        await handleIncomingMessage(msg);
       } catch (e) {
-        console.error('handleMessage error:', e);
+        console.error('handleIncomingMessage error:', e);
       }
     }
   });
@@ -228,11 +287,14 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   return sock;
 }
 
-/* ═══════════════════════════════════════════════
-   Message handler (separated for clarity)
-   ═══════════════════════════════════════════════ */
-async function handleMessage(msg) {
-  if (!msg.message) return;
+/* ─────────────────────────────────────────────────────────────
+   8. INCOMING MESSAGE HANDLER
+   ───────────────────────────────────────────────────────────── */
+async function handleIncomingMessage(msg) {
+  if (!msg.message) {
+    console.log('⏭️  No message payload, skipping');
+    return;
+  }
 
   const jid = jidNormalizedUser(msg.key.remoteJid);
   if (jid === 'status@broadcast') return;
@@ -240,12 +302,20 @@ async function handleMessage(msg) {
   const fromMe = !!msg.key.fromMe;
   const senderJid = jidNormalizedUser(msg.key.participant || jid);
   const senderNum = senderJid.split('@')[0].split(':')[0];
+  const recipientNum = jid.split('@')[0].split(':')[0];
 
-  // Live fallback — use own number from socket if getLinkedNumber() is null
-  const linked = getLinkedNumber() || myNumber || sock?.user?.id?.split(':')[0] || null;
-  const isSelfMessage = fromMe && linked && senderNum === linked;
+  // Owner fallback chain
+  const linked =
+    getLinkedNumber() ||
+    myNumber ||
+    sock?.user?.id?.split(':')[0] ||
+    null;
 
-  // Extract text early for logging
+  // Private-mode detection: fromMe AND recipient is our own number
+  const isSelfMessage =
+    fromMe && linked && recipientNum === linked;
+
+  // Extract text
   const m = msg.message;
   const text =
     m.conversation ||
@@ -256,26 +326,28 @@ async function handleMessage(msg) {
     m.listResponseMessage?.singleSelectReply?.selectedRowId ||
     '';
 
-  // Verbose debug line
+  const tag = jid.endsWith('@g.us') ? 'GROUP' : isSelfMessage ? 'SELF' : 'DM';
+
   console.log(
-    `📩 [${jid.endsWith('@g.us') ? 'GROUP' : isSelfMessage ? 'SELF' : 'DM'}] ` +
-    `fromMe=${fromMe} sender=${senderNum} linked=${linked} ` +
-    `text="${text.slice(0, 40)}"`
+    `📩 [${tag}] fromMe=${fromMe} sender=${senderNum} ` +
+    `recipient=${recipientNum} linked=${linked} self=${isSelfMessage} ` +
+    `text="${text.slice(0, 50)}"`
   );
 
+  // Skip outgoing messages to others
   if (fromMe && !isSelfMessage) {
     console.log('⏭️  Skipped (outgoing to someone else)');
     return;
   }
 
-  // 1️⃣ View-once
+  // ── 1. View-once ──
   try {
     await handleViewOnce({ sock, msg, jid });
   } catch (e) {
-    console.error('view-once handler error:', e.message);
+    console.error('view-once error:', e.message);
   }
 
-  // 2️⃣ Anti-check (skip for self)
+  // ── 2. Anti-check (skip for self) ──
   if (text && !isSelfMessage) {
     try {
       const blocked = await antiCheck({ sock, msg, jid, text });
@@ -285,7 +357,7 @@ async function handleMessage(msg) {
     }
   }
 
-  // 3️⃣ Automations (skip for self)
+  // ── 3. Automations (skip for self) ──
   if (text && !isSelfMessage) {
     try {
       await runAutomations({ sock, msg, jid, text });
@@ -294,7 +366,7 @@ async function handleMessage(msg) {
     }
   }
 
-  // 4️⃣ Commands
+  // ── 4. Command parsing ──
   if (!text) return;
   const prefix = text[0];
   if (prefix !== '.' && prefix !== '!') {
@@ -310,18 +382,20 @@ async function handleMessage(msg) {
     return;
   }
 
-  // 5️⃣ Enabled check
+  // ── 5. Enabled check ──
   if (!(await isCommandEnabled(cmd))) {
-    console.log(`⏸️  Command .${cmd} is disabled`);
+    console.log(`⏸️  .${cmd} disabled`);
     return;
   }
 
-  // 6️⃣ Permission check
-  if (handler.ownerOnly && !isOwner(senderJid)) {
-    console.log(`🔒 .${cmd} blocked — not owner`);
+  // ── 6. Owner check ──
+  const ownerAllowed = isSelfMessage || isOwner(senderJid);
+  if (handler.ownerOnly && !ownerAllowed) {
+    console.log(`🔒 .${cmd} blocked — not owner (self=${isSelfMessage})`);
     return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
   }
 
+  // ── 7. Execute ──
   const ctx = {
     sock,
     msg,
@@ -341,22 +415,28 @@ async function handleMessage(msg) {
     await handler(ctx);
     console.log(`✅ .${cmd} completed`);
   } catch (err) {
-    console.error(`❌ Command .${cmd} failed:`, err);
+    console.error(`❌ .${cmd} failed:`, err);
     try {
       await humanSend(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
     } catch {}
   }
 }
 
-/* ═══════════════════════════════════════════════
-   Logout
-   ═══════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────
+   9. LOGOUT
+   ───────────────────────────────────────────────────────────── */
 export async function logout() {
   if (sock) {
-    try { await sock.logout(); } catch {}
+    try {
+      sock.ev.removeAllListeners('messages.upsert');
+      sock.ev.removeAllListeners('connection.update');
+      sock.ev.removeAllListeners('creds.update');
+      await sock.logout();
+    } catch {}
     sock = null;
   }
   myNumber = null;
   setLinkedNumber(null);
   await clearAuthState(SESSION_ID);
+  console.log('👋 Logged out and auth cleared');
 }
