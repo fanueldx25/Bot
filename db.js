@@ -4,18 +4,13 @@ dotenv.config();
 
 const url = process.env.DATABASE_URL || '';
 
-// Render's internal DB host looks like: dpg-xxxxx-a
-// Render's external DB host looks like: dpg-xxxxx-a.region-postgres.render.com
 const isRenderExternal = /\.render\.com/.test(url);
-const isLocalhost = /localhost|127\.0\.0\.1/.test(url);
-
-// SSL: needed for external connections, not for internal / local
 const useSSL = isRenderExternal || url.includes('sslmode=require');
 
 export const pool = new pg.Pool({
   connectionString: url,
   ssl: useSSL ? { rejectUnauthorized: false } : false,
-  max: 10,
+  max: 5, // ← smaller for free tier
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
 });
@@ -68,12 +63,36 @@ export async function initDb() {
       message TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
-
+  `);
+  
+  // Indexes — critical for 1GB DB performance
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_storage_session_type
       ON storage (session_id, type);
+
+    CREATE INDEX IF NOT EXISTS idx_storage_type
+      ON storage (type);
+
+    CREATE INDEX IF NOT EXISTS idx_storage_created
+      ON storage (created_at DESC);
+
     CREATE INDEX IF NOT EXISTS idx_logs_session_id
       ON logs (session_id, id DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_logs_created
+      ON logs (created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_automations_session
+      ON automations (session_id, enabled);
   `);
+  
+  // connect-pg-simple creates its own `session` table without an index.
+  // Add one if it exists.
+  try {
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_expire ON session (expire)`);
+  } catch {
+    // table not created yet — fine
+  }
 }
 
 /* ───────────── Baileys creds helpers ───────────── */

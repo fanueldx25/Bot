@@ -32,6 +32,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 /* ═══════════════ Session Store ═══════════════ */
+const isProd = process.env.NODE_ENV === 'production';
 const PgStore = connectPgSimple(session);
 const sessionMiddleware = session({
   store: new PgStore({ pool, createTableIfMissing: true }),
@@ -42,12 +43,11 @@ const sessionMiddleware = session({
   cookie: {
     maxAge: 7 * 24 * 60 * 60 * 1000,
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isProd,
     sameSite: 'lax',
   },
 });
 app.use(sessionMiddleware);
-
 io.engine.use(sessionMiddleware);
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -68,10 +68,9 @@ app.post('/api/login', async (req, res) => {
     if (username !== process.env.OWNER_USERNAME) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const expected = process.env.OWNER_PASSWORD || '';
-    const ok = password === expected;
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-
+    if (password !== (process.env.OWNER_PASSWORD || '')) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
     req.session.user = { username, role: 'owner' };
     await log('owner', 'info', `Login from ${req.ip}`);
     res.json({ ok: true });
@@ -98,8 +97,16 @@ app.post('/api/bot/start', requireAuth, async (req, res) => {
     const existing = getSock();
     if (existing?.user) return res.json({ ok: true, message: 'Already connected' });
 
-    const { phone } = req.body || {};
-    await startBot({ phoneNumber: phone || null });
+    const { phone, mode } = req.body || {};
+
+    if (mode === 'pair' && !phone) {
+      return res.status(400).json({ error: 'Phone number required for pairing mode' });
+    }
+
+    await startBot({
+      phoneNumber: phone || null,
+      mode: mode === 'pair' ? 'pair' : 'qr',
+    });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -119,7 +126,8 @@ app.post('/api/bot/logout', requireAuth, async (req, res) => {
 app.get('/api/commands', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT command, enabled, config FROM command_settings WHERE session_id='owner' ORDER BY command`
+      `SELECT command, enabled, config FROM command_settings
+       WHERE session_id='owner' ORDER BY command`
     );
     res.json(rows);
   } catch (e) {
@@ -147,14 +155,18 @@ app.post('/api/commands/:name', requireAuth, async (req, res) => {
 app.get('/api/storage', requireAuth, async (req, res) => {
   try {
     const { type } = req.query;
+
+    // By default hide internal types (key = auth state, ping = health checks)
+    const hidden = ['key', 'ping'];
     const q = type
       ? `SELECT id, type, key, value, created_at FROM storage
          WHERE session_id='owner' AND type=$1
          ORDER BY id DESC LIMIT 300`
       : `SELECT id, type, key, value, created_at FROM storage
-         WHERE session_id='owner' AND type NOT IN ('key','ping')
+         WHERE session_id='owner' AND type <> ALL($1::text[])
          ORDER BY id DESC LIMIT 300`;
-    const { rows } = await pool.query(q, type ? [type] : []);
+    const params = type ? [type] : [hidden];
+    const { rows } = await pool.query(q, params);
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -163,7 +175,10 @@ app.get('/api/storage', requireAuth, async (req, res) => {
 
 app.delete('/api/storage/:id', requireAuth, async (req, res) => {
   try {
-    await pool.query('DELETE FROM storage WHERE id=$1', [req.params.id]);
+    await pool.query('DELETE FROM storage WHERE id=$1 AND session_id=$2', [
+      req.params.id,
+      'owner',
+    ]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -176,7 +191,8 @@ app.get('/api/storage/stats', requireAuth, async (req, res) => {
     const sizeQ = await pool.query(`
       SELECT
         pg_size_pretty(pg_database_size(current_database())) AS db_size,
-        pg_database_size(current_database()) AS db_bytes
+        pg_database_size(current_database()) AS db_bytes,
+        1073741824 AS limit_bytes
     `);
 
     const countsQ = await pool.query(`
@@ -193,6 +209,7 @@ app.get('/api/storage/stats', requireAuth, async (req, res) => {
       UNION ALL SELECT 'automations', COUNT(*)::int FROM automations
       UNION ALL SELECT 'sessions',    COUNT(*)::int FROM sessions
       UNION ALL SELECT 'command_settings', COUNT(*)::int FROM command_settings
+      UNION ALL SELECT 'session',     COUNT(*)::int FROM session
     `);
 
     const biggestQ = await pool.query(`
@@ -209,11 +226,28 @@ app.get('/api/storage/stats', requireAuth, async (req, res) => {
       FROM sessions
     `);
 
+    // Breakdown: auth keys vs user data
+    const breakdownQ = await pool.query(`
+      SELECT
+        COALESCE(SUM(pg_column_size(value)) FILTER (WHERE type='key'), 0)::bigint AS auth_bytes,
+        COALESCE(SUM(pg_column_size(value)) FILTER (WHERE type NOT IN ('key','ping')), 0)::bigint AS data_bytes,
+        COALESCE(SUM(pg_column_size(value)) FILTER (WHERE type='ping'), 0)::bigint AS ping_bytes
+      FROM storage
+      WHERE session_id='owner'
+    `);
+
+    const db = sizeQ.rows[0];
+    const pct = Math.round((Number(db.db_bytes) / 1073741824) * 100 * 100) / 100;
+
     res.json({
       db: {
-        pretty: sizeQ.rows[0].db_size,
-        bytes: Number(sizeQ.rows[0].db_bytes),
+        pretty: db.db_size,
+        bytes: Number(db.db_bytes),
+        limit: 1073741824,
+        limitPretty: '1 GB',
+        percentUsed: pct,
       },
+      breakdown: breakdownQ.rows[0],
       byType: countsQ.rows,
       tables: tablesQ.rows,
       biggest: biggestQ.rows,
@@ -226,13 +260,13 @@ app.get('/api/storage/stats', requireAuth, async (req, res) => {
 
 app.post('/api/storage/cleanup', requireAuth, async (req, res) => {
   try {
-    const { logsOlderThanDays = 7, keepPings = 200 } = req.body || {};
+    const { logsOlderThanDays = 14, keepPings = 200 } = req.body || {};
 
     const logsDel = await pool.query(
       `DELETE FROM logs
        WHERE session_id='owner'
          AND created_at < NOW() - ($1 || ' days')::interval`,
-      [logsOlderThanDays]
+      [String(logsOlderThanDays)]
     );
 
     const pingsDel = await pool.query(
@@ -245,10 +279,19 @@ app.post('/api/storage/cleanup', requireAuth, async (req, res) => {
       [keepPings]
     );
 
+    // Also prune expired express sessions
+    const sessDel = await pool.query(
+      `DELETE FROM session WHERE expire < NOW()`
+    );
+
+    // VACUUM can't run inside a transaction, so use a separate connection
+    // Just log — let Postgres autovacuum handle it
+
     res.json({
       ok: true,
       logsDeleted: logsDel.rowCount,
       pingsDeleted: pingsDel.rowCount,
+      sessionsDeleted: sessDel.rowCount,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -335,9 +378,14 @@ app.delete('/api/automations/:id', requireAuth, async (req, res) => {
 /* ═══════════════ Logs ═══════════════ */
 app.get('/api/logs', requireAuth, async (req, res) => {
   try {
+    let limit = parseInt(req.query.limit, 10) || 200;
+    if (limit > 500) limit = 500;
+    if (limit < 1) limit = 1;
+
     const { rows } = await pool.query(
       `SELECT id, level, message, created_at FROM logs
-       WHERE session_id='owner' ORDER BY id DESC LIMIT 200`
+       WHERE session_id='owner' ORDER BY id DESC LIMIT $1`,
+      [limit]
     );
     res.json(rows.reverse());
   } catch (e) {
@@ -353,7 +401,7 @@ app.get('/api/system', requireAuth, async (req, res) => {
     const up = process.uptime();
     const h = Math.floor(up / 3600);
     const m = Math.floor((up % 3600) / 60);
-    const { rows } = await pool.query(`SELECT COUNT(*) AS c FROM storage`);
+    const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM storage`);
     res.json({
       platform: os.platform(),
       arch: os.arch(),
@@ -382,6 +430,43 @@ io.on('connection', (socket) => {
 /* ═══════════════ Emit log helper ═══════════════ */
 global.__emitLog = (entry) => io.emit('log', entry);
 
+/* ═══════════════ DB Maintenance ═══════════════ */
+async function runMaintenance() {
+  try {
+    // Prune logs older than 14 days (keeps your 1GB DB lean)
+    const logsPruned = await pool.query(
+      `DELETE FROM logs
+       WHERE created_at < NOW() - INTERVAL '14 days'`
+    );
+    if (logsPruned.rowCount > 0) {
+      console.log(`🧹 Pruned ${logsPruned.rowCount} old logs`);
+    }
+
+    // Prune expired express sessions
+    const sessPruned = await pool.query(
+      `DELETE FROM session WHERE expire < NOW()`
+    );
+    if (sessPruned.rowCount > 0) {
+      console.log(`🧹 Pruned ${sessPruned.rowCount} expired sessions`);
+    }
+
+    // Prune old pings — keep last 500
+    const pingsPruned = await pool.query(
+      `DELETE FROM storage
+       WHERE id IN (
+         SELECT id FROM storage
+         WHERE session_id='owner' AND type='ping'
+         ORDER BY id DESC OFFSET 500
+       )`
+    );
+    if (pingsPruned.rowCount > 0) {
+      console.log(`🧹 Pruned ${pingsPruned.rowCount} old pings`);
+    }
+  } catch (e) {
+    console.error('maintenance failed:', e.message);
+  }
+}
+
 /* ═══════════════ Boot ═══════════════ */
 async function boot() {
   try {
@@ -390,6 +475,12 @@ async function boot() {
     await loadCommands();
     await loadAntiSettings();
     console.log('⚙️  Commands + anti settings loaded');
+
+    // One-time maintenance on boot
+    await runMaintenance();
+
+    // Then every 6 hours
+    setInterval(runMaintenance, 6 * 60 * 60 * 1000);
   } catch (e) {
     console.error('❌ Boot prep failed:', e);
   }

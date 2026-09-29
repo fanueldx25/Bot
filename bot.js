@@ -53,12 +53,16 @@ export async function humanSend(jid, content, opts = {}) {
 }
 
 /* ---------------- Connect ---------------- */
-export async function startBot({ phoneNumber = null } = {}) {
+export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
   const { version } = await fetchLatestBaileysVersion();
   
+  // Mode is explicit now: 'qr' or 'pair'. If creds exist, pairing is pointless.
   const hasCreds = !!state.creds?.me;
-  const usePairing = !!phoneNumber && !hasCreds;
+  const usePairing = mode === 'pair' && !!phoneNumber && !hasCreds;
+  const useQR = !usePairing;
+  
+  console.log(`🚀 startBot mode=${mode} usePairing=${usePairing} useQR=${useQR}`);
   
   sock = makeWASocket({
     version,
@@ -77,7 +81,7 @@ export async function startBot({ phoneNumber = null } = {}) {
   
   sock.ev.on('creds.update', saveCreds);
   
-  // PAIRING CODE — must be requested before registration, after socket init
+  // PAIRING CODE — only in pair mode, and only if not already registered
   if (usePairing && !sock.authState.creds.registered) {
     const cleaned = phoneNumber.replace(/\D/g, '');
     setTimeout(async () => {
@@ -97,7 +101,8 @@ export async function startBot({ phoneNumber = null } = {}) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     
-    if (qr && !usePairing) {
+    // Only emit QR when we're NOT in pairing mode
+    if (qr && useQR) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
       ioRef?.emit('qr', { qr: dataUrl, expiresIn: 20000 });
       await setStatus(SESSION_ID, 'qr');
@@ -120,7 +125,7 @@ export async function startBot({ phoneNumber = null } = {}) {
       });
       if (shouldReconnect) {
         console.log('🔄 Reconnecting in 3s...');
-        setTimeout(() => startBot(), 3000);
+        setTimeout(() => startBot({ mode }), 3000);
       } else {
         console.log('❌ Logged out');
         await clearAuthState(SESSION_ID);
@@ -128,6 +133,9 @@ export async function startBot({ phoneNumber = null } = {}) {
     }
   });
   
+  /* ════════════════════════════════════════════════
+     MESSAGE HANDLER — anti-check + automations + commands
+     ════════════════════════════════════════════════ */
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const msg = messages[0];
@@ -182,6 +190,7 @@ export async function startBot({ phoneNumber = null } = {}) {
     const handler = commands.get(cmd);
     if (!handler) return;
     
+    // 5️⃣ Permission check
     if (handler.ownerOnly && !isOwner(jid)) {
       return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
     }

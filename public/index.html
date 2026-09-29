@@ -15,7 +15,6 @@
         extend: {
           colors: {
             ink: { 950:'#080c14', 900:'#0b1220', 850:'#0f172a', 800:'#131c2e', 700:'#1c2942', 600:'#2a3a5a' },
-            accent: { DEFAULT:'#10b981', light:'#34d399', dark:'#059669' },
           },
           fontFamily: {
             sans: ['Inter','ui-sans-serif','system-ui','-apple-system','sans-serif'],
@@ -132,7 +131,7 @@
   <!-- DASHBOARD -->
   <div id="dashView" class="hidden min-h-screen pb-24 md:pb-0 md:pl-64">
 
-    <!-- SIDEBAR (desktop) -->
+    <!-- SIDEBAR -->
     <aside class="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-ink-900 border-r border-ink-800 z-30">
       <div class="px-5 py-6 border-b border-ink-800">
         <div class="flex items-center gap-3">
@@ -251,10 +250,21 @@
 
               <!-- Pairing code -->
               <div id="pairingBox" class="hidden mb-4">
-                <div class="inline-block px-6 py-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-700/10 border-2 border-emerald-500/40">
+                <div class="inline-block px-6 py-5 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-700/10 border-2 border-emerald-500/40">
                   <div class="text-[10px] uppercase tracking-widest text-emerald-400 mb-1">Pairing code</div>
-                  <div id="pairingCode" class="font-mono text-3xl font-bold tracking-widest text-emerald-300">--------</div>
-                  <div class="text-[10px] text-slate-400 mt-2">WhatsApp → Linked Devices → Link with phone number</div>
+                  <div class="flex items-center gap-2 justify-center">
+                    <div id="pairingCode" class="font-mono text-3xl font-bold tracking-widest text-emerald-300 select-all">--------</div>
+                    <button onclick="copyPairingCode()" title="Copy code" id="copyBtn"
+                      class="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 active:scale-95 transition">
+                      <svg id="copyIcon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                      </svg>
+                    </button>
+                  </div>
+                  <div id="pairingTimer" class="text-[10px] text-amber-400/80 mt-2 font-mono">Expires in 5:00</div>
+                  <div class="text-[10px] text-slate-400 mt-1.5 max-w-[240px]">
+                    WhatsApp → <b>Linked Devices</b> → <b>Link with phone number</b>
+                  </div>
                 </div>
               </div>
 
@@ -272,26 +282,37 @@
                 <p id="connectedPhone" class="text-slate-400 text-sm mt-0.5 font-mono"></p>
               </div>
 
-              <!-- Idle / Pairing input -->
+              <!-- Mode selector -->
               <div id="idleBox">
-                <div class="text-left max-w-xs mx-auto">
-                  <label class="block text-xs font-medium text-slate-400 mb-1.5">Connect with phone number</label>
-                  <div class="flex gap-2 mb-3">
-                    <input id="phoneInput" type="tel" inputmode="tel" placeholder="2348012345678"
-                      class="flex-1 p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm placeholder-slate-500 font-mono" />
-                    <button onclick="requestPairing()"
-                      class="px-4 py-3 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-sm font-semibold whitespace-nowrap">
-                      Get Code
+                <div class="text-left max-w-sm mx-auto">
+                  <div class="flex bg-ink-800 rounded-xl p-1 mb-4 border border-ink-700">
+                    <button id="modeBtnQR" onclick="selectMode('qr')"
+                      class="flex-1 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
+                      </svg>
+                      QR Code
+                    </button>
+                    <button id="modeBtnPair" onclick="selectMode('pair')"
+                      class="flex-1 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                      </svg>
+                      Phone Number
                     </button>
                   </div>
-                  <p class="text-[10px] text-slate-500 mb-3">Format: country code + number, no + or spaces</p>
-                  <div class="flex items-center gap-3 my-3">
-                    <div class="flex-1 h-px bg-ink-700"></div>
-                    <span class="text-[10px] text-slate-500 uppercase tracking-wider">or</span>
-                    <div class="flex-1 h-px bg-ink-700"></div>
+
+                  <div id="modeQrHint" class="text-center">
+                    <p class="text-slate-400 text-sm">Click <b class="text-slate-200">Start Bot</b> to generate a QR code</p>
+                  </div>
+
+                  <div id="modePairHint" class="hidden">
+                    <label class="block text-xs font-medium text-slate-400 mb-1.5">WhatsApp phone number</label>
+                    <input id="phoneInput" type="tel" inputmode="tel" placeholder="2348012345678"
+                      class="w-full p-3 rounded-xl bg-ink-800 border border-ink-700 outline-none focus:border-emerald-500 text-sm placeholder-slate-500 font-mono mb-2" />
+                    <p class="text-[10px] text-slate-500">Country code + number, no <code class="text-slate-400">+</code> or spaces</p>
                   </div>
                 </div>
-                <p id="connectHint" class="text-slate-400 text-sm text-center">Scan QR with WhatsApp → Linked Devices</p>
               </div>
             </div>
 
@@ -299,7 +320,7 @@
               <button onclick="startBot()" id="startBtn"
                 class="flex-1 bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 active:scale-[0.98] py-3 rounded-xl font-semibold shadow-glow transition-all flex items-center justify-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg>
-                Start Bot
+                <span id="startBtnText">Start Bot</span>
               </button>
               <button onclick="logoutBot()"
                 class="flex-1 sm:flex-none sm:px-6 bg-ink-800 hover:bg-ink-700 border border-ink-700 active:scale-[0.98] py-3 rounded-xl font-medium transition-all">
@@ -331,8 +352,8 @@
               <li class="flex gap-4">
                 <div class="shrink-0 w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-sm">3</div>
                 <div class="pt-0.5">
-                  <p class="font-medium text-sm">Choose "Link a Device" or "Link with phone number"</p>
-                  <p class="text-xs text-slate-400 mt-0.5">Phone number method: enter the 8-digit code</p>
+                  <p class="font-medium text-sm">Choose link method</p>
+                  <p class="text-xs text-slate-400 mt-0.5">Scan QR or "Link with phone number"</p>
                 </div>
               </li>
               <li class="flex gap-4">
@@ -346,7 +367,7 @@
             <div class="mt-6 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex gap-3">
               <svg class="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3l-6.93-12a2 2 0 00-3.48 0L2.33 16a2 2 0 001.74 3z"/></svg>
               <p class="text-xs text-amber-200 leading-relaxed">
-                <b>Tip:</b> Pairing codes expire in ~5 minutes. QR codes refresh every ~20s.
+                <b>Tip:</b> Pairing codes expire in ~5 min. QR codes refresh every ~20s.
               </p>
             </div>
           </div>
@@ -396,6 +417,8 @@
             <option value="group">Groups</option>
             <option value="note">Notes</option>
             <option value="anti">Anti-config</option>
+            <option value="ping">Ping history</option>
+            <option value="key">Auth keys</option>
           </select>
           <input id="storageSearch" placeholder="Search key..." oninput="renderStorage()"
             class="flex-1 bg-ink-800 border border-ink-700 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-500 placeholder-slate-500" />
@@ -688,40 +711,69 @@ function setStatus(status, phone) {
     qrBox.classList.add('hidden'); idleBox.classList.add('hidden');
     pairingBox.classList.add('hidden'); connectedBox.classList.remove('hidden');
     $('connectedPhone').textContent = phone || '';
+    stopPairingTimer();
   } else if (status === 'qr') {
     connectedBox.classList.add('hidden'); idleBox.classList.add('hidden');
     pairingBox.classList.add('hidden');
   } else {
     connectedBox.classList.add('hidden'); qrBox.classList.add('hidden');
     idleBox.classList.remove('hidden');
-    $('connectHint').textContent = status === 'reconnecting'
+    $('connectHint') && ($('connectHint').textContent = status === 'reconnecting'
       ? 'Reconnecting to WhatsApp…'
-      : 'Scan QR with WhatsApp → Linked Devices';
+      : 'Scan QR with WhatsApp → Linked Devices');
+  }
+}
+
+/* ═══════════════ MODE SELECTOR ═══════════════ */
+let currentMode = 'qr';
+let pairingExpires = 0;
+let pairingTimerInt = null;
+
+function selectMode(mode) {
+  currentMode = mode;
+  const btnQR = $('modeBtnQR'), btnPair = $('modeBtnPair');
+  const activeCls = 'flex-1 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30';
+  const inactiveCls = 'flex-1 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 text-slate-400 hover:text-slate-200';
+  btnQR.className = mode === 'qr' ? activeCls : inactiveCls;
+  btnPair.className = mode === 'pair' ? activeCls : inactiveCls;
+
+  $('modeQrHint').classList.toggle('hidden', mode !== 'qr');
+  $('modePairHint').classList.toggle('hidden', mode !== 'pair');
+
+  if (mode === 'qr') {
+    $('pairingBox').classList.add('hidden');
+    stopPairingTimer();
   }
 }
 
 /* ═══════════════ BOT CONTROL ═══════════════ */
 async function startBot() {
-  const btn = $('startBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg> Starting…';
-  try {
-    await api('/api/bot/start', { method: 'POST', body: JSON.stringify({}) });
-    toast('Bot starting — QR incoming', 'info');
-  } catch (e) { toast(e.message, 'error'); }
-  finally {
-    btn.disabled = false;
-    btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg> Start Bot';
-  }
-}
+  const btn = $('startBtn'), txt = $('startBtnText');
 
-async function requestPairing() {
-  const phone = $('phoneInput').value.trim();
-  if (!phone || phone.length < 8) return toast('Enter a valid phone number with country code', 'error');
+  if (currentMode === 'pair') {
+    const phone = $('phoneInput').value.trim();
+    if (!phone || phone.replace(/\D/g, '').length < 8) {
+      return toast('Enter a valid phone number with country code', 'error');
+    }
+  }
+
+  btn.disabled = true;
+  const orig = btn.innerHTML;
+  txt && (txt.textContent = 'Starting…');
+  btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg> Starting…';
+
   try {
-    await api('/api/bot/start', { method: 'POST', body: JSON.stringify({ phone }) });
-    toast('Requesting pairing code...', 'info');
-  } catch (e) { toast(e.message, 'error'); }
+    const body = currentMode === 'pair'
+      ? { phone: $('phoneInput').value.trim(), mode: 'pair' }
+      : { mode: 'qr' };
+    await api('/api/bot/start', { method: 'POST', body: JSON.stringify(body) });
+    toast(currentMode === 'pair' ? 'Requesting pairing code...' : 'Bot starting — QR incoming', 'info');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
 }
 
 async function logoutBot() {
@@ -731,6 +783,59 @@ async function logoutBot() {
     toast('Logged out from WhatsApp', 'success');
     setStatus('disconnected');
   } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ═══════════════ PAIRING TIMER + COPY ═══════════════ */
+function startPairingTimer() {
+  stopPairingTimer();
+  pairingExpires = Date.now() + 5 * 60 * 1000;
+  const tick = () => {
+    const left = Math.max(0, Math.floor((pairingExpires - Date.now()) / 1000));
+    const m = Math.floor(left / 60);
+    const s = String(left % 60).padStart(2, '0');
+    const el = $('pairingTimer');
+    if (el) {
+      el.textContent = left > 0 ? `Expires in ${m}:${s}` : 'Expired — request a new code';
+      el.className = left > 60
+        ? 'text-[10px] text-amber-400/80 mt-2 font-mono'
+        : 'text-[10px] text-red-400 mt-2 font-mono';
+    }
+    if (left === 0) stopPairingTimer();
+  };
+  tick();
+  pairingTimerInt = setInterval(tick, 1000);
+}
+function stopPairingTimer() {
+  if (pairingTimerInt) clearInterval(pairingTimerInt);
+  pairingTimerInt = null;
+}
+
+async function copyPairingCode() {
+  const raw = $('pairingCode').textContent.replace(/\s/g, '');
+  if (!raw || raw === '--------') return;
+  try {
+    await navigator.clipboard.writeText(raw);
+    const icon = $('copyIcon');
+    const original = icon.innerHTML;
+    icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>';
+    icon.classList.add('text-emerald-300');
+    $('copyBtn').classList.add('bg-emerald-500/20');
+    toast('Code copied', 'success');
+    setTimeout(() => {
+      icon.innerHTML = original;
+      icon.classList.remove('text-emerald-300');
+      $('copyBtn').classList.remove('bg-emerald-500/20');
+    }, 1500);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = raw;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); toast('Code copied', 'success'); }
+    catch { toast('Copy failed — long-press to select', 'error'); }
+    document.body.removeChild(ta);
+  }
 }
 
 /* ═══════════════ COMMANDS ═══════════════ */
@@ -758,9 +863,8 @@ async function loadCommands() {
 async function toggleCmd(name, enabled, input) {
   const label = input.closest('.toggle');
   label.className = `toggle ${enabled ? 'on' : 'off'}`;
-  try {
-    await api('/api/commands/' + name, { method: 'POST', body: JSON.stringify({ enabled }) });
-  } catch (e) {
+  try { await api('/api/commands/' + name, { method: 'POST', body: JSON.stringify({ enabled }) }); }
+  catch (e) {
     toast(e.message, 'error'); input.checked = !enabled;
     label.className = `toggle ${!enabled ? 'on' : 'off'}`;
   }
@@ -846,8 +950,10 @@ function renderStorageStats(s) {
       ${sub ? `<div class="text-[10px] text-slate-500 mt-0.5">${sub}</div>` : ''}
     </div>`;
   const tableRows = s.tables.reduce((a, t) => a + t.rows, 0);
+  const pct = s.db.percentUsed;
+  const dbColor = pct > 90 ? 'red' : pct > 70 ? 'amber' : 'emerald';
   $('storageStats').innerHTML = [
-    card('Database size', s.db.pretty),
+    card('Database size', s.db.pretty, `${pct}% of ${s.db.limitPretty}`, dbColor),
     card('Total rows', tableRows.toLocaleString()),
     card('Sessions', s.sessions.connected, `${s.sessions.total} total`, 'sky'),
     card('Biggest entry', s.biggest[0] ? `${(s.biggest[0].bytes / 1024).toFixed(1)} KB` : '—', s.biggest[0]?.type || '', 'amber'),
@@ -889,10 +995,10 @@ async function delStorage(id) {
   catch (e) { toast(e.message, 'error'); }
 }
 async function runCleanup() {
-  if (!confirm('Prune logs older than 7 days + old pings?')) return;
+  if (!confirm('Prune logs older than 14 days + old pings + expired sessions?')) return;
   try {
-    const r = await api('/api/storage/cleanup', { method: 'POST', body: JSON.stringify({ logsOlderThanDays: 7, keepPings: 200 }) });
-    toast(`Cleaned: ${r.logsDeleted} logs, ${r.pingsDeleted} pings`, 'success');
+    const r = await api('/api/storage/cleanup', { method: 'POST', body: JSON.stringify({ logsOlderThanDays: 14, keepPings: 200 }) });
+    toast(`Cleaned: ${r.logsDeleted} logs, ${r.pingsDeleted} pings, ${r.sessionsDeleted} sessions`, 'success');
     loadStorage();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -900,7 +1006,7 @@ async function runCleanup() {
 /* ═══════════════ LOGS ═══════════════ */
 async function loadLogs() {
   try {
-    const logs = await api('/api/logs');
+    const logs = await api('/api/logs?limit=200');
     const el = $('logList');
     if (!logs.length) { el.innerHTML = '<div class="p-6 text-center text-slate-500 text-sm">No logs yet</div>'; return; }
     el.innerHTML = logs.map(logLine).join('');
@@ -935,7 +1041,6 @@ async function loadPing() {
       stat('Failures', stats.fail, 'last 100 pings', stats.fail ? 'red' : 'emerald'),
       stat('Last ping', history.length ? timeAgo(history[history.length - 1].at) : '—', '', 'amber'),
     ].join('');
-
     $('pingHistory').innerHTML = history.slice().reverse().map((p) => `
       <div class="flex items-center justify-between px-4 py-2.5 border-b border-ink-800 last:border-0 text-xs">
         <div class="flex items-center gap-2.5">
@@ -1000,6 +1105,7 @@ socket.on('pairing-code', ({ code }) => {
   $('pairingCode').textContent = code.match(/.{1,4}/g)?.join(' ') || code;
   $('idleBox').classList.add('hidden');
   $('qrBox').classList.add('hidden');
+  startPairingTimer();
   toast('Pairing code ready — enter it on your phone', 'success');
 });
 socket.on('pairing-code-error', ({ error }) => {
@@ -1030,6 +1136,7 @@ socket.on('disconnect', () => toast('Connection lost — retrying…', 'error'))
   try {
     await api('/api/me');
     await bootDashboard();
+    selectMode('qr');
     setInterval(refreshStatus, 8000);
   } catch {}
 })();
