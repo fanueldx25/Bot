@@ -26,7 +26,7 @@ try { sharp = (await import('sharp')).default; } catch { console.warn('⚠️ sh
 // ============================================================================
 const PROXY_URL = process.env.PROXY_URL || '';
 const proxyAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : null;
-
+const WEATHER_API_KEY = process.env.WEATHER_API_KEY || '';
 if (proxyAgent) {
   console.log('🌐 Proxy enabled:', PROXY_URL.replace(/:[^:@]+@/, ':***@'));
 } else {
@@ -706,25 +706,33 @@ async function cmdStatus({ sock, jid, state, msg }) {
 // 🌤️ WEATHER
 // ============================================================================
 async function cmdWeather({ args, sock, jid, state, msg }) {
-  const city = args.join(' ');
+  const city = args.join(' ').trim();
+
   if (!city) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `Usage: ${state.prefix}weather <city>` });
   }
+
   if (!WEATHER_API_KEY) {
     await setReaction(sock, msg, '🍎');
-    return sock.sendMessage(jid, { text: '⚠️ WEATHER_API_KEY not configured' });
+    return sock.sendMessage(jid, {
+      text: '⚠️ WEATHER_API_KEY not configured (get a free key at openweathermap.org)'
+    });
   }
 
   await setReaction(sock, msg, '🔎');
   await sendTyping(sock, jid, 1200);
 
   try {
-    const wRes = await plainFetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric`);
+    const wRes = await plainFetch(
+      `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric`
+    );
     const w = await wRes.json();
     if (w.cod !== 200) throw new Error(w.message || 'City not found');
 
-    const fRes = await plainFetch(`https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric&cnt=8`);
+    const fRes = await plainFetch(
+      `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(city)}&appid=${WEATHER_API_KEY}&units=metric&cnt=8`
+    );
     const f = await fRes.json();
 
     const emojiMap = {
@@ -741,8 +749,14 @@ async function cmdWeather({ args, sock, jid, state, msg }) {
       const byDay = {};
       for (const item of f.list) {
         const day = new Date(item.dt * 1000).toLocaleDateString('en-US', { weekday: 'short' });
-        if (!byDay[day]) byDay[day] = { min: item.main.temp_min, max: item.main.temp_max, desc: item.weather[0].description, pop: item.pop };
-        else {
+        if (!byDay[day]) {
+          byDay[day] = {
+            min: item.main.temp_min,
+            max: item.main.temp_max,
+            desc: item.weather[0].description,
+            pop: item.pop
+          };
+        } else {
           byDay[day].min = Math.min(byDay[day].min, item.main.temp_min);
           byDay[day].max = Math.max(byDay[day].max, item.main.temp_max);
           byDay[day].pop = Math.max(byDay[day].pop, item.pop);
@@ -779,7 +793,6 @@ async function cmdWeather({ args, sock, jid, state, msg }) {
     await sock.sendMessage(jid, { text: `❌ Weather error: ${e.message}` });
   }
 }
-
 // ============================================================================
 // 💱 CURRENCY
 // ============================================================================
@@ -832,62 +845,82 @@ async function cmdCurrency({ args, sock, jid, state, msg }) {
 }
 
 // ============================================================================
-// 🔍 GOOGLE SEARCH (DuckDuckGo Instant Answer)
+// 🔍 GOOGLE SEARCH (Custom Search JSON API)
 // ============================================================================
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
+const GOOGLE_CX = process.env.GOOGLE_CX || '';
+
 async function cmdGoogle({ args, sock, jid, state, msg }) {
-  const query = args.join(' ');
+  const query = args.join(' ').trim();
+  
   if (!query) {
     await setReaction(sock, msg, '🍎');
     return sock.sendMessage(jid, { text: `Usage: ${state.prefix}google <query>` });
   }
-
+  
+  if (!GOOGLE_API_KEY || !GOOGLE_CX) {
+    await setReaction(sock, msg, '🍎');
+    return sock.sendMessage(jid, {
+      text: '⚠️ Google Search not configured.\n\nOwner needs to set `GOOGLE_API_KEY` and `GOOGLE_CX` in Render env vars.\n\nGet them free at console.cloud.google.com'
+    });
+  }
+  
   await setReaction(sock, msg, '🔎');
-  await sendTyping(sock, jid, 1500);
-
+  await sendTyping(sock, jid, 1200);
+  
   try {
-    const res = await plainFetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+    const url =
+      `https://www.googleapis.com/customsearch/v1` +
+      `?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CX}` +
+      `&q=${encodeURIComponent(query)}&num=5`;
+    
+    const res = await plainFetch(url);
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error('Google API error:', res.status, errBody);
+      throw new Error(`API returned ${res.status}`);
+    }
+    
     const data = await res.json();
-
+    
+    if (!data.items || !data.items.length) {
+      await setReaction(sock, msg, '❌');
+      return sock.sendMessage(jid, {
+        text: `❌ No results for "*${query}*"\n\n🔗 https://www.google.com/search?q=${encodeURIComponent(query)}`
+      });
+    }
+    
     const lines = [];
-
-    if (data.AbstractText) {
-      lines.push(`📖 *Summary:*`);
-      lines.push(data.AbstractText);
-      if (data.AbstractURL) lines.push(`🔗 ${data.AbstractURL}`);
+    for (let i = 0; i < data.items.length; i++) {
+      const item = data.items[i];
+      lines.push(`*${i + 1}.* ${item.title}`);
+      if (item.snippet) lines.push(`    ${item.snippet.slice(0, 150)}`);
+      lines.push(`    🔗 ${item.link}`);
       lines.push('');
     }
-    if (data.Answer) {
-      lines.push(`💡 *Answer:* ${data.Answer}`);
-      lines.push('');
-    }
-    if (data.RelatedTopics?.length) {
-      lines.push(`🔗 *Related:*`);
-      for (const t of data.RelatedTopics.slice(0, 5)) {
-        if (t.Text) lines.push(`• ${t.Text.slice(0, 120)}`);
-      }
-      lines.push('');
-    }
-    if (!lines.length) {
-      lines.push(`❌ No instant answer found for "${query}"`);
-      lines.push(`🔗 Try: https://www.google.com/search?q=${encodeURIComponent(query)}`);
-    }
-
+    
     const text =
       `${DIV}\n` +
       `║  🔍 *SEARCH: ${query}*\n` +
       `${SUB}\n` +
-      lines.join('\n') + '\n' +
+      lines.join('\n') +
       `${DIV}\n` +
       `> Full results: https://www.google.com/search?q=${encodeURIComponent(query)}`;
-
+    
     await sock.sendMessage(jid, { text });
     await setReaction(sock, msg, '✅');
   } catch (e) {
+    console.error('Search error:', e.message);
     await setReaction(sock, msg, '❌');
-    await sock.sendMessage(jid, { text: `❌ Search error: ${e.message}` });
+    
+    let friendlyMsg = e.message;
+    if (/403|API key not valid/i.test(e.message)) friendlyMsg = 'Invalid API key';
+    else if (/429|quota/i.test(e.message)) friendlyMsg = 'Daily quota exceeded (100/day free)';
+    else if (/fetch failed/i.test(e.message)) friendlyMsg = 'Network error — try again';
+    
+    await sock.sendMessage(jid, { text: `❌ Search error: ${friendlyMsg}` });
   }
 }
-
 // ============================================================================
 // 🧮 CALCULATOR
 // ============================================================================
