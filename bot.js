@@ -9,7 +9,12 @@ import pino from 'pino';
 import { Boom } from '@hapi/boom';
 import { usePostgresAuthState, clearAuthState } from './auth.js';
 import { setStatus, log } from './db.js';
-import { isOwner, isCommandEnabled, setLinkedNumber, getLinkedNumber } from './commands/access.js';
+import {
+  isOwner,
+  isCommandEnabled,
+  setLinkedNumber,
+  getLinkedNumber,
+} from './commands/access.js';
 import { handleViewOnce } from './view.js';
 import { runAutomations } from './engine.js';
 import { antiCheck } from './commands/anti.js';
@@ -41,6 +46,9 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
 });
 
+/* ═══════════════════════════════════════════════
+   State
+   ═══════════════════════════════════════════════ */
 const SESSION_ID = 'owner';
 const logger = pino({ level: 'silent' });
 
@@ -48,12 +56,18 @@ let sock = null;
 let ioRef = null;
 const commands = new Map();
 
+/* ═══════════════════════════════════════════════
+   Named exports (used by server.js)
+   ═══════════════════════════════════════════════ */
 export const setIO = (io) => { ioRef = io; };
 export const getSock = () => sock;
 export const getIO = () => ioRef;
 export const registerCommand = (name, handler) => commands.set(name, handler);
+export const getRegisteredCommands = () => Array.from(commands.keys());
 
-/* ---------------- Human-like helpers ---------------- */
+/* ═══════════════════════════════════════════════
+   Human-like helpers
+   ═══════════════════════════════════════════════ */
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -79,17 +93,19 @@ export async function humanSend(jid, content, opts = {}) {
   return sock.sendMessage(jid, content, opts);
 }
 
-/* ---------------- Connect ---------------- */
+/* ═══════════════════════════════════════════════
+   Connect
+   ═══════════════════════════════════════════════ */
 export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
   const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
   const { version } = await fetchLatestBaileysVersion();
-  
+
   const hasCreds = !!state.creds?.me;
   const usePairing = mode === 'pair' && !!phoneNumber && !hasCreds;
   const useQR = !usePairing;
-  
+
   console.log(`🚀 startBot mode=${mode} usePairing=${usePairing} useQR=${useQR}`);
-  
+
   sock = makeWASocket({
     version,
     logger,
@@ -104,9 +120,10 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     generateHighQualityLinkPreview: true,
     getMessage: async () => ({ conversation: '' }),
   });
-  
+
   sock.ev.on('creds.update', saveCreds);
-  
+
+  /* ---------- Pairing code ---------- */
   if (usePairing && !sock.authState.creds.registered) {
     const cleaned = phoneNumber.replace(/\D/g, '');
     setTimeout(async () => {
@@ -122,26 +139,27 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       }
     }, 3000);
   }
-  
+
+  /* ---------- Connection updates ---------- */
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    
+
     if (qr && useQR) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
       ioRef?.emit('qr', { qr: dataUrl, expiresIn: 20000 });
       await setStatus(SESSION_ID, 'qr');
     }
-    
+
     if (connection === 'open') {
       const phone = sock.user?.id?.split(':')[0] || null;
-      setLinkedNumber(phone); // 👈 register owner
+      setLinkedNumber(phone);
       console.log(`👑 Linked number set to owner: ${phone}`);
       await setStatus(SESSION_ID, 'connected', phone);
       ioRef?.emit('status', { status: 'connected', phone });
       await log(SESSION_ID, 'info', `Connected as ${phone}`);
       console.log('✅ Connected:', phone);
     }
-    
+
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
@@ -159,7 +177,7 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       }
     }
   });
-  
+
   /* ════════════════════════════════════════════════
      MESSAGE HANDLER — PRIVATE MODE
      Allows messages from the bot's own number
@@ -168,25 +186,24 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
     if (type !== 'notify') return;
     const msg = messages[0];
     if (!msg.message) return;
-    
+
     const jid = jidNormalizedUser(msg.key.remoteJid);
     if (jid === 'status@broadcast') return;
-    
+
     const fromMe = !!msg.key.fromMe;
     const senderJid = jidNormalizedUser(msg.key.participant || jid);
     const senderNum = senderJid.split('@')[0].split(':')[0];
-    
-    // In private mode, the bot's own number IS the owner.
-    // Allow "fromMe" messages only when the sender is the owner.
-    // (When you message yourself, remoteJid = your own JID, fromMe = true.)
+
+    // In private mode, the bot's own linked number IS the owner.
+    // Allow self-messages only when the sender matches the linked number.
     const linked = getLinkedNumber();
     const isSelfMessage = fromMe && linked && senderNum === linked;
-    
+
     if (fromMe && !isSelfMessage) {
-      // message sent by us to someone else — ignore
+      // Message sent by us to someone else — ignore
       return;
     }
-    
+
     const m = msg.message;
     const text =
       m.conversation ||
@@ -196,21 +213,21 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       m.buttonsResponseMessage?.selectedButtonId ||
       m.listResponseMessage?.singleSelectReply?.selectedRowId ||
       '';
-    
+
     // Diagnostic log
     console.log(
       `📩 [${jid.endsWith('@g.us') ? 'GROUP' : isSelfMessage ? 'SELF' : 'DM'}] ` +
       `${senderNum}: "${text.slice(0, 60)}"`
     );
-    
-    // 1️⃣ View-once
+
+    // 1️⃣ View-once extraction
     try {
       await handleViewOnce({ sock, msg, jid });
     } catch (e) {
       console.error('view-once handler error:', e.message);
     }
-    
-    // 2️⃣ Anti-check
+
+    // 2️⃣ Anti-link / anti-spam
     if (text) {
       try {
         const blocked = await antiCheck({ sock, msg, jid, text });
@@ -219,7 +236,7 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
         console.error('antiCheck error:', e.message);
       }
     }
-    
+
     // 3️⃣ Automations — skip for self-messages
     if (text && !isSelfMessage) {
       try {
@@ -228,12 +245,12 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
         console.error('automation error:', e.message);
       }
     }
-    
+
     // 4️⃣ Command parsing
     if (!text) return;
     const prefix = text[0];
     if (prefix !== '.' && prefix !== '!') return;
-    
+
     const [rawCmd, ...args] = text.slice(1).trim().split(/\s+/);
     const cmd = rawCmd.toLowerCase();
     const handler = commands.get(cmd);
@@ -241,19 +258,19 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       console.log(`❓ Unknown command: .${cmd}`);
       return;
     }
-    
-    // 5️⃣ Command enabled check
+
+    // 5️⃣ Command enabled check (dashboard toggle)
     if (!(await isCommandEnabled(cmd))) {
       console.log(`⏸️  Command .${cmd} is disabled`);
       return;
     }
-    
+
     // 6️⃣ Permission check
     if (handler.ownerOnly && !isOwner(senderJid)) {
       console.log(`🔒 .${cmd} blocked — not owner (${senderNum})`);
       return humanSend(jid, { text: '🔒 Owner only command.' }, { quoted: msg });
     }
-    
+
     const ctx = {
       sock,
       msg,
@@ -266,7 +283,7 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       reply: (content, opts) => humanSend(jid, content, { quoted: msg, ...opts }),
       react: (emoji) => sock.sendMessage(jid, { react: { text: emoji, key: msg.key } }),
     };
-    
+
     console.log(`▶️  Executing .${cmd}`);
     try {
       await handler(ctx);
@@ -276,10 +293,13 @@ export async function startBot({ phoneNumber = null, mode = 'qr' } = {}) {
       await humanSend(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
     }
   });
-  
+
   return sock;
 }
 
+/* ═══════════════════════════════════════════════
+   Logout
+   ═══════════════════════════════════════════════ */
 export async function logout() {
   if (sock) {
     try { await sock.logout(); } catch {}
