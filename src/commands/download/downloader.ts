@@ -244,6 +244,58 @@ async function downloadThreadsMedia(inputUrl: string): Promise<string | null> {
   return null;
 }
 
+async function downloadInstagramMedia(inputUrl: string): Promise<string[]> {
+  const cobalt = await scavengeCobalt(inputUrl, true);
+  if (cobalt) return [cobalt];
+
+  try {
+    const res = await axios.get(`https://api.vreden.my.id/api/igdl?url=${encodeURIComponent(inputUrl)}`, { timeout: 10000 });
+    const results = res.data?.result;
+    if (results && Array.isArray(results) && results.length > 0) {
+      return results.map((r: any) => r.url).filter(Boolean);
+    }
+  } catch {}
+
+  try {
+    const ytdlp = getYtDlp();
+    if (ytdlp && isYtDlpReady()) {
+      const outTemplate = `/tmp/ig-${Date.now()}-%(id)s.%(ext)s`;
+      const result = await ytdlp.download(inputUrl).filter('mergevideo').output(outTemplate).run();
+      const downloadedPath = getDownloadedFile(result.filePaths);
+      if (downloadedPath && fs.existsSync(downloadedPath)) {
+        return [downloadedPath];
+      }
+    }
+  } catch {}
+
+  return [];
+}
+
+async function downloadFacebookMedia(inputUrl: string): Promise<string | null> {
+  const cobalt = await scavengeCobalt(inputUrl, true);
+  if (cobalt) return cobalt;
+
+  try {
+    const res = await axios.get(`https://api.vreden.my.id/api/fbdl?url=${encodeURIComponent(inputUrl)}`, { timeout: 10000 });
+    const url = res.data?.result?.url || res.data?.result?.download?.url;
+    if (url) return url;
+  } catch {}
+
+  try {
+    const ytdlp = getYtDlp();
+    if (ytdlp && isYtDlpReady()) {
+      const outTemplate = `/tmp/fb-${Date.now()}-%(id)s.%(ext)s`;
+      const result = await ytdlp.download(inputUrl).filter('mergevideo').output(outTemplate).run();
+      const downloadedPath = getDownloadedFile(result.filePaths);
+      if (downloadedPath && fs.existsSync(downloadedPath)) {
+        return downloadedPath;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
 async function scavengeCobalt(url: string, isVideo: boolean = false): Promise<string | null> {
   try {
     const res = await axios.post('https://api.cobalt.cc/api/json', {
@@ -441,7 +493,7 @@ async function deliverMedia(
 
 registerCommand({
   name: 'yta',
-  aliases: ['ytv', 'tiktok', 'ig', 'spotify', 'apk', 'play', 'aio3', 'fdroid', 'threads', 'thread'],
+  aliases: ['ytv', 'tiktok', 'ig', 'spotify', 'apk', 'play', 'aio3', 'fdroid', 'threads', 'thread', 'fb', 'facebook', 'fbdl'],
   category: 'download',
   description: 'Download media from YouTube, TikTok, Instagram, Spotify & more with multi-API scavenger engine.',
   execute: async (ctx: CommandContext) => {
@@ -665,22 +717,36 @@ registerCommand({
       case 'ig': {
         await sock.sendMessage(from, { text: '⏳ *Downloading Instagram media...*' }, { quoted: mek });
         try {
-          const res = await axios.get(`https://api.vreden.my.id/api/igdl?url=${encodeURIComponent(input)}`);
-          const results = res.data.result;
-          if (results && results.length > 0) {
-            for (const item of results) {
-              const isVideo = item.url.includes('.mp4');
-              if (isVideo) {
-                await sock.sendMessage(from, { video: { url: item.url } }, { quoted: mek });
-              } else {
-                await sock.sendMessage(from, { image: { url: item.url } }, { quoted: mek });
-              }
-            }
-            return;
+          const mediaUrlsOrPaths = await downloadInstagramMedia(input);
+          if (!mediaUrlsOrPaths || mediaUrlsOrPaths.length === 0) {
+            throw new Error('Failed to fetch Instagram media');
           }
-          throw new Error('Failed');
-        } catch (e) {
-          await sock.sendMessage(from, { text: `❌ *Instagram Error:* Failed to fetch media.` }, { quoted: mek });
+          for (const mediaUrlOrPath of mediaUrlsOrPaths) {
+            const isLocal = fs.existsSync(mediaUrlOrPath);
+            const isVideo = mediaUrlOrPath.includes('.mp4') || mediaUrlOrPath.endsWith('.mp4') || (!isLocal && (mediaUrlOrPath.includes('video') || mediaUrlOrPath.includes('.mp4')));
+            await deliverMedia(sock, from, mek, mediaUrlOrPath, isVideo ? 'video' : 'image', 'Instagram Media', !isLocal);
+            if (isLocal) cleanupFile(mediaUrlOrPath);
+          }
+        } catch (e: any) {
+          await sock.sendMessage(from, { text: `❌ *Instagram Error:* Failed to fetch media. Make sure the post/reel is public.` }, { quoted: mek });
+        }
+        break;
+      }
+
+      case 'fb':
+      case 'facebook':
+      case 'fbdl': {
+        await sock.sendMessage(from, { text: '⏳ *Downloading Facebook video...*' }, { quoted: mek });
+        try {
+          const mediaUrlOrPath = await downloadFacebookMedia(input);
+          if (!mediaUrlOrPath) {
+            throw new Error('Failed to fetch Facebook video');
+          }
+          const isLocal = fs.existsSync(mediaUrlOrPath);
+          await deliverMedia(sock, from, mek, mediaUrlOrPath, 'video', 'Facebook Video', !isLocal);
+          if (isLocal) cleanupFile(mediaUrlOrPath);
+        } catch (e: any) {
+          await sock.sendMessage(from, { text: `❌ *Facebook Error:* Failed to download video. Make sure the video is public and valid.` }, { quoted: mek });
         }
         break;
       }
