@@ -772,8 +772,15 @@ app.post('/api/voicemails/preview-greeting', async (req, res) => {
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
+    const allowedHosts = ['.onrender.com', '.render.com', 'localhost', '127.0.0.1'];
+    if (process.env.RENDER_EXTERNAL_URL) {
+      try { allowedHosts.push(new URL(process.env.RENDER_EXTERNAL_URL).hostname); } catch (e) {}
+    }
+    if (process.env.APP_URL) {
+      try { allowedHosts.push(new URL(process.env.APP_URL).hostname); } catch (e) {}
+    }
     const vite = await createViteServer({
-      server: { middlewareMode: true, allowedHosts: ['all'] },
+      server: { middlewareMode: true, allowedHosts },
       appType: 'spa',
     });
     app.use(vite.middlewares);

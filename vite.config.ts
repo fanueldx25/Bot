@@ -4,6 +4,18 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const allowedHosts = ['.onrender.com', '.render.com', 'localhost', '127.0.0.1'];
+  if (process.env.RENDER_EXTERNAL_URL) {
+    try {
+      allowedHosts.push(new URL(process.env.RENDER_EXTERNAL_URL).hostname);
+    } catch (e) {}
+  }
+  if (process.env.APP_URL) {
+    try {
+      allowedHosts.push(new URL(process.env.APP_URL).hostname);
+    } catch (e) {}
+  }
+
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
@@ -17,10 +29,10 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
-      allowedHosts: ['all'],
+      allowedHosts,
     },
     preview: {
-      allowedHosts: ['all'],
+      allowedHosts,
     },
   };
 });
