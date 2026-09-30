@@ -1,0 +1,6 @@
+{
+  "name": "Panda Bot Dashboard",
+  "description": "Multi-purpose WhatsApp bot with media downloading, AI chat, and a real-time web dashboard for control & monitoring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
