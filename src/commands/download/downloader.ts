@@ -217,6 +217,33 @@ async function downloadTikTokMedia(inputUrl: string): Promise<TikTokMediaResult 
   return null;
 }
 
+async function downloadThreadsMedia(inputUrl: string): Promise<string | null> {
+  const cobalt = await scavengeCobalt(inputUrl, true);
+  if (cobalt) return cobalt;
+
+  try {
+    const res = await axios.get(`https://api.vreden.my.id/api/igdl?url=${encodeURIComponent(inputUrl)}`, { timeout: 10000 });
+    const results = res.data?.result;
+    if (results && results.length > 0 && results[0]?.url) {
+      return results[0].url;
+    }
+  } catch {}
+
+  try {
+    const ytdlp = getYtDlp();
+    if (ytdlp && isYtDlpReady()) {
+      const outTemplate = `/tmp/threads-${Date.now()}-%(id)s.%(ext)s`;
+      const result = await ytdlp.download(inputUrl).filter('mergevideo').output(outTemplate).run();
+      const downloadedPath = getDownloadedFile(result.filePaths);
+      if (downloadedPath && fs.existsSync(downloadedPath)) {
+        return downloadedPath;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
 async function scavengeCobalt(url: string, isVideo: boolean = false): Promise<string | null> {
   try {
     const res = await axios.post('https://api.cobalt.cc/api/json', {
@@ -414,7 +441,7 @@ async function deliverMedia(
 
 registerCommand({
   name: 'yta',
-  aliases: ['ytv', 'tiktok', 'ig', 'spotify', 'apk', 'play', 'aio3', 'fdroid'],
+  aliases: ['ytv', 'tiktok', 'ig', 'spotify', 'apk', 'play', 'aio3', 'fdroid', 'threads', 'thread'],
   category: 'download',
   description: 'Download media from YouTube, TikTok, Instagram, Spotify & more with multi-API scavenger engine.',
   execute: async (ctx: CommandContext) => {
@@ -654,6 +681,23 @@ registerCommand({
           throw new Error('Failed');
         } catch (e) {
           await sock.sendMessage(from, { text: `❌ *Instagram Error:* Failed to fetch media.` }, { quoted: mek });
+        }
+        break;
+      }
+
+      case 'threads':
+      case 'thread': {
+        await sock.sendMessage(from, { text: '⏳ *Downloading Threads media...*' }, { quoted: mek });
+        try {
+          const mediaUrlOrPath = await downloadThreadsMedia(input);
+          if (!mediaUrlOrPath) {
+            throw new Error('Could not extract media from Threads link');
+          }
+          const isLocal = fs.existsSync(mediaUrlOrPath);
+          await deliverMedia(sock, from, mek, mediaUrlOrPath, 'video', 'Threads Media', !isLocal);
+          if (isLocal) cleanupFile(mediaUrlOrPath);
+        } catch (e: any) {
+          await sock.sendMessage(from, { text: `❌ *Threads Error:* Failed to download media. Please make sure the thread link is valid and public.` }, { quoted: mek });
         }
         break;
       }

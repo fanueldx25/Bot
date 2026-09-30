@@ -798,17 +798,66 @@ async function startServer() {
       }
     });
   } else {
-    const distPath = path.join(__dirname, 'dist');
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
+    const distPath = path.resolve(process.cwd(), 'dist');
+    const altDistPath = path.join(__dirname, 'dist');
+    const finalDist = fs.existsSync(distPath) ? distPath : (fs.existsSync(altDistPath) ? altDistPath : null);
+
+    if (finalDist) {
+      app.use(express.static(finalDist));
       app.get('*', (req, res, next) => {
         if (req.path.startsWith('/api')) return next();
-        res.sendFile(path.join(distPath, 'index.html'));
+        const indexPath = path.join(finalDist, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(404).send('Dashboard index.html not found');
+        }
       });
     } else {
-      app.get('/', (req, res) => {
-        res.send('Fanuel Bot Server is running. Dashboard build in progress.');
-      });
+      console.warn('⚠️ Warning: dist folder not found in production mode. Attempting programmatic build or falling back to Vite dev handler.');
+      try {
+        const { build: viteBuild } = await import('vite');
+        await viteBuild();
+        const freshDist = path.resolve(process.cwd(), 'dist');
+        if (fs.existsSync(freshDist)) {
+          app.use(express.static(freshDist));
+          app.get('*', (req, res, next) => {
+            if (req.path.startsWith('/api')) return next();
+            res.sendFile(path.join(freshDist, 'index.html'));
+          });
+          return;
+        }
+      } catch (buildErr) {
+        console.warn('Programmatic build failed, falling back to Vite middleware:', buildErr);
+      }
+
+      try {
+        const { createServer: createViteServer } = await import('vite');
+        const allowedHosts = ['.onrender.com', '.render.com', 'localhost', '127.0.0.1'];
+        if (process.env.RENDER_EXTERNAL_URL) {
+          try { allowedHosts.push(new URL(process.env.RENDER_EXTERNAL_URL).hostname); } catch (e) {}
+        }
+        const vite = await createViteServer({
+          server: { middlewareMode: true, allowedHosts },
+          appType: 'spa',
+        });
+        app.use(vite.middlewares);
+        app.use('*', async (req, res, next) => {
+          const url = req.originalUrl;
+          if (url.startsWith('/api')) return next();
+          try {
+            let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
+            template = await vite.transformIndexHtml(url, template);
+            res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+          } catch (e) {
+            next(e);
+          }
+        });
+      } catch (e) {
+        app.get('/', (req, res) => {
+          res.sendFile(path.resolve(__dirname, 'index.html'));
+        });
+      }
     }
   }
 
