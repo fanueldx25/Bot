@@ -770,6 +770,11 @@ app.post('/api/voicemails/preview-greeting', async (req, res) => {
 
 // Serve frontend
 async function startServer() {
+  // 1. Open port immediately so Render health check passes instantly
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server listening immediately on port ${PORT}`);
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const allowedHosts = ['.onrender.com', '.render.com', 'localhost', '127.0.0.1'];
@@ -814,50 +819,16 @@ async function startServer() {
         }
       });
     } else {
-      console.warn('⚠️ Warning: dist folder not found in production mode. Attempting programmatic build or falling back to Vite dev handler.');
-      try {
-        const { build: viteBuild } = await import('vite');
-        await viteBuild();
-        const freshDist = path.resolve(process.cwd(), 'dist');
-        if (fs.existsSync(freshDist)) {
-          app.use(express.static(freshDist));
-          app.get('*', (req, res, next) => {
-            if (req.path.startsWith('/api')) return next();
-            res.sendFile(path.join(freshDist, 'index.html'));
-          });
-          return;
+      console.warn('⚠️ Warning: dist folder not found in production mode. Serving fallback index.html.');
+      app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api')) return next();
+        const indexHtml = path.resolve(__dirname, 'index.html');
+        if (fs.existsSync(indexHtml)) {
+          res.sendFile(indexHtml);
+        } else {
+          res.send('Fanuel Bot Server is running.');
         }
-      } catch (buildErr) {
-        console.warn('Programmatic build failed, falling back to Vite middleware:', buildErr);
-      }
-
-      try {
-        const { createServer: createViteServer } = await import('vite');
-        const allowedHosts = ['.onrender.com', '.render.com', 'localhost', '127.0.0.1'];
-        if (process.env.RENDER_EXTERNAL_URL) {
-          try { allowedHosts.push(new URL(process.env.RENDER_EXTERNAL_URL).hostname); } catch (e) {}
-        }
-        const vite = await createViteServer({
-          server: { middlewareMode: true, allowedHosts },
-          appType: 'spa',
-        });
-        app.use(vite.middlewares);
-        app.use('*', async (req, res, next) => {
-          const url = req.originalUrl;
-          if (url.startsWith('/api')) return next();
-          try {
-            let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
-            template = await vite.transformIndexHtml(url, template);
-            res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
-          } catch (e) {
-            next(e);
-          }
-        });
-      } catch (e) {
-        app.get('/', (req, res) => {
-          res.sendFile(path.resolve(__dirname, 'index.html'));
-        });
-      }
+      });
     }
   }
 
@@ -872,8 +843,8 @@ async function startServer() {
     fetch(pingUrl).catch(() => {});
   }, 240000);
 
-  server.listen(PORT, '0.0.0.0', async () => {
-    console.log(`Server listening on port ${PORT}`);
+  // Background DB & WhatsApp initialization
+  setTimeout(async () => {
     try {
       const dbStatus = await testDbConnection();
       if (dbStatus.ok) {
@@ -886,7 +857,7 @@ async function startServer() {
       console.warn('⚠️ PostgreSQL initialization warning:', e.message);
     }
     connectToWhatsApp();
-  });
+  }, 500);
 }
 
 startServer().catch((err) => {
