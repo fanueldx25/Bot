@@ -3,7 +3,7 @@ services:
     name: fanuel-whatsapp-bot
     env: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --legacy-peer-deps && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
