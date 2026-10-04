@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && tsc --noEmit",
-    "start": "tsx server.ts"
+    "build": "vite build && tsc",
+    "start": "tsc && tsx server.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
@@ -14,7 +14,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "lucide-react": "^0.344.0",
+    "lucide-react": "^1.52.0",
     "node-fetch": "^3.3.2",
     "pino": "^9.2.0",
     "qrcode": "^1.5.3",
