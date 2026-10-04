@@ -1,27 +1,27 @@
 import { useEffect, useState, useRef } from 'react';
-import { 
-  RefreshCcw, 
-  Terminal, 
-  QrCode, 
-  Smartphone, 
-  Clock, 
-  Shield, 
+import {
+  RefreshCcw,
+  Terminal,
+  QrCode,
+  Smartphone,
+  Clock,
+  Shield,
   ShieldCheck,
-  Download, 
-  PowerOff, 
-  AlertCircle, 
-  Lock, 
-  Key, 
-  Check, 
-  Copy, 
-  Search, 
-  Sliders, 
-  Activity, 
-  Eye, 
-  EyeOff, 
-  Database, 
-  Radio, 
-  Sparkles, 
+  Download,
+  PowerOff,
+  AlertCircle,
+  Lock,
+  Key,
+  Check,
+  Copy,
+  Search,
+  Sliders,
+  Activity,
+  Eye,
+  EyeOff,
+  Database,
+  Radio,
+  Sparkles,
   ChevronRight,
   LogOut,
   Trash2,
@@ -34,7 +34,8 @@ import {
   PhoneMissed,
   Play,
   Pause,
-  Volume2
+  Volume2,
+  DownloadCloud
 } from 'lucide-react';
 
 interface BotConfig {
@@ -114,7 +115,7 @@ const defaultData: BotStatus = {
     alwaysTyping: false,
     alwaysRecording: false,
     shortDelay: true,
-    bannerUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1000&auto=format&fit=crop',
+    bannerUrl: 'https://i.ibb.co/zVMv4gdP/6-DB2-AE1-D-D073-4-F31-82-A9-7-F2-E076-B9007.webp',
     antiLink: false,
     antiDelete: false,
     autoStatusReact: true,
@@ -122,7 +123,8 @@ const defaultData: BotStatus = {
     antiCall: false,
     dnd: false,
     voicemailEnabled: true,
-    voicemailGreeting: 'Hello! You have reached my automated voicemail. I am unable to answer your call right now. Please leave your name and message right after this tone, and I will get back to you shortly.',
+    voicemailGreeting:
+      'Hello! You have reached my automated voicemail. I am unable to answer your call right now. Please leave your name and message right after this tone, and I will get back to you shortly.',
     voicemailLang: 'en',
     voicemailAutoForward: true
   },
@@ -146,6 +148,61 @@ const setStoredToken = (tok: string) => {
     else localStorage.removeItem('dashboard_token');
   } catch {}
 };
+
+/**
+ * Build an audio URL from a base64 payload or a raw URL.
+ * Handles: "data:audio/mpeg;base64,...", raw base64, "/api/..." paths, "https://..."
+ */
+function toAudioUrl(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const v = input.trim();
+  if (!v) return null;
+  if (v.startsWith('data:')) return v;
+  if (v.startsWith('blob:')) return v;
+  if (v.startsWith('http://') || v.startsWith('https://')) return v;
+  if (v.startsWith('/')) return v; // same-origin API path
+  // Assume raw base64 -> wrap it
+  if (/^[A-Za-z0-9+/=\s]+$/.test(v) && v.length > 64) {
+    return `data:audio/mpeg;base64,${v.replace(/\s/g, '')}`;
+  }
+  return null;
+}
+
+/**
+ * Normalize whatever the backend returns into an audio URL the browser can play.
+ * Accepts JSON responses with any of: audioBase64, audio, url, data.
+ * Also accepts a raw audio/* response body.
+ */
+async function extractAudioUrlFromResponse(res: Response): Promise<string | null> {
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+  // Case 1: backend streams the audio directly
+  if (contentType.startsWith('audio/') || contentType === 'application/octet-stream') {
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  // Case 2: backend returns JSON with a payload field
+  if (contentType.includes('application/json')) {
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      return null;
+    }
+    const candidate =
+      json?.audioBase64 ||
+      json?.audio_base64 ||
+      json?.audio ||
+      json?.data ||
+      json?.url ||
+      json?.audioUrl ||
+      json?.audio_url;
+    return toAudioUrl(candidate);
+  }
+
+  return null;
+}
 
 export default function App() {
   // Authentication State
@@ -191,8 +248,50 @@ export default function App() {
   const [loadingVoicemails, setLoadingVoicemails] = useState<boolean>(false);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [isPlayingPreview, setIsPlayingPreview] = useState<boolean>(false);
+  const [previewError, setPreviewError] = useState<string>('');
   const [voicemailNotice, setVoicemailNotice] = useState<string>('');
+  const [playingVmId, setPlayingVmId] = useState<number | null>(null);
+
+  // One shared audio element for both greeting preview and inbox playback
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  // Track object URLs so we can revoke them (avoids memory leaks)
+  const objectUrlsRef = useRef<Set<string>>(new Set());
+
+  const trackObjectUrl = (url: string) => {
+    if (url.startsWith('blob:')) objectUrlsRef.current.add(url);
+  };
+
+  const revokeObjectUrl = (url: string | null | undefined) => {
+    if (!url) return;
+    if (url.startsWith('blob:') && objectUrlsRef.current.has(url)) {
+      try { URL.revokeObjectURL(url); } catch {}
+      objectUrlsRef.current.delete(url);
+    }
+  };
+
+  const stopAllAudio = () => {
+    const el = audioPlayerRef.current;
+    if (el) {
+      try { el.pause(); } catch {}
+      revokeObjectUrl(el.src);
+      el.removeAttribute('src');
+      try { el.load(); } catch {}
+    }
+    setIsPlayingPreview(false);
+    setPlayingVmId(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      stopAllAudio();
+      // Revoke every blob we created
+      for (const u of objectUrlsRef.current) {
+        try { URL.revokeObjectURL(u); } catch {}
+      }
+      objectUrlsRef.current.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Helper: Authorized Fetch with safe header formatting
   const authFetch = async (url: string, options: RequestInit = {}) => {
@@ -211,14 +310,8 @@ export default function App() {
     if (curToken) {
       reqHeaders['Authorization'] = `Bearer ${curToken}`;
     }
-    
-    let res: Response;
-    try {
-      res = await fetch(url, { ...options, headers: reqHeaders });
-    } catch (e: any) {
-      // In case of any network glitch or fetch error, rethrow or return synthetic response
-      throw e;
-    }
+
+    const res = await fetch(url, { ...options, headers: reqHeaders });
 
     if (res.status === 401) {
       setIsAuthenticated(false);
@@ -354,44 +447,180 @@ export default function App() {
     return () => clearInterval(interval);
   }, [activeTab]);
 
-  // Handle Play Greeting Preview Audio
+  // -------------------------------------------------------------------------
+  // Audio: Play Greeting Preview (fixed)
+  // -------------------------------------------------------------------------
   const handlePlayGreetingPreview = async () => {
-    if (isPlayingPreview && audioPlayerRef.current) {
-      audioPlayerRef.current.pause();
-      setIsPlayingPreview(false);
+    setPreviewError('');
+
+    // Toggle off if already playing the preview
+    if (isPlayingPreview) {
+      stopAllAudio();
       return;
     }
+
+    // Stop anything else that might be playing
+    stopAllAudio();
 
     try {
       setPreviewLoading(true);
       const text =
         settingsDraft.voicemailGreeting ||
         data?.config?.voicemailGreeting ||
-        'Hello! You have reached my automated voicemail. I am unable to answer your call right now. Please leave your name and message right after this tone, and I will get back to you shortly.';
+        defaultData.config.voicemailGreeting ||
+        '';
       const lang = settingsDraft.voicemailLang || data?.config?.voicemailLang || 'en';
 
       const res = await authFetch('/api/voicemails/preview-greeting', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, lang }),
+        headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg, application/json' },
+        body: JSON.stringify({ text, lang })
       });
-      if (res && res.ok) {
-        const json = await res.json();
-        if (json.audioBase64) {
-          if (!audioPlayerRef.current) {
-            audioPlayerRef.current = new Audio();
-          }
-          audioPlayerRef.current.src = json.audioBase64;
-          audioPlayerRef.current.onended = () => setIsPlayingPreview(false);
-          audioPlayerRef.current.onerror = () => setIsPlayingPreview(false);
-          await audioPlayerRef.current.play();
-          setIsPlayingPreview(true);
-        }
+
+      if (!res.ok) {
+        setPreviewError(`Server returned ${res.status}`);
+        return;
       }
+
+      const url = await extractAudioUrlFromResponse(res);
+      if (!url) {
+        setPreviewError('Server did not return playable audio.');
+        return;
+      }
+
+      trackObjectUrl(url);
+
+      if (!audioPlayerRef.current) audioPlayerRef.current = new Audio();
+      const el = audioPlayerRef.current;
+      el.src = url;
+      el.onended = () => {
+        setIsPlayingPreview(false);
+        revokeObjectUrl(url);
+      };
+      el.onerror = () => {
+        setIsPlayingPreview(false);
+        setPreviewError('Browser could not decode the audio.');
+        revokeObjectUrl(url);
+      };
+
+      await el.play();
+      setIsPlayingPreview(true);
     } catch (err: any) {
-      console.warn('Preview audio failed:', err.message);
+      console.warn('Preview audio failed:', err?.message || err);
+      setPreviewError(err?.message || 'Failed to play preview');
     } finally {
       setPreviewLoading(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Audio: Play a recorded voicemail from the inbox
+  // -------------------------------------------------------------------------
+  const handlePlayVoicemail = async (vm: VoicemailItem) => {
+    if (!vm.audioUrl) {
+      setVoicemailNotice('This voicemail has no audio attachment.');
+      setTimeout(() => setVoicemailNotice(''), 3000);
+      return;
+    }
+
+    // Toggle off if tapping the currently playing one
+    if (playingVmId === vm.id) {
+      stopAllAudio();
+      return;
+    }
+
+    stopAllAudio();
+
+    try {
+      // Resolve a directly playable URL.
+      // If the backend stores a raw path, prefix with same-origin.
+      let src = toAudioUrl(vm.audioUrl);
+
+      // If it's an /api/... path we need auth. Fetch as blob to include the bearer token.
+      if (src && src.startsWith('/')) {
+        const res = await authFetch(src, { headers: { Accept: 'audio/*' } });
+        if (!res.ok) {
+          setVoicemailNotice(`Failed to load audio (${res.status})`);
+          setTimeout(() => setVoicemailNotice(''), 3000);
+          return;
+        }
+        const blob = await res.blob();
+        src = URL.createObjectURL(blob);
+      }
+
+      if (!src) {
+        setVoicemailNotice('Unsupported audio reference.');
+        setTimeout(() => setVoicemailNotice(''), 3000);
+        return;
+      }
+
+      trackObjectUrl(src);
+
+      if (!audioPlayerRef.current) audioPlayerRef.current = new Audio();
+      const el = audioPlayerRef.current;
+      el.src = src;
+      el.onended = () => {
+        setPlayingVmId(null);
+        revokeObjectUrl(src);
+      };
+      el.onerror = () => {
+        setPlayingVmId(null);
+        revokeObjectUrl(src);
+        setVoicemailNotice('Browser could not play this voicemail.');
+        setTimeout(() => setVoicemailNotice(''), 3000);
+      };
+
+      await el.play();
+      setPlayingVmId(vm.id);
+    } catch (e: any) {
+      console.warn('Voicemail playback failed:', e?.message || e);
+      setVoicemailNotice('Playback failed.');
+      setTimeout(() => setVoicemailNotice(''), 3000);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Audio: Download a voicemail (works even behind auth)
+  // -------------------------------------------------------------------------
+  const handleDownloadVoicemail = async (vm: VoicemailItem) => {
+    if (!vm.audioUrl) {
+      setVoicemailNotice('This voicemail has no audio attachment.');
+      setTimeout(() => setVoicemailNotice(''), 3000);
+      return;
+    }
+    try {
+      const src = toAudioUrl(vm.audioUrl);
+      if (!src) {
+        setVoicemailNotice('Unsupported audio reference.');
+        setTimeout(() => setVoicemailNotice(''), 3000);
+        return;
+      }
+
+      // Fetch as blob so the Authorization header applies for /api/ paths.
+      const res = await authFetch(src, { headers: { Accept: 'audio/*' } });
+      if (!res.ok) {
+        setVoicemailNotice(`Download failed (${res.status})`);
+        setTimeout(() => setVoicemailNotice(''), 3000);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `voicemail-${vm.callerNumber}-${vm.id}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      // Clean up shortly after the browser picks it up
+      setTimeout(() => {
+        try { URL.revokeObjectURL(url); } catch {}
+      }, 3000);
+    } catch (e: any) {
+      console.warn('Voicemail download failed:', e?.message || e);
+      setVoicemailNotice('Download failed.');
+      setTimeout(() => setVoicemailNotice(''), 3000);
     }
   };
 
@@ -404,6 +633,7 @@ export default function App() {
     try {
       const res = await authFetch(`/api/voicemails/${id}`, { method: 'DELETE' });
       if (res && res.ok) {
+        if (playingVmId === id) stopAllAudio();
         setVoicemailsList(prev => prev.filter(v => v.id !== id));
       }
     } catch (e) {
@@ -420,6 +650,7 @@ export default function App() {
     try {
       const res = await authFetch('/api/voicemails/clear', { method: 'POST' });
       if (res && res.ok) {
+        stopAllAudio();
         setVoicemailsList([]);
         setVoicemailNotice('Voicemail inbox cleared');
         setTimeout(() => setVoicemailNotice(''), 3000);
@@ -446,7 +677,7 @@ export default function App() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: passwordInput.trim() }),
+        body: JSON.stringify({ password: passwordInput.trim() })
       });
       const json = await res.json();
       if (res.ok && json.token) {
@@ -468,6 +699,7 @@ export default function App() {
 
   // Handle Logout / Lock
   const handleLock = async () => {
+    stopAllAudio();
     try {
       await authFetch('/api/auth/logout', { method: 'POST' });
     } catch {}
@@ -491,7 +723,7 @@ export default function App() {
       const res = await authFetch('/api/request-pairing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber: phoneNumber.trim() }),
+        body: JSON.stringify({ phoneNumber: phoneNumber.trim() })
       });
       const json = await res.json();
       if (res.ok && json.code) {
@@ -517,7 +749,7 @@ export default function App() {
       const res = await authFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(update),
+        body: JSON.stringify(update)
       });
       if (res.ok) {
         fetchStatus();
@@ -540,7 +772,7 @@ export default function App() {
       const res = await authFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settingsDraft),
+        body: JSON.stringify(settingsDraft)
       });
       if (res.ok) {
         setSettingsSaved(true);
@@ -628,8 +860,9 @@ export default function App() {
   // Filtered commands list
   const filteredCommands = commandsList.filter((cmd) => {
     const matchesCategory = commandCategory === 'all' || cmd.category === commandCategory;
-    const matchesSearch = !searchQuery || 
-      cmd.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    const matchesSearch =
+      !searchQuery ||
+      cmd.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       cmd.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       cmd.aliases.some(a => a.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesCategory && matchesSearch;
@@ -646,7 +879,7 @@ export default function App() {
       <div className="min-h-screen bg-[#05070A] text-[#FFFFFF] font-sans flex items-center justify-center p-4 selection:bg-[#00FF88]/30">
         <div className="w-full max-w-md bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[24px] p-8 relative overflow-hidden shadow-2xl">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-[#00FF88] to-transparent"></div>
-          
+
           <div className="flex flex-col items-center text-center mb-8">
             <div className="w-16 h-16 rounded-[20px] bg-[#05070A] border-[1.5px] border-[#1E293B] flex items-center justify-center text-[#00FF88] mb-4 shadow-inner relative">
               <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
@@ -713,9 +946,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#05070A] text-[#FFFFFF] font-sans selection:bg-[#00FF88]/30 flex flex-col items-center">
-      {/* Mobile Shell Wrapper */}
       <div className="w-full max-w-lg min-h-screen flex flex-col bg-[#05070A] relative pb-24">
-        
+
         {/* TOP MOBILE APP BAR */}
         <header className="sticky top-0 z-30 bg-[#05070A]/95 backdrop-blur-md border-b-[1.5px] border-[#1E293B] px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -734,11 +966,11 @@ export default function App() {
               </div>
               <div className="flex items-center space-x-1.5 mt-1">
                 <span className={`w-2 h-2 rounded-full ${
-                  isConnected ? 'bg-[#00FF88] animate-pulse' : 
+                  isConnected ? 'bg-[#00FF88] animate-pulse' :
                   isConnecting ? 'bg-amber-400 animate-pulse' : 'bg-[#FF4D4D]'
                 }`}></span>
                 <span className={`text-[11px] font-medium leading-none ${
-                  isConnected ? 'text-[#00FF88]' : 
+                  isConnected ? 'text-[#00FF88]' :
                   isConnecting ? 'text-amber-400' : 'text-[#FF4D4D]'
                 }`}>
                   {isConnected ? 'Online & Linked' : isConnecting ? 'Connecting...' : 'Offline'}
@@ -747,7 +979,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Top Actions */}
           <div className="flex items-center space-x-2">
             <button
               onClick={() => fetchStatus(true)}
@@ -783,16 +1014,14 @@ export default function App() {
           </div>
         </header>
 
-        {/* MAIN BODY CONTENT BASED ON ACTIVE TAB */}
         <main className="flex-1 p-4 space-y-4">
-          
-          {/* TAB 1: HOME (DASHBOARD & QUICK CONTROLS) */}
+
+          {/* TAB 1: HOME */}
           {activeTab === 'home' && (
             <div className="space-y-4">
-              {/* Status Hero Card */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
-                
+
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B]">System Status</span>
                   <div className={`px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-[1px] flex items-center space-x-1.5 border ${
@@ -818,7 +1047,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Session JID info */}
                 <div className="mt-3 pt-3 border-t border-[#111827] flex items-center justify-between text-[12px]">
                   <span className="text-[#64748B]">Linked Phone:</span>
                   <span className="font-mono text-[#FFFFFF] font-medium">
@@ -827,8 +1055,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Voicemail Status Banner */}
-              <div 
+              <div
                 onClick={() => setActiveTab('voicemail')}
                 className="bg-gradient-to-r from-[#0C1E14] via-[#0A161A] to-[#0A101A] border-[1.5px] border-[#14532D] hover:border-[#00FF88] rounded-[16px] p-4 relative overflow-hidden transition-all cursor-pointer group shadow-lg"
               >
@@ -842,8 +1069,8 @@ export default function App() {
                       <div className="flex items-center space-x-2">
                         <span className="text-[14px] font-bold text-[#FFFFFF]">Voicemail Answering Machine</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                          data?.config?.voicemailEnabled !== false 
-                            ? 'bg-[#00FF88]/20 text-[#00FF88] border border-[#00FF88]/40' 
+                          data?.config?.voicemailEnabled !== false
+                            ? 'bg-[#00FF88]/20 text-[#00FF88] border border-[#00FF88]/40'
                             : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
                         }`}>
                           {data?.config?.voicemailEnabled !== false ? 'Active' : 'Disabled'}
@@ -858,7 +1085,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Quick Feature Toggles */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
                 <h3 className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] mb-3">Live Automations</h3>
@@ -873,9 +1099,9 @@ export default function App() {
                     { key: 'autoRead', label: 'Auto Mark as Read', desc: 'Instantly reads incoming user messages', val: !!data?.config?.autoRead },
                     { key: 'autoStatusReact', label: 'Auto Status Reaction', desc: 'Reacts automatically to WhatsApp status updates', val: !!data?.config?.autoStatusReact },
                     { key: 'antiLink', label: 'Anti-Link Protection', desc: 'Deletes unauthorized invitation links in groups', val: !!data?.config?.antiLink },
-                    { key: 'shortDelay', label: 'Human Delay Mode', desc: 'Simulates natural typing & reading delays', val: !!data?.config?.shortDelay },
+                    { key: 'shortDelay', label: 'Human Delay Mode', desc: 'Simulates natural typing & reading delays', val: !!data?.config?.shortDelay }
                   ].map((item) => (
-                    <div 
+                    <div
                       key={item.key}
                       onClick={() => handleToggleSetting(item.key as keyof BotConfig, item.val)}
                       className="flex items-center justify-between p-3 rounded-[12px] bg-[#05070A] border-[1.5px] border-[#1E293B] hover:border-[#2A3A52] transition-colors cursor-pointer group"
@@ -896,7 +1122,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Bot Control Operations */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
                 <h3 className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] mb-3">System Actions</h3>
@@ -924,7 +1149,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 2: PAIRING (DEVICE LINKING) */}
+          {/* TAB 2: PAIRING */}
           {activeTab === 'pairing' && (
             <div className="space-y-4">
               {!isAuthenticated ? (
@@ -948,158 +1173,152 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  {/* Method Switcher */}
                   <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[14px] p-1 flex space-x-1 relative overflow-hidden">
-                <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
-                <button
-                  onClick={() => setPairingMethod('pairing')}
-                  className={`flex-1 py-2.5 rounded-[10px] text-[12px] font-bold uppercase tracking-[1px] transition-all flex items-center justify-center space-x-2 ${
-                    pairingMethod === 'pairing'
-                      ? 'bg-[#111A28] text-[#00FF88] border border-[#1E293B]'
-                      : 'text-[#64748B] hover:text-[#FFFFFF]'
-                  }`}
-                >
-                  <Smartphone className="w-4 h-4" />
-                  <span>Pairing Code</span>
-                </button>
-                <button
-                  onClick={() => setPairingMethod('qr')}
-                  className={`flex-1 py-2.5 rounded-[10px] text-[12px] font-bold uppercase tracking-[1px] transition-all flex items-center justify-center space-x-2 ${
-                    pairingMethod === 'qr'
-                      ? 'bg-[#111A28] text-[#00FF88] border border-[#1E293B]'
-                      : 'text-[#64748B] hover:text-[#FFFFFF]'
-                  }`}
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>Scan QR</span>
-                </button>
-              </div>
-
-              {/* Pairing Code Card */}
-              {pairingMethod === 'pairing' && (
-                <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden">
-                  <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
-
-                  <div className="mb-4">
-                    <span className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#00FF88] block">Step 1</span>
-                    <h2 className="text-[18px] font-bold text-[#FFFFFF] mt-0.5">Request 8-Digit Token</h2>
-                    <p className="text-[12px] text-[#94A3B8] mt-1 leading-relaxed">
-                      Enter your phone number with country code. No QR scanner needed.
-                    </p>
+                    <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
+                    <button
+                      onClick={() => setPairingMethod('pairing')}
+                      className={`flex-1 py-2.5 rounded-[10px] text-[12px] font-bold uppercase tracking-[1px] transition-all flex items-center justify-center space-x-2 ${
+                        pairingMethod === 'pairing'
+                          ? 'bg-[#111A28] text-[#00FF88] border border-[#1E293B]'
+                          : 'text-[#64748B] hover:text-[#FFFFFF]'
+                      }`}
+                    >
+                      <Smartphone className="w-4 h-4" />
+                      <span>Pairing Code</span>
+                    </button>
+                    <button
+                      onClick={() => setPairingMethod('qr')}
+                      className={`flex-1 py-2.5 rounded-[10px] text-[12px] font-bold uppercase tracking-[1px] transition-all flex items-center justify-center space-x-2 ${
+                        pairingMethod === 'qr'
+                          ? 'bg-[#111A28] text-[#00FF88] border border-[#1E293B]'
+                          : 'text-[#64748B] hover:text-[#FFFFFF]'
+                      }`}
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>Scan QR</span>
+                    </button>
                   </div>
 
-                  <form onSubmit={handleRequestPairing} className="space-y-4">
-                    <div>
-                      <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-2">
-                        WhatsApp Number
-                      </label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#4B5563] font-mono font-bold">+</span>
-                        <input
-                          type="text"
-                          value={phoneNumber}
-                          onChange={(e) => setPhoneNumber(e.target.value)}
-                          placeholder="237651858408"
-                          className="w-full bg-[#05070A] border-[1.5px] border-[#1E293B] focus:border-[#00FF88] rounded-[12px] px-4 py-3 pl-8 text-[#FFFFFF] font-mono text-[15px] placeholder-[#4B5563] outline-none transition-colors"
-                        />
+                  {pairingMethod === 'pairing' && (
+                    <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden">
+                      <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
+
+                      <div className="mb-4">
+                        <span className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#00FF88] block">Step 1</span>
+                        <h2 className="text-[18px] font-bold text-[#FFFFFF] mt-0.5">Request 8-Digit Token</h2>
+                        <p className="text-[12px] text-[#94A3B8] mt-1 leading-relaxed">
+                          Enter your phone number with country code. No QR scanner needed.
+                        </p>
                       </div>
-                      <p className="text-[11px] text-[#64748B] mt-1.5">Include country code without + or leading 0.</p>
-                    </div>
 
-                    <button
-                      type="submit"
-                      disabled={pairingLoading || !phoneNumber.trim()}
-                      className="w-full py-3.5 rounded-[12px] bg-[#00FF88] hover:bg-[#00FF88]/90 text-[#000000] font-bold text-[13px] uppercase tracking-[1.5px] transition-all flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer active:scale-[0.98]"
-                    >
-                      {pairingLoading ? (
-                        <RefreshCcw className="w-4 h-4 animate-spin text-[#000000]" />
-                      ) : (
-                        <>
-                          <span>Generate Pairing Code</span>
-                          <ChevronRight className="w-4 h-4" />
-                        </>
-                      )}
-                    </button>
-                  </form>
+                      <form onSubmit={handleRequestPairing} className="space-y-4">
+                        <div>
+                          <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-2">
+                            WhatsApp Number
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#4B5563] font-mono font-bold">+</span>
+                            <input
+                              type="text"
+                              value={phoneNumber}
+                              onChange={(e) => setPhoneNumber(e.target.value)}
+                              placeholder="237651858408"
+                              className="w-full bg-[#05070A] border-[1.5px] border-[#1E293B] focus:border-[#00FF88] rounded-[12px] px-4 py-3 pl-8 text-[#FFFFFF] font-mono text-[15px] placeholder-[#4B5563] outline-none transition-colors"
+                            />
+                          </div>
+                          <p className="text-[11px] text-[#64748B] mt-1.5">Include country code without + or leading 0.</p>
+                        </div>
 
-                  {/* Generated Code Display Card */}
-                  {generatedCode && (
-                    <div className="mt-5 p-4 rounded-[14px] bg-[#05070A] border-[1.5px] border-[#00FF88]/40 relative">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold uppercase tracking-[1.5px] text-[#00FF88]">Your Pairing Code</span>
                         <button
-                          onClick={() => handleCopyCode(generatedCode)}
-                          className="flex items-center space-x-1 text-[11px] font-bold text-[#00FF88] hover:underline"
+                          type="submit"
+                          disabled={pairingLoading || !phoneNumber.trim()}
+                          className="w-full py-3.5 rounded-[12px] bg-[#00FF88] hover:bg-[#00FF88]/90 text-[#000000] font-bold text-[13px] uppercase tracking-[1.5px] transition-all flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer active:scale-[0.98]"
                         >
-                          {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                          <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                          {pairingLoading ? (
+                            <RefreshCcw className="w-4 h-4 animate-spin text-[#000000]" />
+                          ) : (
+                            <>
+                              <span>Generate Pairing Code</span>
+                              <ChevronRight className="w-4 h-4" />
+                            </>
+                          )}
                         </button>
-                      </div>
+                      </form>
 
-                      <div className="text-center py-3 bg-[#0A101A] rounded-[10px] border border-[#1E293B]">
-                        <span className="text-[28px] font-mono font-bold tracking-[6px] text-[#00FF88]">
-                          {generatedCode}
-                        </span>
-                      </div>
+                      {generatedCode && (
+                        <div className="mt-5 p-4 rounded-[14px] bg-[#05070A] border-[1.5px] border-[#00FF88]/40 relative">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-[1.5px] text-[#00FF88]">Your Pairing Code</span>
+                            <button
+                              onClick={() => handleCopyCode(generatedCode)}
+                              className="flex items-center space-x-1 text-[11px] font-bold text-[#00FF88] hover:underline"
+                            >
+                              {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                            </button>
+                          </div>
 
-                      <div className="mt-3 text-[11px] text-[#94A3B8] space-y-1">
-                        <p className="font-semibold text-[#FFFFFF]">How to link on your phone:</p>
-                        <p>1. Open WhatsApp &gt; 3 dots (or Settings) &gt; <span className="text-[#FFFFFF]">Linked Devices</span></p>
-                        <p>2. Tap <span className="text-[#FFFFFF]">Link a device</span> &gt; Choose <span className="text-[#00FF88]">Link with phone number instead</span></p>
-                        <p>3. Enter the 8-digit code shown above</p>
-                      </div>
+                          <div className="text-center py-3 bg-[#0A101A] rounded-[10px] border border-[#1E293B]">
+                            <span className="text-[28px] font-mono font-bold tracking-[6px] text-[#00FF88]">
+                              {generatedCode}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 text-[11px] text-[#94A3B8] space-y-1">
+                            <p className="font-semibold text-[#FFFFFF]">How to link on your phone:</p>
+                            <p>1. Open WhatsApp &gt; 3 dots (or Settings) &gt; <span className="text-[#FFFFFF]">Linked Devices</span></p>
+                            <p>2. Tap <span className="text-[#FFFFFF]">Link a device</span> &gt; Choose <span className="text-[#00FF88]">Link with phone number instead</span></p>
+                            <p>3. Enter the 8-digit code shown above</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
 
-              {/* QR Code Card */}
-              {pairingMethod === 'qr' && (
-                <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 text-center relative overflow-hidden">
-                  <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
+                  {pairingMethod === 'qr' && (
+                    <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 text-center relative overflow-hidden">
+                      <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
 
-                  <span className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#00FF88] block mb-1">Instant Pairing</span>
-                  <h2 className="text-[18px] font-bold text-[#FFFFFF]">Scan WhatsApp QR</h2>
-                  <p className="text-[12px] text-[#94A3B8] mt-1 mb-5">
-                    Scan with your phone's camera in WhatsApp Linked Devices.
-                  </p>
-
-                  {data?.qr ? (
-                    <div className="inline-block p-3 bg-[#FFFFFF] rounded-[16px] border border-[#1E293B]">
-                      <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.qr)}`}
-                        alt="QR Code"
-                        className="w-48 h-48 mx-auto"
-                      />
-                    </div>
-                  ) : (
-                    <div className="p-8 bg-[#05070A] rounded-[12px] border border-[#1E293B] text-center space-y-3">
-                      <p className="text-[13px] text-[#94A3B8]">
-                        {isConnected ? 'Device is already connected!' : 'QR code will appear when requested.'}
+                      <span className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#00FF88] block mb-1">Instant Pairing</span>
+                      <h2 className="text-[18px] font-bold text-[#FFFFFF]">Scan WhatsApp QR</h2>
+                      <p className="text-[12px] text-[#94A3B8] mt-1 mb-5">
+                        Scan with your phone's camera in WhatsApp Linked Devices.
                       </p>
-                      <button
-                        onClick={handleReconnect}
-                        className="px-4 py-2 rounded-[10px] bg-[#111A28] border border-[#1E293B] text-[#00FF88] text-[12px] font-bold uppercase tracking-[1px] hover:bg-[#1E293B] transition-colors"
-                      >
-                        Request New QR
-                      </button>
+
+                      {data?.qr ? (
+                        <div className="inline-block p-3 bg-[#FFFFFF] rounded-[16px] border border-[#1E293B]">
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.qr)}`}
+                            alt="QR Code"
+                            className="w-48 h-48 mx-auto"
+                          />
+                        </div>
+                      ) : (
+                        <div className="p-8 bg-[#05070A] rounded-[12px] border border-[#1E293B] text-center space-y-3">
+                          <p className="text-[13px] text-[#94A3B8]">
+                            {isConnected ? 'Device is already connected!' : 'QR code will appear when requested.'}
+                          </p>
+                          <button
+                            onClick={handleReconnect}
+                            className="px-4 py-2 rounded-[10px] bg-[#111A28] border border-[#1E293B] text-[#00FF88] text-[12px] font-bold uppercase tracking-[1px] hover:bg-[#1E293B] transition-colors"
+                          >
+                            Request New QR
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
                 </>
               )}
             </div>
           )}
 
-          {/* TAB 3: COMMANDS DIRECTORY */}
+          {/* TAB 3: COMMANDS */}
           {activeTab === 'commands' && (
             <div className="space-y-3">
-              {/* Search & Filter Header */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-4 relative overflow-hidden">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
-                
-                {/* Search Bar */}
+
                 <div className="relative mb-3">
                   <Search className="w-4 h-4 text-[#64748B] absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
@@ -1111,7 +1330,6 @@ export default function App() {
                   />
                 </div>
 
-                {/* Category Chips Scroll */}
                 <div className="flex space-x-1.5 overflow-x-auto pb-1 scrollbar-none">
                   {['all', 'general', 'download', 'group', 'utility', 'owner', 'protection', 'ai'].map((cat) => (
                     <button
@@ -1129,7 +1347,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Commands List Cards */}
               <div className="space-y-2">
                 {filteredCommands.length === 0 ? (
                   <div className="p-8 text-center text-[#64748B] text-[13px] bg-[#0A101A] rounded-[16px] border border-[#1E293B]">
@@ -1175,14 +1392,12 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 4: CONSOLE LOGS */}
+          {/* TAB 4: LOGS */}
           {activeTab === 'logs' && (
             <div className="space-y-3">
-              {/* Logs Controls */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[14px] p-2.5 flex items-center justify-between relative overflow-hidden">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
-                
-                {/* Filter Pills */}
+
                 <div className="flex space-x-1">
                   {(['all', 'in', 'out', 'info', 'error'] as const).map((filter) => (
                     <button
@@ -1209,14 +1424,13 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Terminal Screen */}
               <div className="bg-[#05070A] border-[1.5px] border-[#1E293B] rounded-[16px] p-4 font-mono text-[12px] min-h-[380px] max-h-[500px] overflow-y-auto space-y-2 relative">
                 {filteredLogs.length === 0 ? (
                   <p className="text-[#4B5563] text-center pt-16">No logs recorded for this filter.</p>
                 ) : (
                   filteredLogs.map((log) => {
                     const time = new Date(log.timestamp).toLocaleTimeString();
-                    const color = 
+                    const color =
                       log.type === 'error' ? 'text-[#FF4D4D]' :
                       log.type === 'in' ? 'text-[#00D1FF]' :
                       log.type === 'out' ? 'text-[#00FF88]' : 'text-[#94A3B8]';
@@ -1274,7 +1488,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Bot Name */}
                 <div>
                   <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-1.5">
                     Bot Display Name
@@ -1287,7 +1500,6 @@ export default function App() {
                   />
                 </div>
 
-                {/* Prefix & Mode */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-1.5">
@@ -1316,7 +1528,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Owner Number */}
                 <div>
                   <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-1.5">
                     Owner Phone JID
@@ -1330,7 +1541,6 @@ export default function App() {
                   />
                 </div>
 
-                {/* Banner Image URL */}
                 <div>
                   <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-1.5">
                     Menu Banner Image URL
@@ -1360,11 +1570,10 @@ export default function App() {
                 </button>
               </form>
 
-              {/* Environment Info */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden space-y-3">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
                 <h3 className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B]">Cloud Environment</h3>
-                
+
                 <div className="space-y-2 text-[12px]">
                   <div className="flex justify-between items-center py-1 border-b border-[#111827]">
                     <span className="text-[#64748B]">Database</span>
@@ -1391,10 +1600,9 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB: VOICEMAIL ANSWERING MACHINE */}
+          {/* TAB: VOICEMAIL */}
           {activeTab === 'voicemail' && (
             <div className="space-y-4">
-              {/* Voicemail Header & Live Status */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
 
@@ -1428,9 +1636,8 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Quick Settings Toggles */}
                 <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div 
+                  <div
                     onClick={() => handleToggleSetting('voicemailAutoForward', data?.config?.voicemailAutoForward !== false)}
                     className="bg-[#05070A] border-[1.5px] border-[#1E293B] hover:border-[#2A3A52] rounded-[12px] p-3 cursor-pointer transition-colors"
                   >
@@ -1444,7 +1651,7 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div 
+                  <div
                     onClick={() => handleToggleSetting('antiCall', !!data?.config?.antiCall)}
                     className="bg-[#05070A] border-[1.5px] border-[#1E293B] hover:border-[#2A3A52] rounded-[12px] p-3 cursor-pointer transition-colors"
                   >
@@ -1460,7 +1667,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Voice Greeting Studio */}
+              {/* GREETING STUDIO */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden space-y-4">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
 
@@ -1475,7 +1682,6 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Voice Language Selector */}
                   <select
                     value={settingsDraft.voicemailLang || 'en'}
                     onChange={(e) => setSettingsDraft({ ...settingsDraft, voicemailLang: e.target.value })}
@@ -1492,7 +1698,6 @@ export default function App() {
                   </select>
                 </div>
 
-                {/* Preset Suggestions */}
                 <div>
                   <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-2">
                     Quick Preset Greetings
@@ -1528,7 +1733,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Greeting Textarea */}
                 <div>
                   <label className="text-[11px] font-bold uppercase tracking-[1.5px] text-[#64748B] block mb-1.5">
                     Spoken Greeting Message
@@ -1546,13 +1750,19 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Audio Preview & Save Controls */}
+                {previewError && (
+                  <div className="p-3 bg-[#1F0A0A] border border-[#531414] rounded-[10px] text-[#FF4D4D] text-[12px] flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{previewError}</span>
+                  </div>
+                )}
+
                 <div className="flex items-center space-x-3 pt-1">
                   <button
                     type="button"
                     onClick={handlePlayGreetingPreview}
                     disabled={previewLoading}
-                    className="flex-1 py-3 rounded-[12px] bg-[#0E1A29] border border-[#1E3A5F] hover:border-[#00FF88] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer group"
+                    className="flex-1 py-3 rounded-[12px] bg-[#0E1A29] border border-[#1E3A5F] hover:border-[#00FF88] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer group disabled:opacity-60"
                   >
                     {previewLoading ? (
                       <RefreshCcw className="w-4 h-4 animate-spin text-[#00FF88]" />
@@ -1592,7 +1802,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Voicemail Inbox */}
+              {/* INBOX */}
               <div className="bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[16px] p-5 relative overflow-hidden space-y-4">
                 <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
 
@@ -1635,7 +1845,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Inbox List */}
                 <div className="space-y-2.5">
                   {voicemailsList.length === 0 ? (
                     <div className="text-center py-8 px-4 bg-[#05070A] border-[1.5px] border-[#1E293B] rounded-[12px]">
@@ -1648,6 +1857,8 @@ export default function App() {
                   ) : (
                     voicemailsList.map((vm) => {
                       const hasLeftMessage = vm.status === 'left_message';
+                      const hasAudio = !!vm.audioUrl;
+                      const isPlayingThis = playingVmId === vm.id;
                       return (
                         <div
                           key={vm.id}
@@ -1695,12 +1906,67 @@ export default function App() {
                             </div>
                           </div>
 
+                          {/* Voice note playback row */}
+                          {hasAudio && (
+                            <div className="mt-2.5 flex items-center space-x-2">
+                              <button
+                                onClick={() => handlePlayVoicemail(vm)}
+                                className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                                  isPlayingThis
+                                    ? 'bg-[#00FF88] text-[#000000]'
+                                    : 'bg-[#0A1F14] text-[#00FF88] border border-[#14532D] hover:border-[#00FF88]'
+                                }`}
+                                title={isPlayingThis ? 'Pause' : 'Play voicemail'}
+                              >
+                                {isPlayingThis ? (
+                                  <Pause className="w-4 h-4" />
+                                ) : (
+                                  <Play className="w-4 h-4 fill-current" />
+                                )}
+                              </button>
+
+                              <div className="flex-1 h-8 rounded-full bg-[#0A101A] border border-[#1E293B] flex items-center px-3 overflow-hidden">
+                                <div className="flex items-center space-x-0.5">
+                                  {Array.from({ length: 28 }).map((_, i) => {
+                                    const base = [6, 10, 8, 12, 6, 14, 10, 8, 12, 6, 10, 14, 8, 12, 6, 10, 8, 12, 14, 6, 10, 8, 12, 6, 14, 10, 8, 12][i] || 8;
+                                    return (
+                                      <span
+                                        key={i}
+                                        style={{ height: `${base}px` }}
+                                        className={`w-[2px] rounded-full ${
+                                          isPlayingThis ? 'bg-[#00FF88] animate-pulse' : 'bg-[#334155]'
+                                        }`}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                                <span className="ml-2 text-[10px] font-mono text-[#64748B]">
+                                  voice note
+                                </span>
+                              </div>
+
+                              <button
+                                onClick={() => handleDownloadVoicemail(vm)}
+                                title="Download voicemail"
+                                className="w-9 h-9 rounded-[8px] bg-[#0A101A] border border-[#1E293B] hover:border-[#00FF88] text-[#94A3B8] hover:text-[#00FF88] flex items-center justify-center transition-colors"
+                              >
+                                <DownloadCloud className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
+
                           {vm.messageText && (
                             <div className="mt-2.5 p-2.5 rounded-[8px] bg-[#0A101A] border border-[#1E293B] text-[12px] text-[#E2E8F0]">
                               <span className="text-[#64748B] text-[10px] uppercase font-bold tracking-wider block mb-0.5">
                                 Caller Voicemail:
                               </span>
                               <p className="italic text-[#00FF88]">"{vm.messageText}"</p>
+                            </div>
+                          )}
+
+                          {hasLeftMessage && !hasAudio && (
+                            <div className="mt-2.5 text-[11px] text-amber-400/80 italic">
+                              No audio attached — this was likely a text reply to the greeting.
                             </div>
                           )}
                         </div>
@@ -1713,7 +1979,7 @@ export default function App() {
           )}
         </main>
 
-        {/* NATIVE MOBILE BOTTOM NAVIGATION BAR */}
+        {/* BOTTOM NAV */}
         <nav className="fixed bottom-0 inset-x-0 max-w-lg mx-auto z-40 bg-[#0A101A]/95 backdrop-blur-lg border-t-[1.5px] border-[#1E293B] px-1 py-2 flex items-center justify-around">
           <div className="absolute inset-x-0 top-0 h-[1px] bg-[#2A3A52]"></div>
 
@@ -1723,7 +1989,7 @@ export default function App() {
             { id: 'voicemail', label: 'VoiceMail', icon: Mic },
             { id: 'commands', label: 'Cmds', icon: Zap },
             { id: 'logs', label: 'Logs', icon: Activity },
-            { id: 'settings', label: 'Settings', icon: Sliders },
+            { id: 'settings', label: 'Settings', icon: Sliders }
           ].map((item) => {
             const isActive = activeTab === item.id;
             return (
@@ -1746,7 +2012,7 @@ export default function App() {
           })}
         </nav>
 
-        {/* ADMIN PASSKEY UNLOCK MODAL */}
+        {/* UNLOCK MODAL */}
         {showUnlockModal && (
           <div className="fixed inset-0 z-50 bg-[#000000]/80 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="w-full max-w-sm bg-[#0A101A] border-[1.5px] border-[#1E293B] rounded-[24px] p-6 relative overflow-hidden shadow-2xl">
