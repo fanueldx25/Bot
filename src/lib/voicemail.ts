@@ -23,6 +23,7 @@ interface PendingVoicemail {
 
 const activeVoicemailCallers = new Map<string, PendingVoicemail>();
 
+// Cleanup stale pending voicemails older than 15 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [from, data] of activeVoicemailCallers.entries()) {
@@ -235,4 +236,142 @@ export async function generateVoicemailAudio(
 
   console.error('[tts] all TTS sources failed');
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Incoming call tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * Records an incoming call in the database and prepares for caller's voicemail reply.
+ */
+export async function recordIncomingCall(
+  callId: string,
+  from: string,
+  callerName?: string,
+  isVideo: boolean = false
+): Promise<number | null> {
+  const callerNumber = from.split('@')[0] || from;
+  try {
+    const inserted = await db
+      .insert(voicemails)
+      .values({
+        callerNumber,
+        callerName: callerName || `+${callerNumber}`,
+        callId,
+        callType: isVideo ? 'video' : 'voice',
+        status: 'missed',
+        messageText: null
+      })
+      .returning({ id: voicemails.id });
+
+    const newId = inserted[0]?.id;
+    if (newId) {
+      activeVoicemailCallers.set(from, {
+        id: newId,
+        callId,
+        callerNumber,
+        timestamp: Date.now()
+      });
+      return newId;
+    }
+  } catch (error: any) {
+    console.error('Failed to log incoming call to voicemails table:', error.message);
+  }
+  return null;
+}
+
+/**
+ * Checks if a sender recently placed a call and has a pending voicemail session.
+ */
+export function isExpectingVoicemail(from: string): boolean {
+  return activeVoicemailCallers.has(from);
+}
+
+/**
+ * Retrieves the pending voicemail record for a caller if within active window.
+ */
+export function getPendingVoicemail(from: string): PendingVoicemail | undefined {
+  return activeVoicemailCallers.get(from);
+}
+
+/**
+ * Saves the caller's recorded message (voice note or text message) into the database.
+ */
+export async function recordVoicemailMessage(
+  from: string,
+  messageText: string,
+  isVoiceNote: boolean = false,
+  audioUrl?: string
+): Promise<{ success: boolean; id?: number; callerNumber?: string }> {
+  const pending = activeVoicemailCallers.get(from);
+  if (!pending) return { success: false };
+
+  try {
+    await db
+      .update(voicemails)
+      .set({
+        status: 'left_message',
+        messageText,
+        isVoiceNote: isVoiceNote ? 'true' : 'false',
+        audioUrl: audioUrl || null
+      })
+      .where(eq(voicemails.id, pending.id));
+
+    activeVoicemailCallers.delete(from);
+    addLog(
+      `Voicemail message recorded from +${pending.callerNumber} (${isVoiceNote ? 'Voice Note' : 'Text'})`,
+      'info'
+    );
+    return { success: true, id: pending.id, callerNumber: pending.callerNumber };
+  } catch (err: any) {
+    console.error('Failed to update voicemail record with caller message:', err.message);
+    return { success: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard / DB helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns latest voicemails for dashboard display.
+ */
+export async function getVoicemailList(limit: number = 50) {
+  try {
+    return await db
+      .select()
+      .from(voicemails)
+      .orderBy(desc(voicemails.timestamp))
+      .limit(limit);
+  } catch (err: any) {
+    console.error('Failed to fetch voicemails from DB:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Deletes a single voicemail by ID.
+ */
+export async function deleteVoicemail(id: number): Promise<boolean> {
+  try {
+    await db.delete(voicemails).where(eq(voicemails.id, id));
+    return true;
+  } catch (err: any) {
+    console.error('Failed to delete voicemail:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Clears all voicemails.
+ */
+export async function clearAllVoicemails(): Promise<boolean> {
+  try {
+    await db.delete(voicemails);
+    return true;
+  } catch (err: any) {
+    console.error('Failed to clear voicemails:', err.message);
+    return false;
+  }
 }
