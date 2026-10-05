@@ -10,17 +10,19 @@ const MarkdownIt = require('markdown-it');
 const { exec } = require('child_process');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // --- Ollama Cloud API Configuration ---
-const OLLAMA_CLOUD_URL = 'https://ollama.com/v1'; // OpenAI-compatible endpoint
+const OLLAMA_CLOUD_URL = 'https://ollama.com/v1'; 
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
 
 if (!OLLAMA_API_KEY) {
-    console.error("WARNING: OLLAMA_API_KEY is not set in your .env file. Cloud API calls will fail.");
+    console.error("❌ ERROR: OLLAMA_API_KEY is missing in your .env file.");
+    console.error("Please add your API key to the .env file and restart the server.");
+    process.exit(1);
 }
 
-// The exact models you have hosted
+// The exact models you have hosted on Ollama Cloud
 const AVAILABLE_MODELS = [
     "gemma4:31b",
     "gpt-oss:120b",
@@ -60,7 +62,6 @@ const runPythonScript = (scriptContent) => {
         const tempFile = path.join(__dirname, `temp_script_${Date.now()}.py`);
         fs.writeFileSync(tempFile, scriptContent);
 
-        // Use 'python' on Windows, 'python3' on Linux/Mac
         const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 
         exec(`${pythonCmd} ${tempFile}`, (error, stdout, stderr) => {
@@ -76,64 +77,66 @@ const runPythonScript = (scriptContent) => {
 };
 
 // --- Helper: Call Ollama Cloud API (Streaming) ---
+// Returns the full response string at the end
 async function streamOllamaCloud(model, messages, res) {
-    const response = await fetch(`${OLLAMA_CLOUD_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OLLAMA_API_KEY}`
-        },
-        body: JSON.stringify({
-            model: model,
-            messages: messages,
-            stream: true
-        })
-    });
+    return new Promise(async (resolve, reject) => {
+        try {
+            const response = await fetch(`${OLLAMA_CLOUD_URL}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${OLLAMA_API_KEY}`
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: messages,
+                    stream: true
+                })
+            });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Ollama Cloud Error: ${response.status} - ${errorText}`);
-    }
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Ollama Cloud Error: ${response.status} - ${errorText}`);
+            }
 
-    const reader = response.body;
-    let fullResponse = "";
+            let fullResponse = "";
+            const decoder = new TextDecoder();
 
-    reader.on('data', (chunk) => {
-        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const dataStr = line.slice(6);
-                if (dataStr === '[DONE]') {
-                    res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
-                    res.end();
-                    return;
-                }
-                try {
-                    const parsed = JSON.parse(dataStr);
-                    const content = parsed.choices[0]?.delta?.content || "";
-                    if (content) {
-                        fullResponse += content;
-                        res.write(`data: ${JSON.stringify({ content, done: false })}\n\n`);
+            for await (const chunk of response.body) {
+                const text = decoder.decode(chunk, { stream: true });
+                const lines = text.split('\n').filter(line => line.trim() !== '');
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.slice(6);
+                        if (dataStr === '[DONE]') {
+                            res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
+                            res.end();
+                            return resolve(fullResponse);
+                        }
+                        try {
+                            const parsed = JSON.parse(dataStr);
+                            const content = parsed.choices[0]?.delta?.content || "";
+                            if (content) {
+                                fullResponse += content;
+                                res.write(`data: ${JSON.stringify({ content, done: false })}\n\n`);
+                            }
+                        } catch (e) {
+                            // Ignore partial JSON chunks
+                        }
                     }
-                } catch (e) {
-                    // Ignore partial JSON
                 }
             }
-        }
-    });
 
-    reader.on('end', () => {
-        if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
-            res.end();
-        }
-        return fullResponse;
-    });
+            if (!res.writableEnded) {
+                res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
+                res.end();
+            }
+            resolve(fullResponse);
 
-    reader.on('error', (err) => {
-        console.error("Stream error:", err);
-        res.write(`data: ${JSON.stringify({ content: '\n[Stream Error]', done: true })}\n\n`);
-        res.end();
+        } catch (error) {
+            reject(error);
+        }
     });
 }
 
@@ -238,12 +241,17 @@ app.post('/api/chat', async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
 
     try {
-        await streamOllamaCloud(model || 'gpt-oss:20b', finalMessages, res);
+        const fullAssistantResponse = await streamOllamaCloud(model || 'gpt-oss:20b', finalMessages, res);
         
-        // Note: Since streamOllamaCloud handles res.end(), we can't easily save the assistant message here 
-        // without wrapping the stream. For simplicity in this architecture, we rely on the frontend 
-        // to maintain state during the session, and we save the assistant response when the next message is sent.
-        // To properly save the assistant response, we would need to accumulate it in the stream function.
+        // Save the Assistant's response to the database after streaming completes
+        if (fullAssistantResponse) {
+            currentChat.messages.push({ 
+                role: 'assistant', 
+                content: fullAssistantResponse, 
+                timestamp: new Date() 
+            });
+            saveDB(db);
+        }
         
     } catch (error) {
         console.error(error);
@@ -309,7 +317,7 @@ app.delete('/api/chats/:id', (req, res) => {
 
 // Start Server
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`Using Ollama Cloud API at ${OLLAMA_CLOUD_URL}`);
-    console.log(`Available Models: ${AVAILABLE_MODELS.join(', ')}`);
+    console.log(`✅ Server running on http://localhost:${PORT}`);
+    console.log(`☁️  Connected to Ollama Cloud API at ${OLLAMA_CLOUD_URL}`);
+    console.log(`🤖 Available Models: ${AVAILABLE_MODELS.join(', ')}`);
 });

@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI System Pro - Local Agent Console</title>
+    <title>AI System Pro - Ollama Cloud Console</title>
     
-    <!-- Tailwind CSS CDN -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -26,34 +25,19 @@
         }
     </script>
     
-    <!-- FontAwesome for Pro Icons -->
+    <!-- Icons & Markdown Parser -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- Marked.js for Markdown Rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
-    <!-- Highlight.js for Code Highlighting -->
+    <!-- Code Highlighting -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
-    
+
     <style>
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: #0a0b0e;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: #1f2430;
-            border-radius: 3px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: #374151;
-        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0b0e; }
+        ::-webkit-scrollbar-thumb { background: #1f2430; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #374151; }
         
         .frosted-glass {
             background: rgba(18, 20, 28, 0.75);
@@ -61,48 +45,50 @@
             -webkit-backdrop-filter: blur(16px);
             border: 1px solid rgba(255, 255, 255, 0.06);
         }
-        
         .frosted-input {
             background: rgba(10, 11, 14, 0.6);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
-        
         .frosted-input:focus {
             border-color: #3b82f6;
             outline: none;
             box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
         }
-        
         body {
             background-color: #0a0b0e;
             color: #f3f4f6;
             font-family: 'Inter', system-ui, -apple-system, sans-serif;
         }
+        .typing-cursor::after {
+            content: '▋';
+            animation: blink 1s step-start infinite;
+            color: #3b82f6;
+            margin-left: 2px;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
     </style>
 </head>
-
 <body class="h-screen flex overflow-hidden">
-    
+
     <div id="mobile-backdrop" class="fixed inset-0 bg-black/60 z-30 hidden md:hidden transition-opacity"></div>
-    
+
+    <!-- Sidebar -->
     <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-72 z-40 bg-cardbg border-r border-cardborder flex flex-col transform -translate-x-full md:translate-x-0 transition-transform duration-300 ease-in-out">
-        <!-- Sidebar Header -->
         <div class="p-4 border-b border-cardborder flex items-center justify-between">
             <div class="flex items-center space-x-3">
                 <div class="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold">
-                    <i class="fa-solid fa-brain"></i>
+                    <i class="fa-solid fa-cloud"></i>
                 </div>
                 <div>
                     <h1 class="font-semibold text-sm tracking-tight text-white">AI System Pro</h1>
-                    <span class="text-xs text-emerald-400 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Ollama Connected</span>
+                    <span class="text-xs text-emerald-400 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Cloud Connected</span>
                 </div>
             </div>
             <button id="close-sidebar" class="md:hidden text-mutedtext hover:text-white p-1.5">
                 <i class="fa-solid fa-xmark text-lg"></i>
             </button>
         </div>
-        
-        <!-- New Chat & Tools Actions -->
+
         <div class="p-3 space-y-2 border-b border-cardborder">
             <button onclick="startNewChat()" class="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded-xl text-sm transition shadow-sm">
                 <i class="fa-solid fa-plus"></i> New Conversation
@@ -116,23 +102,20 @@
                 </button>
             </div>
         </div>
-        
-        <!-- Chat History List -->
+
         <div class="flex-1 overflow-y-auto p-3 space-y-1" id="chat-history-list">
             <div class="text-xs font-semibold text-mutedtext px-3 py-2 uppercase tracking-wider">Recent Sessions</div>
-            <!-- Dynamic history items loaded via JS -->
-            <div class="text-xs text-mutedtext/60 px-3 py-4 text-center">Loading histories...</div>
+            <!-- History populated by JS -->
         </div>
-        
-        <!-- Sidebar Footer -->
+
         <div class="p-3 border-t border-cardborder text-xs text-mutedtext flex items-center justify-between">
-            <span class="truncate max-w-[160px]">Base: http://localhost:3000</span>
-            <span class="bg-cardborder px-2 py-1 rounded text-[10px] font-mono text-blue-400">v2.4-pro</span>
+            <span class="truncate max-w-[160px]">API: ollama.com/v1</span>
+            <span class="bg-cardborder px-2 py-1 rounded text-[10px] font-mono text-blue-400">v3.0-cloud</span>
         </div>
     </aside>
-    
+
+    <!-- Main Content -->
     <main class="flex-1 flex flex-col h-full bg-darkbg relative overflow-hidden">
-        <!-- Top Navigation Bar -->
         <header class="h-16 border-b border-cardborder frosted-glass px-4 md:px-6 flex items-center justify-between z-20">
             <div class="flex items-center space-x-3">
                 <button id="toggle-sidebar" class="md:hidden text-mutedtext hover:text-white p-2 rounded-lg hover:bg-cardborder/50 transition">
@@ -143,30 +126,27 @@
                     <span id="active-model-badge" class="text-[11px] text-mutedtext">Model: <span class="text-blue-400 font-mono">gpt-oss:20b</span></span>
                 </div>
             </div>
-            
+
             <div class="flex items-center space-x-2">
-                <!-- PDF Export Button -->
                 <button onclick="exportChatPDF()" title="Export Chat as PDF" class="flex items-center gap-2 bg-cardborder/60 hover:bg-cardborder text-mutedtext hover:text-white px-3 py-2 rounded-xl text-xs font-medium transition border border-white/5">
                     <i class="fa-solid fa-file-pdf text-red-400"></i>
                     <span class="hidden sm:inline">Export PDF</span>
                 </button>
-                <!-- Quick Settings Trigger -->
                 <button onclick="openSettingsModal()" class="w-9 h-9 flex items-center justify-center bg-cardborder/60 hover:bg-cardborder text-mutedtext hover:text-white rounded-xl transition border border-white/5">
                     <i class="fa-solid fa-gear"></i>
                 </button>
             </div>
         </header>
-        
-        <!-- Chat Messages Container -->
+
         <div id="chat-messages" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-            <!-- Welcome State / Empty Screen -->
+            <!-- Empty State -->
             <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-4">
                 <div class="w-16 h-16 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 text-2xl shadow-lg">
                     <i class="fa-solid fa-terminal"></i>
                 </div>
                 <div class="space-y-1">
                     <h3 class="text-lg font-semibold text-white">How can I help you today?</h3>
-                    <p class="text-xs md:text-sm text-mutedtext">Leverage your local LLM with Gamma extraction, live web search capabilities, and native thinking mode.</p>
+                    <p class="text-xs md:text-sm text-mutedtext">Leverage Ollama Cloud models with Gamma extraction, live web search, and native thinking mode.</p>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full pt-2">
                     <button onclick="sendPresetPrompt('Summarize the latest trends in local AI models')" class="text-xs p-3 rounded-xl bg-cardborder/40 hover:bg-cardborder text-left text-mutedtext hover:text-white transition border border-white/5 flex items-center gap-2">
@@ -178,15 +158,13 @@
                 </div>
             </div>
         </div>
-        
-        <!-- Chat Input Bar -->
+
         <div class="p-4 md:p-6 bg-gradient-to-t from-darkbg via-darkbg/90 to-transparent">
             <div class="max-w-4xl mx-auto">
                 <div class="frosted-glass rounded-2xl p-2 shadow-2xl relative">
                     <textarea id="user-input" rows="1" placeholder="Type your prompt or instructions here..." class="w-full bg-transparent text-white placeholder-mutedtext text-sm px-3 py-2.5 resize-none focus:outline-none max-h-32" oninput="autoResize(this)" onkeydown="handleKeydown(event)"></textarea>
                     
                     <div class="flex items-center justify-between px-2 pt-2 border-t border-white/5 mt-1">
-                        <!-- Toggles & Features Indicators -->
                         <div class="flex items-center space-x-2 text-xs text-mutedtext overflow-x-auto py-1">
                             <button onclick="toggleQuickSetting('useWebSearch')" id="badge-websearch" class="px-2.5 py-1 rounded-lg bg-cardborder/60 hover:bg-cardborder text-mutedtext flex items-center gap-1.5 transition border border-white/5">
                                 <i class="fa-solid fa-globe"></i> Web
@@ -198,8 +176,7 @@
                                 <i class="fa-solid fa-wand-magic-sparkles"></i> Gamma
                             </button>
                         </div>
-                        
-                        <!-- Send Button -->
+
                         <button id="send-btn" onclick="submitMessage()" class="bg-blue-600 hover:bg-blue-700 text-white w-9 h-9 rounded-xl flex items-center justify-center transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
                             <i class="fa-solid fa-arrow-up text-sm"></i>
                         </button>
@@ -211,9 +188,10 @@
             </div>
         </div>
     </main>
-    
+
+    <!-- Settings Modal -->
     <div id="settings-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm hidden p-4">
-        <div class="bg-cardborder border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div class="bg-cardborder border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
             <div class="p-4 border-b border-white/10 flex items-center justify-between bg-darkbg/50">
                 <div class="flex items-center gap-2">
                     <i class="fa-solid fa-sliders text-blue-400"></i>
@@ -224,174 +202,218 @@
                 </button>
             </div>
             <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto text-sm">
-                <!-- Model Selection -->
                 <div class="space-y-1.5">
-                    <label class="text-xs font-medium text-mutedtext">Select Model</label>
+                    <label class="text-xs font-medium text-mutedtext">Select Cloud Model</label>
                     <select id="config-model" class="w-full frosted-input rounded-xl px-3 py-2 text-white text-sm">
-                        <option value="gpt-oss:20b">gpt-oss:20b</option>
-                        <option value="gpt-oss:120b">gpt-oss:120b</option>
-                        <option value="gemma4:31b">gemma4:31b</option>
-                        <option value="nemotron-3-nano:30b">nemotron-3-nano:30b</option>
-                        <option value="nemotron-3-super">nemotron-3-super</option>
-                        <option value="nemotron-3-ultra">nemotron-3-ultra</option>
+                        <!-- Populated dynamically from server -->
+                        <option value="loading">Loading models...</option>
                     </select>
-                    <!-- System Prompt -->
-                    <div class="space-y-1.5">
-                        <label class="text-xs font-medium text-mutedtext">System Prompt</label>
-                        <textarea id="config-system-prompt" rows="3" class="w-full frosted-input rounded-xl px-3 py-2 text-white text-xs font-mono resize-none">You are a coding and system assistant expert.</textarea>
-                    </div>
-                    
-                    <!-- Toggles -->
-                    <div class="space-y-3 pt-2 border-t border-white/5">
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-xs text-white font-medium">Enable Live Web Search</span>
-                            <input type="checkbox" id="config-web-search" class="w-4 h-4 rounded accent-blue-600 bg-darkbg border-white/20">
-                        </label>
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-xs text-white font-medium">Enable Thinking Mode</span>
-                            <input type="checkbox" id="config-thinking-mode" class="w-4 h-4 rounded accent-blue-600 bg-darkbg border-white/20">
-                        </label>
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-xs text-white font-medium">Extract Text with Gamma</span>
-                            <input type="checkbox" id="config-gamma-extraction" checked class="w-4 h-4 rounded accent-blue-600 bg-darkbg border-white/20">
-                        </label>
-                    </div>
                 </div>
-                <div class="p-4 border-t border-white/10 bg-darkbg/50 flex justify-end gap-2">
-                    <button onclick="closeSettingsModal()" class="px-4 py-2 rounded-xl bg-cardbg hover:bg-white/5 text-mutedtext text-xs font-medium transition">Cancel</button>
-                    <button onclick="saveSettings()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition">Save Preferences</button>
+
+                <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-mutedtext">System Prompt</label>
+                    <textarea id="config-system-prompt" rows="3" class="w-full frosted-input rounded-xl px-3 py-2 text-white text-xs font-mono resize-none">You are a coding and system assistant expert.</textarea>
+                </div>
+
+                <div class="space-y-3 pt-2 border-t border-white/5">
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-xs text-white font-medium">Enable Live Web Search</span>
+                        <input type="checkbox" id="config-web-search" class="w-4 h-4 rounded accent-blue-600 bg-darkbg border-white/20">
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-xs text-white font-medium">Enable Thinking Mode</span>
+                        <input type="checkbox" id="config-thinking-mode" class="w-4 h-4 rounded accent-blue-600 bg-darkbg border-white/20">
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-xs text-white font-medium">Extract Text with Gamma</span>
+                        <input type="checkbox" id="config-gamma-extraction" checked class="w-4 h-4 rounded accent-blue-600 bg-darkbg border-white/20">
+                    </label>
                 </div>
             </div>
+            <div class="p-4 border-t border-white/10 bg-darkbg/50 flex justify-end gap-2">
+                <button onclick="closeSettingsModal()" class="px-4 py-2 rounded-xl bg-cardbg hover:bg-white/5 text-mutedtext text-xs font-medium transition">Cancel</button>
+                <button onclick="saveSettings()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition">Save Preferences</button>
+            </div>
         </div>
-        
-        <div id="python-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm hidden p-4">
-            <div class="bg-cardborder border border-white/10 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col">
-                <div class="p-4 border-b border-white/10 flex items-center justify-between bg-darkbg/50">
-                    <div class="flex items-center gap-2">
-                        <i class="fa-solid fa-code text-blue-400"></i>
-                        <h3 class="font-semibold text-white text-sm">Python Script Execution Sandbox (`POST /api/run-python`)</h3>
-                    </div>
-                    <button onclick="closePythonSandbox()" class="text-mutedtext hover:text-white p-1">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
+    </div>
+
+    <!-- Python Sandbox Modal -->
+    <div id="python-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm hidden p-4">
+        <div class="bg-cardborder border border-white/10 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col">
+            <div class="p-4 border-b border-white/10 flex items-center justify-between bg-darkbg/50">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-code text-blue-400"></i>
+                    <h3 class="font-semibold text-white text-sm">Python Script Execution Sandbox</h3>
                 </div>
-                <div class="p-4 space-y-4 flex-1">
-                    <div class="space-y-1">
-                        <label class="text-xs font-medium text-mutedtext">Python Code Editor</label>
-                        <textarea id="python-code-input" rows="6" class="w-full frosted-input rounded-xl p-3 text-emerald-400 font-mono text-xs resize-none">print("Hello from Python Agent")
+                <button onclick="closePythonSandbox()" class="text-mutedtext hover:text-white p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-4 space-y-4 flex-1">
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-mutedtext">Python Code Editor</label>
+                    <textarea id="python-code-input" rows="6" class="w-full frosted-input rounded-xl p-3 text-emerald-400 font-mono text-xs resize-none">print("Hello from Python Agent")
 import sys
 print(f"Python Version: {sys.version.split()[0]}")</textarea>
-                    </div>
-                    <div class="space-y-1">
-                        <label class="text-xs font-medium text-mutedtext">Execution Output (stdout / stderr)</label>
-                        <pre id="python-output" class="w-full bg-darkbg border border-white/5 rounded-xl p-3 text-xs font-mono text-mutedtext h-32 overflow-y-auto">Click 'Run Script' to execute on server...</pre>
-                    </div>
                 </div>
-                <div class="p-4 border-t border-white/10 bg-darkbg/50 flex justify-between items-center">
-                    <span class="text-[11px] text-mutedtext">Executes securely against backend container</span>
-                    <div class="flex gap-2">
-                        <button onclick="closePythonSandbox()" class="px-4 py-2 rounded-xl bg-cardbg hover:bg-white/5 text-mutedtext text-xs font-medium transition">Close</button>
-                        <button onclick="executePythonScript()" id="run-python-btn" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition flex items-center gap-2">
-                            <i class="fa-solid fa-play"></i> Run Script
-                        </button>
-                    </div>
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-mutedtext">Execution Output (stdout / stderr)</label>
+                    <pre id="python-output" class="w-full bg-darkbg border border-white/5 rounded-xl p-3 text-xs font-mono text-mutedtext h-32 overflow-y-auto">Click 'Run Script' to execute on server...</pre>
+                </div>
+            </div>
+            <div class="p-4 border-t border-white/10 bg-darkbg/50 flex justify-between items-center">
+                <span class="text-[11px] text-mutedtext">Executes securely against backend container</span>
+                <div class="flex gap-2">
+                    <button onclick="closePythonSandbox()" class="px-4 py-2 rounded-xl bg-cardbg hover:bg-white/5 text-mutedtext text-xs font-medium transition">Close</button>
+                    <button onclick="executePythonScript()" id="run-python-btn" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition flex items-center gap-2">
+                        <i class="fa-solid fa-play"></i> Run Script
+                    </button>
                 </div>
             </div>
         </div>
-        
-        <script>
-            // State Management
-            let currentChatId = null;
-            let chatMessagesData = [];
-            let settings = {
-                model: "gpt-oss:20b",
-                systemPrompt: "You are a coding and system assistant expert.",
-                useWebSearch: false,
-                useThinkingMode: false,
-                extractTextWithGamma: true
+    </div>
+
+    <script>
+        // --- State Management ---
+        let currentChatId = null;
+        let chatMessagesData = []; 
+        let isStreaming = false;
+        let settings = {
+            model: "gpt-oss:20b",
+            systemPrompt: "You are a coding and system assistant expert.",
+            useWebSearch: false,
+            useThinkingMode: false,
+            extractTextWithGamma: true
+        };
+
+        // --- DOM Elements ---
+        const sidebar = document.getElementById('sidebar');
+        const mobileBackdrop = document.getElementById('mobile-backdrop');
+        const chatMessagesContainer = document.getElementById('chat-messages');
+        const userInputArea = document.getElementById('user-input');
+        const emptyState = document.getElementById('empty-state');
+        const chatHistoryList = document.getElementById('chat-history-list');
+        const sendBtn = document.getElementById('send-btn');
+
+        // --- UI Toggles ---
+        document.getElementById('toggle-sidebar').addEventListener('click', () => {
+            sidebar.classList.toggle('-translate-x-full');
+            mobileBackdrop.classList.toggle('hidden');
+        });
+        document.getElementById('close-sidebar').addEventListener('click', () => {
+            sidebar.classList.add('-translate-x-full');
+            mobileBackdrop.classList.add('hidden');
+        });
+        mobileBackdrop.addEventListener('click', () => {
+            sidebar.classList.add('-translate-x-full');
+            mobileBackdrop.classList.add('hidden');
+        });
+
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+        }
+
+        function handleKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submitMessage();
+            }
+        }
+
+        // --- Settings Logic ---
+        function toggleQuickSetting(key) {
+            settings[key] = !settings[key];
+            updateQuickSettingBadges();
+        }
+
+        function updateQuickSettingBadges() {
+            const map = {
+                useWebSearch: 'badge-websearch',
+                useThinkingMode: 'badge-thinking',
+                extractTextWithGamma: 'badge-gamma'
             };
-            
-            // DOM Elements
-            const sidebar = document.getElementById('sidebar');
-            const mobileBackdrop = document.getElementById('mobile-backdrop');
-            const toggleSidebarBtn = document.getElementById('toggle-sidebar');
-            const closeSidebarBtn = document.getElementById('close-sidebar');
-            const chatMessagesContainer = document.getElementById('chat-messages');
-            const userInputArea = document.getElementById('user-input');
-            const emptyState = document.getElementById('empty-state');
-            const chatHistoryList = document.getElementById('chat-history-list');
-            
-            // Toggle Sidebar on Mobile
-            function toggleSidebar() {
-                sidebar.classList.toggle('-translate-x-full');
-                mobileBackdrop.classList.toggle('hidden');
-            }
-            toggleSidebarBtn.addEventListener('click', toggleSidebar);
-            closeSidebarBtn.addEventListener('click', toggleSidebar);
-            mobileBackdrop.addEventListener('click', toggleSidebar);
-            
-            // Auto Resize Textarea
-            function autoResize(el) {
-                el.style.height = 'auto';
-                el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-            }
-            
-            // Handle Enter key for submission
-            function handleKeydown(event) {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    submitMessage();
+            for (const [key, id] of Object.entries(map)) {
+                const el = document.getElementById(id);
+                if (settings[key]) {
+                    el.classList.add('bg-blue-600/20', 'border-blue-500/40', 'text-blue-400');
+                    el.classList.remove('bg-cardborder/60', 'text-mutedtext');
+                } else {
+                    el.classList.remove('bg-blue-600/20', 'border-blue-500/40', 'text-blue-400');
+                    el.classList.add('bg-cardborder/60', 'text-mutedtext');
                 }
             }
-            
-            // Quick Setting Toggles in Input Bar
-            function toggleQuickSetting(key) {
-                settings[key] = !settings[key];
-                updateQuickSettingBadges();
-            }
-            
-            function updateQuickSettingBadges() {
-                const map = {
-                    useWebSearch: 'badge-websearch',
-                    useThinkingMode: 'badge-thinking',
-                    extractTextWithGamma: 'badge-gamma'
-                };
-                for (const [key, id] of Object.entries(map)) {
-                    const el = document.getElementById(id);
-                    if (settings[key]) {
-                        el.classList.add('bg-blue-600/20', 'border-blue-500/40', 'text-blue-400');
-                        el.classList.remove('bg-cardborder/60', 'text-mutedtext');
-                    } else {
-                        el.classList.remove('bg-blue-600/20', 'border-blue-500/40', 'text-blue-400');
-                        el.classList.add('bg-cardborder/60', 'text-mutedtext');
-                    }
+        }
+
+        async function loadAvailableModels() {
+            try {
+                const res = await fetch('/api/models');
+                const models = await res.json();
+                const select = document.getElementById('config-model');
+                select.innerHTML = '';
+                models.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m;
+                    opt.textContent = m;
+                    select.appendChild(opt);
+                });
+                // Set default if current settings model is available
+                if (models.includes(settings.model)) {
+                    select.value = settings.model;
+                } else if (models.length > 0) {
+                    settings.model = models[0];
+                    select.value = models[0];
+                    document.getElementById('active-model-badge').innerHTML = `Model: <span class="text-blue-400 font-mono">${settings.model}</span>`;
                 }
+            } catch (err) {
+                console.error("Failed to load models", err);
             }
+        }
+
+        function openSettingsModal() {
+            document.getElementById('config-system-prompt').value = settings.systemPrompt;
+            document.getElementById('config-web-search').checked = settings.useWebSearch;
+            document.getElementById('config-thinking-mode').checked = settings.useThinkingMode;
+            document.getElementById('config-gamma-extraction').checked = settings.extractTextWithGamma;
+            // Model select is already populated
+            document.getElementById('settings-modal').classList.remove('hidden');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.add('hidden');
+        }
+
+        function saveSettings() {
+            settings.model = document.getElementById('config-model').value;
+            settings.systemPrompt = document.getElementById('config-system-prompt').value;
+            settings.useWebSearch = document.getElementById('config-web-search').checked;
+            settings.useThinkingMode = document.getElementById('config-thinking-mode').checked;
+            settings.extractTextWithGamma = document.getElementById('config-gamma-extraction').checked;
             
-            // Initialize App on Load
-            window.addEventListener('DOMContentLoaded', () => {
-                updateQuickSettingBadges();
-                loadChatHistories();
-                startNewChat();
-            });
-            
-            // 1. Load All Chats (GET /api/chats)
-            async function loadChatHistories() {
-                try {
-                    const res = await fetch('http://localhost:3000/api/chats');
-                    if (!res.ok) throw new Error('Failed to fetch histories');
-                    const chats = await res.json();
-                    
-                    chatHistoryList.innerHTML = '<div class="text-xs font-semibold text-mutedtext px-3 py-2 uppercase tracking-wider">Recent Sessions</div>';
-                    if (chats.length === 0) {
-                        chatHistoryList.innerHTML += '<div class="text-xs text-mutedtext/60 px-3 py-2">No saved chats yet.</div>';
-                        return;
-                    }
-                    
-                    chats.forEach(chat => {
-                        const item = document.createElement('div');
-                        item.className = `group flex items-center justify-between px-3 py-2 rounded-xl text-xs cursor-pointer transition ${chat.id === currentChatId ? 'bg-blue-600/10 text-blue-400 font-medium border border-blue-500/20' : 'text-mutedtext hover:bg-cardborder hover:text-white'}`;
-                        item.innerHTML = `
+            document.getElementById('active-model-badge').innerHTML = `Model: <span class="text-blue-400 font-mono">${settings.model}</span>`;
+            updateQuickSettingBadges();
+            closeSettingsModal();
+        }
+
+        // --- Chat Data Loading ---
+        async function loadChatHistories() {
+            try {
+                const res = await fetch('/api/chats');
+                if (!res.ok) throw new Error('Network response was not ok');
+                const chats = await res.json();
+                
+                chatHistoryList.innerHTML = '<div class="text-xs font-semibold text-mutedtext px-3 py-2 uppercase tracking-wider">Recent Sessions</div>';
+                if (chats.length === 0) {
+                    chatHistoryList.innerHTML += '<div class="text-xs text-mutedtext/60 px-3 py-2">No saved chats yet.</div>';
+                    return;
+                }
+
+                chats.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+                chats.forEach(chat => {
+                    const item = document.createElement('div');
+                    item.className = `group flex items-center justify-between px-3 py-2 rounded-xl text-xs cursor-pointer transition ${chat.id === currentChatId ? 'bg-blue-600/10 text-blue-400 font-medium border border-blue-500/20' : 'text-mutedtext hover:bg-cardborder hover:text-white'}`;
+                    item.innerHTML = `
                         <div class="truncate flex-1 pr-2" onclick="loadSpecificChat('${chat.id}')">
                             <i class="fa-regular fa-message mr-2"></i>${chat.title || 'Untitled Chat'}
                         </div>
@@ -399,317 +421,288 @@ print(f"Python Version: {sys.version.split()[0]}")</textarea>
                             <i class="fa-solid fa-trash-can"></i>
                         </button>
                     `;
-                        chatHistoryList.appendChild(item);
-                    });
-                } catch (err) {
-                    console.warn('Backend offline or unreachable, using local session mode:', err);
-                }
+                    chatHistoryList.appendChild(item);
+                });
+            } catch (err) {
+                console.warn('Backend unreachable. History disabled.', err);
             }
-            
-            // Start New Chat
-            function startNewChat() {
-                currentChatId = 'chat-' + Date.now();
-                chatMessagesData = [];
-                document.getElementById('current-chat-title').innerText = 'New Conversation';
+        }
+
+        function startNewChat() {
+            currentChatId = 'chat-' + Date.now();
+            chatMessagesData = [];
+            document.getElementById('current-chat-title').innerText = 'New Conversation';
+            renderMessages();
+            if (window.innerWidth < 768) {
+                sidebar.classList.add('-translate-x-full');
+                mobileBackdrop.classList.add('hidden');
+            }
+        }
+
+        async function loadSpecificChat(id) {
+            if (isStreaming) return alert('Please wait for the current response to finish.');
+            try {
+                const res = await fetch(`/api/chats/${id}`);
+                if (!res.ok) throw new Error('Chat not found');
+                const data = await res.json();
+                currentChatId = data.id;
+                chatMessagesData = data.messages || [];
+                document.getElementById('current-chat-title').innerText = data.title || 'Conversation';
                 renderMessages();
-            }
-            
-            // Load Specific Chat (GET /api/chats/:id)
-            async function loadSpecificChat(id) {
-                try {
-                    const res = await fetch(`http://localhost:3000/api/chats/${id}`);
-                    if (!res.ok) throw new Error('Chat not found');
-                    const data = await res.json();
-                    currentChatId = data.id;
-                    chatMessagesData = data.messages || [];
-                    document.getElementById('current-chat-title').innerText = data.title || 'Conversation';
-                    renderMessages();
-                    if (window.innerWidth < 768) toggleSidebar();
-                } catch (err) {
-                    console.error('Error loading chat:', err);
+                if (window.innerWidth < 768) {
+                    sidebar.classList.add('-translate-x-full');
+                    mobileBackdrop.classList.add('hidden');
                 }
+            } catch (err) {
+                console.error('Error loading chat:', err);
             }
-            
-            // Delete Chat (DELETE /api/chats/:id)
-            async function deleteChat(e, id) {
-                e.stopPropagation();
-                if (!confirm('Are you sure you want to delete this chat session?')) return;
-                try {
-                    await fetch(`http://localhost:3000/api/chats/${id}`, { method: 'DELETE' });
-                    if (currentChatId === id) startNewChat();
-                    loadChatHistories();
-                } catch (err) {
-                    console.error('Error deleting chat:', err);
-                }
+        }
+
+        async function deleteChat(e, id) {
+            e.stopPropagation();
+            if (!confirm('Are you sure you want to delete this chat session?')) return;
+            try {
+                await fetch(`/api/chats/${id}`, { method: 'DELETE' });
+                if (currentChatId === id) startNewChat();
+                loadChatHistories();
+            } catch (err) {
+                console.error('Error deleting chat:', err);
             }
-            
-            // Render Chat Messages
-            function renderMessages() {
-                if (chatMessagesData.length === 0) {
-                    emptyState.style.display = 'flex';
-                    chatMessagesContainer.innerHTML = '';
-                    chatMessagesContainer.appendChild(emptyState);
-                    return;
-                }
-                
-                emptyState.style.display = 'none';
+        }
+
+        // --- Rendering Logic ---
+        function renderMessages() {
+            if (chatMessagesData.length === 0) {
+                emptyState.style.display = 'flex';
                 chatMessagesContainer.innerHTML = '';
+                chatMessagesContainer.appendChild(emptyState);
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            chatMessagesContainer.innerHTML = '';
+
+            chatMessagesData.forEach((msg, index) => {
+                const isUser = msg.role === 'user';
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `flex gap-3 max-w-4xl mx-auto ${isUser ? 'justify-end' : 'justify-start'}`;
+                msgDiv.id = `msg-${index}`;
                 
-                chatMessagesData.forEach((msg) => {
-                    const isUser = msg.role === 'user';
-                    const msgDiv = document.createElement('div');
-                    msgDiv.className = `flex gap-3 max-w-4xl mx-auto ${isUser ? 'justify-end' : 'justify-start'}`;
-                    
-                    const avatar = isUser ?
-                        `<div class="w-8 h-8 rounded-xl bg-cardborder border border-white/10 flex items-center justify-center text-white text-xs"><i class="fa-solid fa-user"></i></div>` :
-                        `<div class="w-8 h-8 rounded-xl bg-blue-600/25 border border-blue-500/30 flex items-center justify-center text-blue-400 text-xs"><i class="fa-solid fa-brain"></i></div>`;
-                    
-                    const bubbleBg = isUser ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm' : 'cardbg frosted-glass text-gray-200 rounded-2xl rounded-tl-sm border border-white/5';
-                    
-                    let renderedContent = isUser ? escapeHtml(msg.content) : marked.parse(msg.content);
-                    
-                    msgDiv.innerHTML = `
+                const avatar = isUser 
+                    ? `<div class="w-8 h-8 rounded-xl bg-cardborder border border-white/10 flex items-center justify-center text-white text-xs shrink-0"><i class="fa-solid fa-user"></i></div>`
+                    : `<div class="w-8 h-8 rounded-xl bg-blue-600/25 border border-blue-500/30 flex items-center justify-center text-blue-400 text-xs shrink-0"><i class="fa-solid fa-cloud"></i></div>`;
+                
+                const bubbleBg = isUser ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm' : 'cardbg frosted-glass text-gray-200 rounded-2xl rounded-tl-sm border border-white/5';
+                
+                let renderedContent = isUser ? escapeHtml(msg.content) : marked.parse(msg.content);
+
+                msgDiv.innerHTML = `
                     ${!isUser ? avatar : ''}
-                    <div class="flex flex-col space-y-1 max-w-[85%] sm:max-w-[75%]">
-                        <div class="p-4 text-sm ${bubbleBg} shadow-sm leading-relaxed overflow-x-auto">
+                    <div class="flex flex-col space-y-1 max-w-[85%] sm:max-w-[75%] min-w-0">
+                        <div class="p-4 text-sm ${bubbleBg} shadow-sm leading-relaxed overflow-x-auto break-words" id="content-${index}">
                             ${renderedContent}
                         </div>
                     </div>
                     ${isUser ? avatar : ''}
                 `;
-                    chatMessagesContainer.appendChild(msgDiv);
+                chatMessagesContainer.appendChild(msgDiv);
+            });
+
+            highlightCodeBlocks();
+            scrollToBottom();
+        }
+
+        function highlightCodeBlocks() {
+            document.querySelectorAll('pre code').forEach((block) => {
+                hljs.highlightElement(block);
+            });
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function scrollToBottom() {
+            chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+        }
+
+        function sendPresetPrompt(text) {
+            userInputArea.value = text;
+            autoResize(userInputArea);
+            submitMessage();
+        }
+
+        // --- Core Chat Streaming Logic ---
+        async function submitMessage() {
+            if (isStreaming) return;
+            const prompt = userInputArea.value.trim();
+            if (!prompt) return;
+
+            isStreaming = true;
+            sendBtn.disabled = true;
+            userInputArea.value = '';
+            userInputArea.style.height = 'auto';
+
+            chatMessagesData.push({ role: 'user', content: prompt });
+            const assistantMsgIndex = chatMessagesData.length;
+            chatMessagesData.push({ role: 'assistant', content: '' });
+            
+            renderMessages();
+
+            const assistantBubble = document.getElementById(`content-${assistantMsgIndex}`);
+            if (assistantBubble) {
+                assistantBubble.innerHTML = '<span class="typing-cursor"></span>';
+            }
+
+            const payload = {
+                chatId: currentChatId,
+                model: settings.model,
+                messages: chatMessagesData.slice(0, -1), 
+                useWebSearch: settings.useWebSearch,
+                useThinkingMode: settings.useThinkingMode,
+                extractTextWithGamma: settings.extractTextWithGamma,
+                systemPrompt: settings.systemPrompt
+            };
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
-                
-                // Highlight Code blocks
-                document.querySelectorAll('pre code').forEach((block) => {
-                    hljs.highlightElement(block);
-                });
-                
-                chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-            }
-            
-            function escapeHtml(text) {
-                return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            }
-            
-            // Preset Prompt Sender
-            function sendPresetPrompt(text) {
-                userInputArea.value = text;
-                autoResize(userInputArea);
-                submitMessage();
-            }
-            
-            // 1. Chat Streaming Handler (POST /api/chat)
-            async function submitMessage() {
-                const prompt = userInputArea.value.trim();
-                if (!prompt) return;
-                
-                userInputArea.value = '';
-                userInputArea.style.height = 'auto';
-                
-                // Append User Message
-                chatMessagesData.push({ role: 'user', content: prompt });
-                renderMessages();
-                
-                // Create temporary assistant message holder for streaming buffer
-                const assistantMsgIndex = chatMessagesData.length;
-                chatMessagesData.push({ role: 'assistant', content: '' });
-                
-                // Render loading placeholder
-                renderAssistantStreamPlaceholder(assistantMsgIndex, 'Thinking...');
-                
-                const payload = {
-                    chatId: currentChatId,
-                    model: settings.model,
-                    messages: chatMessagesData.slice(0, -1), // Exclude the empty assistant placeholder
-                    useWebSearch: settings.useWebSearch,
-                    useThinkingMode: settings.useThinkingMode,
-                    extractTextWithGamma: settings.extractTextWithGamma,
-                    systemPrompt: settings.systemPrompt
-                };
-                
-                try {
-                    const response = await fetch('http://localhost:3000/api/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    
-                    if (!response.ok) throw new Error('Server returned error response');
-                    
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let fullAssistantResponse = "";
-                    
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        
-                        const chunk = decoder.decode(value, { stream: true });
-                        const lines = chunk.split('\n');
-                        
-                        for (const line of lines) {
-                            if (line.startsWith('data: ')) {
-                                try {
-                                    const data = JSON.parse(line.slice(6));
-                                    if (data.content) {
-                                        fullAssistantResponse += data.content;
-                                        chatMessagesData[assistantMsgIndex].content = fullAssistantResponse;
-                                        updateStreamingBubble(assistantMsgIndex, fullAssistantResponse);
+
+                if (!response.ok) throw new Error('Server returned error');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullResponse = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.content) {
+                                    fullResponse += data.content;
+                                    chatMessagesData[assistantMsgIndex].content = fullResponse;
+                                    if (assistantBubble) {
+                                        assistantBubble.innerHTML = marked.parse(fullResponse) + '<span class="typing-cursor"></span>';
+                                        highlightCodeBlocks();
+                                        scrollToBottom();
                                     }
-                                    if (data.done) {
-                                        break;
-                                    }
-                                } catch (e) {
-                                    // Skip invalid json chunk segments
                                 }
-                            }
+                                if (data.done) {
+                                    break;
+                                }
+                            } catch (e) { }
                         }
                     }
-                    
-                    loadChatHistories(); // Refresh history titles
-                } catch (err) {
-                    console.warn('Backend stream error, simulating local fallback for demo:', err);
-                    simulateLocalFallback(assistantMsgIndex, prompt);
                 }
-            }
-            
-            function renderAssistantStreamPlaceholder(index, text) {
-                emptyState.style.display = 'none';
-                const msgDiv = document.createElement('div');
-                msgDiv.id = `stream-msg-${index}`;
-                msgDiv.className = `flex gap-3 max-w-4xl mx-auto justify-start`;
-                msgDiv.innerHTML = `
-                <div class="w-8 h-8 rounded-xl bg-blue-600/25 border border-blue-500/30 flex items-center justify-center text-blue-400 text-xs"><i class="fa-solid fa-brain"></i></div>
-                <div class="flex flex-col space-y-1 max-w-[85%] sm:max-w-[75%]">
-                    <div class="p-4 text-sm cardbg frosted-glass text-gray-200 rounded-2xl rounded-tl-sm border border-white/5 shadow-sm leading-relaxed overflow-x-auto">
-                        <span class="text-muted500 animate-pulse">${text}</span>
-                    </div>
-                </div>
-            `;
-                chatMessagesContainer.appendChild(msgDiv);
-                chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-            }
-            
-            function updateStreamingBubble(index, content) {
-                const msgDiv = document.getElementById(`stream-msg-${index}`);
-                if (!msgDiv) {
-                    renderMessages();
-                    return;
-                }
-                const bubble = msgDiv.querySelector('.cardbg');
-                bubble.innerHTML = marked.parse(content);
-                document.querySelectorAll('pre code').forEach((block) => hljs.highlightElement(block));
-                chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-            }
-            
-            function simulateLocalFallback(index, prompt) {
-                const fallbackText = `[Ollama Local Simulation Mode] Received your prompt: "${prompt}". Connected with model **${settings.model}** successfully.`;
-                chatMessagesData[index].content = fallbackText;
-                renderMessages();
-            }
-            
-            // 2. Export PDF Handler (`POST /api/generate-pdf`)
-            async function exportChatPDF() {
-                if (chatMessagesData.length === 0) {
-                    alert('No conversation to export.');
-                    return;
-                }
-                
-                const chatText = chatMessagesData.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
-                
-                try {
-                    const res = await fetch('http://localhost:3000/api/generate-pdf', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ title: document.getElementById('current-chat-title').innerText, content: chatText })
-                    });
-                    
-                    if (!res.ok) throw new Error('PDF Generation failed');
-                    
-                    const blob = await res.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `chat-export-${Date.now()}.pdf`;
-                    a.click();
-                } catch (err) {
-                    console.warn('PDF endpoint simulated download:', err);
-                    // Fallback client-side text download if backend PDF generator isn't running yet
-                    const blob = new Blob([chatText], { type: 'text/markdown' });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `chat-export-${Date.now()}.md`;
-                    a.click();
-                }
-            }
-            
-            // 3. Run Python Script Tool (`POST /api/run-python`)
-            async function executePythonScript() {
-                const code = document.getElementById('python-code-input').value;
-                const outputPre = document.getElementById('python-output');
-                const runBtn = document.getElementById('run-python-btn');
-                
-                outputPre.innerText = 'Executing script on server sandbox...';
-                runBtn.disabled = true;
-                
-                try {
-                    const res = await fetch('http://localhost:3000/api/run-python', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ code })
-                    });
-                    const data = await res.json();
-                    if (data.success) {
-                        outputPre.innerText = data.output;
-                        outputPre.className = "w-full bg-darkbg border border-emerald-500/30 rounded-xl p-3 text-xs font-mono text-emerald-300 h-32 overflow-y-auto";
-                    } else {
-                        outputPre.innerText = data.output || 'Execution error encountered.';
-                        outputPre.className = "w-full bg-darkbg border border-red-500/30 rounded-xl p-3 text-xs font-mono text-red-300 h-32 overflow-y-auto";
-                    }
-                } catch (err) {
-                    outputPre.innerText = `[Simulated Sandbox Output]\nHello from Python\nPython Version: 3.11.4\nExecution completed successfully with exit code 0.`;
-                    outputPre.className = "w-full bg-darkbg border border-emerald-500/30 rounded-xl p-3 text-xs font-mono text-emerald-300 h-32 overflow-y-auto";
-                } finally {
-                    runBtn.disabled = false;
-                }
-            }
-            
-            // Modals management
-            function openSettingsModal() {
-                document.getElementById('config-model').value = settings.model;
-                document.getElementById('config-system-prompt').value = settings.systemPrompt;
-                document.getElementById('config-web-search').checked = settings.useWebSearch;
-                document.getElementById('config-thinking-mode').checked = settings.useThinkingMode;
-                document.getElementById('config-gamma-extraction').checked = settings.extractTextWithGamma;
-                document.getElementById('settings-modal').classList.remove('hidden');
-            }
-            
-            function closeSettingsModal() {
-                document.getElementById('settings-modal').classList.add('hidden');
-            }
-            
-            function saveSettings() {
-                settings.model = document.getElementById('config-model').value;
-                settings.systemPrompt = document.getElementById('config-system-prompt').value;
-                settings.useWebSearch = document.getElementById('config-web-search').checked;
-                settings.useThinkingMode = document.getElementById('config-thinking-mode').checked;
-                settings.extractTextWithGamma = document.getElementById('config-gamma-extraction').checked;
-                
-                document.getElementById('active-model-badge').innerHTML = `Model: <span class="text-blue-400 font-mono">${settings.model}</span>`;
-                updateQuickSettingBadges();
-                closeSettingsModal();
-            }
-            
-            function openPythonSandbox() {
-                document.getElementById('python-modal').classList.remove('hidden');
-            }
-            
-            function closePythonSandbox() {
-                document.getElementById('python-modal').classList.add('hidden');
-            }
-        </script>
-</body>
 
+                if (assistantBubble) {
+                    assistantBubble.innerHTML = marked.parse(fullResponse);
+                    highlightCodeBlocks();
+                }
+                
+                loadChatHistories();
+
+            } catch (err) {
+                console.error('Streaming error:', err);
+                if (assistantBubble) {
+                    assistantBubble.innerHTML = `<span class="text-red-400">Error: Could not connect to server. Check if the backend is running and your API key is valid.</span>`;
+                }
+            } finally {
+                isStreaming = false;
+                sendBtn.disabled = false;
+                userInputArea.focus();
+            }
+        }
+
+        // --- Export PDF ---
+        async function exportChatPDF() {
+            if (chatMessagesData.length === 0) return alert('No conversation to export.');
+
+            const chatText = chatMessagesData.map(m => `${m.role.toUpperCase()}:\n${m.content}\n\n`).join('');
+            
+            try {
+                const res = await fetch('/api/generate-pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        title: document.getElementById('current-chat-title').innerText, 
+                        content: chatText 
+                    })
+                });
+
+                if (!res.ok) throw new Error('PDF Generation failed');
+
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `chat-export-${Date.now()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } catch (err) {
+                console.error('PDF error:', err);
+                alert('Failed to generate PDF. Check server console.');
+            }
+        }
+
+        // --- Python Sandbox ---
+        function openPythonSandbox() {
+            document.getElementById('python-modal').classList.remove('hidden');
+        }
+
+        function closePythonSandbox() {
+            document.getElementById('python-modal').classList.add('hidden');
+        }
+
+        async function executePythonScript() {
+            const code = document.getElementById('python-code-input').value;
+            const outputPre = document.getElementById('python-output');
+            const runBtn = document.getElementById('run-python-btn');
+
+            outputPre.innerText = 'Executing script on server sandbox...';
+            runBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/run-python', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code })
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    outputPre.innerText = data.output;
+                    outputPre.className = "w-full bg-darkbg border border-emerald-500/30 rounded-xl p-3 text-xs font-mono text-emerald-300 h-32 overflow-y-auto";
+                } else {
+                    outputPre.innerText = data.output || 'Execution error encountered.';
+                    outputPre.className = "w-full bg-darkbg border border-red-500/30 rounded-xl p-3 text-xs font-mono text-red-300 h-32 overflow-y-auto";
+                }
+            } catch (err) {
+                outputPre.innerText = `Error: Could not connect to backend server.`;
+                outputPre.className = "w-full bg-darkbg border border-red-500/30 rounded-xl p-3 text-xs font-mono text-red-300 h-32 overflow-y-auto";
+            } finally {
+                runBtn.disabled = false;
+            }
+        }
+
+        // --- Initialization ---
+        window.addEventListener('DOMContentLoaded', async () => {
+            updateQuickSettingBadges();
+            await loadAvailableModels();
+            loadChatHistories();
+            startNewChat();
+        });
+    </script>
+</body>
 </html>
