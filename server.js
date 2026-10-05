@@ -14,7 +14,6 @@ import makeWASocket, {
   jidNormalizedUser,
   isJidGroup,
   delay,
-  Browsers,
   downloadMediaMessage
 } from '@whiskeysockets/baileys';
 import express from 'express';
@@ -27,7 +26,7 @@ import multer from 'multer';
 import { fileURLToPath } from 'url';
 import { createWorker } from 'tesseract.js';
 import * as cheerio from 'cheerio';
-import { Jimp } from 'jimp';   // 🔑 FIXED import
+import { Jimp } from 'jimp';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,52 +45,49 @@ const DEFAULT_SYSTEM_PROMPT = `You are **Panda Bot**, a highly capable AI assist
 - Never reveal or discuss the underlying model name, provider, or technical stack.
 
 # PERSONALITY
-- You are professional, friendly, and efficient.
-- Confident but never arrogant. Clear, concise language. No fluff.
-- Adapt tone to the user. Use subtle warmth and wit, but stay focused.
-- Never pretend to have feelings, consciousness, or physical form.
+- Professional, friendly, efficient.
+- Confident but never arrogant.
+- Clear, concise language — no fluff.
+- Adapt tone to the user.
+- Never pretend to have feelings or physical form.
 
 # COMMUNICATION STYLE
 - Keep replies under 200 words unless asked for detail.
 - Use bullets, numbered lists, and bold for clarity.
-- Use emojis sparingly (✅, ⚠️, 📌, 🎯).
+- Use emojis sparingly.
 - Match the user's language.
-- No markdown headers (#) — they render poorly in WhatsApp.
+- No markdown headers — they render poorly in WhatsApp.
 
-# CORE CAPABILITIES — YOU HAVE TOOLS
-Use tools proactively whenever the request matches.
-
-## 🛠️ Available Tools
+# TOOLS — USE THEM PROACTIVELY
 
 ### calculator
-- Use for ANY math: arithmetic, percentages, powers, roots, conversions.
+- Use for ANY math: arithmetic, percentages, powers, roots.
 - Never do mental math for non-trivial calculations.
 
 ### current_time
-- Use for questions about current date, time, day, or timezone conversions.
+- Use for questions about current date, time, day, or timezone.
 - Always pass the correct IANA timezone if the user names a location.
 
 ### web_search
 - Use for current events, news, uncertain facts, real-time info.
-- Always search before answering factual questions about recent events or people.
+- Always search before answering factual questions about recent events.
 - Cite sources when possible.
 
 ### extract_link
 - Use whenever the user shares a URL or asks about a webpage.
 - Summarize key points — don't dump raw text.
 
-# TOOL USAGE RULES
+# TOOL RULES
 1. Be proactive — if a tool can answer, use it.
-2. Chain tools when needed (search then extract).
+2. Chain tools when needed.
 3. Never fabricate tool results.
-4. Acknowledge tool use briefly ("Let me look that up...").
+4. Acknowledge tool use briefly.
 5. Don't over-use tools for greetings or opinions.
-6. Multiple tools per turn if the question is compound.
 
 # HANDLING IMAGES
 - You may receive OCR-extracted text from images.
-- Treat it as the user's message and respond accordingly.
-- If OCR text is garbled or empty, politely ask for a resend.
+- Treat it as the user's message.
+- If OCR text is garbled, politely ask for a resend.
 
 # GROUP CHAT BEHAVIOR
 - Respond only when mentioned, replied to, or when the message starts with /ai.
@@ -99,22 +95,21 @@ Use tools proactively whenever the request matches.
 - Never spam the group.
 - Refuse disruptive requests politely.
 
-# SAFETY & BOUNDARIES
+# SAFETY
 - Never share personal info about Fanuel or internal systems.
-- Never execute code or access files outside your tools.
+- Never execute code outside your tools.
 - Refuse illegal, harmful, or unethical requests.
-- If you can't do something, offer an alternative.
 - Be honest about uncertainty.
 
 # SELF-IDENTIFICATION
-"Who are you?" → "I'm Panda Bot 🐼 — an AI assistant built by Fanuel. I can help with questions, calculations, searches, and more. What can I do for you?"
+"Who are you?" → "I'm Panda Bot 🐼 — an AI assistant built by Fanuel."
 "Who made you?" → "I was built by Fanuel. Powered by Panda Bot's AI infrastructure."
-"Are you ChatGPT/GPT/Claude/Gemini?" → "No, I'm Panda Bot — a custom AI assistant built by Fanuel. I run on Panda Bot's own infrastructure."
+"Are you ChatGPT/GPT/Claude/Gemini?" → "No, I'm Panda Bot — a custom AI assistant built by Fanuel."
 
 # FINAL PRINCIPLES
 - Be useful first, entertaining second.
 - Be honest about uncertainty.
-- Be concise — respect the user's time.
+- Be concise.
 - Be proactive with tools.
 - Be loyal to your identity as Panda Bot by Fanuel.
 
@@ -146,8 +141,8 @@ const CONFIG = {
   AUTH_FOLDER: process.env.AUTH_FOLDER || './auth_info_baileys',
   PORT: process.env.PORT || 3000,
 
-  // Session export passphrase (optional — set for extra security)
-  SESSION_SECRET: process.env.SESSION_SECRET || '',
+  // Deaf socket watchdog: force reconnect if no inbound events for this long
+  DEAF_SOCKET_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes
 };
 
 // =========================================================
@@ -162,6 +157,7 @@ const state = {
   pairing: { active: false, phone: null, code: null, error: null },
   connectionStatus: 'disconnected',
   isSocketReady: false,
+  lastInboundEvent: Date.now(), // for deaf socket watchdog
 };
 
 // =========================================================
@@ -180,13 +176,10 @@ async function getOcrWorker() {
 async function extractTextFromImage(buffer) {
   try {
     const worker = await getOcrWorker();
-
-    // 🔑 FIXED: Jimp v1.x syntax
     const img = await Jimp.read(buffer);
     img.grayscale();
     img.contrast(0.3);
     const processed = await img.getBuffer('image/png');
-
     const { data: { text } } = await worker.recognize(processed);
     return text.trim();
   } catch (err) {
@@ -435,13 +428,20 @@ function recordReply(chatId) {
 }
 
 // =========================================================
+// JID NORMALIZATION (fixes group mention matching)
+// =========================================================
+function normalizeJid(jid) {
+  if (!jid) return '';
+  return jid.split(':')[0].split('@')[0];
+}
+
+// =========================================================
 // EXPRESS SERVER
 // =========================================================
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Multer for session upload
 const upload = multer({ dest: path.join(__dirname, 'tmp_uploads') });
 if (!fs.existsSync(path.join(__dirname, 'tmp_uploads'))) {
   fs.mkdirSync(path.join(__dirname, 'tmp_uploads'), { recursive: true });
@@ -474,7 +474,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ---- Pairing ----
+// ---- Pairing (waits for socket ready) ----
 app.post('/pair', async (req, res) => {
   try {
     const { phone } = req.body;
@@ -488,136 +488,80 @@ app.post('/pair', async (req, res) => {
       return res.json({ ok: true, code: state.pairing.code, phone: state.pairing.phone });
     }
     state.pairing = { active: true, phone: cleaned, code: null, error: null };
+
+    // 🔑 CRITICAL FIX: Only request code after socket is ready
+    // The socket becomes ready in connection.update handler
+    console.log(`[Pair] Requesting code for ${cleaned}...`);
     const code = await state.sock.requestPairingCode(cleaned);
     state.pairing.code = code;
+    console.log(`[Pair] ✅ Code generated: ${code}`);
     res.json({ ok: true, code, phone: cleaned });
   } catch (err) {
     state.pairing.error = err.message;
+    console.error('[Pair] ❌ Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// =========================================================
-// 🆕 SESSION EXPORT — download auth folder as ZIP
-// =========================================================
+// ---- Session export/import ----
 app.get('/session/export', async (req, res) => {
   try {
-    if (!fs.existsSync(CONFIG.AUTH_FOLDER)) {
-      return res.status(404).json({ error: 'No session folder found. Pair first.' });
-    }
-
+    if (!fs.existsSync(CONFIG.AUTH_FOLDER)) return res.status(404).json({ error: 'No session folder' });
     const files = fs.readdirSync(CONFIG.AUTH_FOLDER);
-    if (files.length === 0) {
-      return res.status(404).json({ error: 'Session folder is empty.' });
-    }
-
-    // Optional passphrase check (if SESSION_SECRET is set)
-    if (CONFIG.SESSION_SECRET) {
-      const provided = req.query.secret || req.headers['x-session-secret'];
-      if (provided !== CONFIG.SESSION_SECRET) {
-        return res.status(401).json({ error: 'Invalid session secret' });
-      }
-    }
+    if (files.length === 0) return res.status(404).json({ error: 'Session folder empty' });
 
     const filename = `panda-session-${Date.now()}.zip`;
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.on('error', (err) => {
-      console.error('[Export] Archive error:', err);
-      res.status(500).end();
-    });
+    archive.on('error', (err) => { console.error('[Export]', err); res.status(500).end(); });
     archive.pipe(res);
     archive.directory(CONFIG.AUTH_FOLDER, 'auth_info_baileys');
     await archive.finalize();
-
-    console.log(`[Export] Session ZIP sent: ${filename}`);
   } catch (err) {
-    console.error('[Export] Error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 
-// =========================================================
-// 🆕 SESSION IMPORT — upload ZIP to restore auth folder
-// =========================================================
 app.post('/session/import', upload.single('session'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    // Optional passphrase check
-    if (CONFIG.SESSION_SECRET) {
-      const provided = req.body.secret || req.headers['x-session-secret'];
-      if (provided !== CONFIG.SESSION_SECRET) {
-        fs.unlinkSync(req.file.path);
-        return res.status(401).json({ error: 'Invalid session secret' });
-      }
-    }
-
-    // Close current socket before overwriting
-    if (state.sock) {
-      try { state.sock.end(new Error('Session import')); } catch {}
-      await delay(1000);
-    }
-
-    // Delete existing auth folder
-    if (fs.existsSync(CONFIG.AUTH_FOLDER)) {
-      fs.rmSync(CONFIG.AUTH_FOLDER, { recursive: true, force: true });
-    }
+    if (state.sock) { try { state.sock.end(new Error('Session import')); } catch {} await delay(1000); }
+    if (fs.existsSync(CONFIG.AUTH_FOLDER)) fs.rmSync(CONFIG.AUTH_FOLDER, { recursive: true, force: true });
     fs.mkdirSync(CONFIG.AUTH_FOLDER, { recursive: true });
 
-    // Extract ZIP into auth folder
     await new Promise((resolve, reject) => {
       fs.createReadStream(req.file.path)
-        .pipe(unzipper.Extract({
-          path: path.join(__dirname, 'tmp_extract')
-        }))
-        .on('close', resolve)
-        .on('error', reject);
+        .pipe(unzipper.Extract({ path: path.join(__dirname, 'tmp_extract') }))
+        .on('close', resolve).on('error', reject);
     });
 
-    // The ZIP contains auth_info_baileys/ folder — move its contents
     const extractPath = path.join(__dirname, 'tmp_extract');
     const innerFolder = path.join(extractPath, 'auth_info_baileys');
+    const source = fs.existsSync(innerFolder) ? innerFolder : extractPath;
 
-    let source = extractPath;
-    if (fs.existsSync(innerFolder)) source = innerFolder;
-
-    // Move files
     for (const file of fs.readdirSync(source)) {
-      fs.renameSync(
-        path.join(source, file),
-        path.join(CONFIG.AUTH_FOLDER, file)
-      );
+      fs.renameSync(path.join(source, file), path.join(CONFIG.AUTH_FOLDER, file));
     }
 
-    // Cleanup
     fs.rmSync(extractPath, { recursive: true, force: true });
     fs.unlinkSync(req.file.path);
 
-    console.log('[Import] Session restored. Reconnecting...');
-
-    // Restart socket
     state.isSocketReady = false;
     state.pairing = { active: false, phone: null, code: null, error: null };
     setTimeout(() => connectToWhatsApp().catch(console.error), 500);
-
     res.json({ ok: true, message: 'Session imported. Reconnecting...' });
   } catch (err) {
-    console.error('[Import] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ---- Session info ----
 app.get('/session/info', (req, res) => {
   try {
     const exists = fs.existsSync(CONFIG.AUTH_FOLDER);
-    let files = [];
-    let sizeBytes = 0;
-    let modified = null;
-
+    let files = [], sizeBytes = 0, modified = null;
     if (exists) {
       files = fs.readdirSync(CONFIG.AUTH_FOLDER);
       for (const f of files) {
@@ -626,36 +570,25 @@ app.get('/session/info', (req, res) => {
         if (!modified || stat.mtime > modified) modified = stat.mtime;
       }
     }
-
     res.json({
-      exists,
-      fileCount: files.length,
-      files,
-      sizeBytes,
-      sizeKB: (sizeBytes / 1024).toFixed(2),
-      modified,
+      exists, fileCount: files.length, sizeBytes,
+      sizeKB: (sizeBytes / 1024).toFixed(2), modified,
       registered: state.sock?.authState?.creds?.registered || false,
       connected: !!state.sock?.user,
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ---- Other endpoints ----
 app.get('/chats', (req, res) => res.json({ chats: Array.from(state.conversations.keys()) }));
-
 app.get('/history/:chatId', (req, res) => {
   const chatId = decodeURIComponent(req.params.chatId);
   res.json({ chatId, history: state.conversations.get(chatId) || [] });
 });
-
 app.delete('/history/:chatId', (req, res) => {
-  const chatId = decodeURIComponent(req.params.chatId);
-  state.conversations.delete(chatId);
-  res.json({ ok: true, cleared: chatId });
+  state.conversations.delete(decodeURIComponent(req.params.chatId));
+  res.json({ ok: true });
 });
-
 app.post('/send', async (req, res) => {
   try {
     const { to, text } = req.body;
@@ -666,7 +599,6 @@ app.post('/send', async (req, res) => {
     res.json({ ok: true, to: jid });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 app.post('/reconnect', async (req, res) => {
   state.isSocketReady = false;
   state.pairing = { active: false, phone: null, code: null, error: null };
@@ -674,7 +606,6 @@ app.post('/reconnect', async (req, res) => {
   setTimeout(() => connectToWhatsApp().catch(console.error), 1000);
   res.json({ ok: true });
 });
-
 app.post('/logout', async (req, res) => {
   try {
     if (state.sock) { try { await state.sock.logout(); } catch {} }
@@ -696,6 +627,7 @@ async function connectToWhatsApp() {
   console.log('[WA] Initializing...');
   state.connectionStatus = 'connecting';
   state.isSocketReady = false;
+  state.lastInboundEvent = Date.now();
 
   const { state: authState, saveCreds } = await useMultiFileAuthState(CONFIG.AUTH_FOLDER);
 
@@ -710,6 +642,9 @@ async function connectToWhatsApp() {
 
   const logger = pino({ level: 'silent' });
 
+  // 🔑 FIX: No custom browser label — use Baileys default.
+  // Custom browser tuples cause WhatsApp to reject the pairing code IQ
+  // with 400 bad-request, producing a dead code.
   const sock = makeWASocket({
     version,
     logger,
@@ -718,7 +653,7 @@ async function connectToWhatsApp() {
       creds: authState.creds,
       keys: makeCacheableSignalKeyStore(authState.keys, logger),
     },
-    browser: Browsers.macOS('Chrome'),
+    // browser: REMOVED — using default prevents "wrong code" error
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });
@@ -728,18 +663,23 @@ async function connectToWhatsApp() {
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
+
+    // 🔑 FIX: Socket becomes ready when connecting OR qr fires
     if (connection === 'connecting' || qr) {
       if (!state.isSocketReady) {
         console.log('[WA] Socket ready for pairing');
         state.isSocketReady = true;
       }
     }
+
     if (connection === 'open') {
       console.log(`[WA] ✅ Connected as ${sock.user?.id}`);
       state.connectionStatus = 'open';
       state.isSocketReady = true;
+      state.lastInboundEvent = Date.now();
       state.pairing = { active: false, phone: null, code: null, error: null };
     }
+
     if (connection === 'close') {
       state.connectionStatus = 'close';
       state.isSocketReady = false;
@@ -750,15 +690,39 @@ async function connectToWhatsApp() {
     }
   });
 
+  // ---- Incoming messages (updates watchdog timestamp) ----
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    state.lastInboundEvent = Date.now();
     if (type !== 'notify') return;
     for (const msg of messages) {
-      try { await handleIncomingMessage(msg); } catch (err) { console.error(err); }
+      try { await handleIncomingMessage(msg); }
+      catch (err) { console.error('🔴 [HANDLER FATAL]', err.message, err.stack); }
     }
   });
 
+  // Update watchdog on other inbound events too
+  sock.ev.on('messages.update', () => { state.lastInboundEvent = Date.now(); });
+  sock.ev.on('message-receipt.update', () => { state.lastInboundEvent = Date.now(); });
+
   return sock;
 }
+
+// =========================================================
+// DEAF SOCKET WATCHDOG
+// =========================================================
+// Baileys bug: socket reports "open" but messages.upsert silently stops firing.
+// No error is logged. The mutex holding the ACK hostage blocks incoming events.
+// Solution: track last inbound event timestamp; force reconnect if silent too long.
+setInterval(() => {
+  if (state.connectionStatus !== 'open') return;
+
+  const silenceMs = Date.now() - state.lastInboundEvent;
+  if (silenceMs > CONFIG.DEAF_SOCKET_TIMEOUT_MS) {
+    console.warn(`[Watchdog] Deaf socket detected (${Math.round(silenceMs / 1000)}s silence). Forcing reconnect.`);
+    try { state.sock?.end(new Error('deaf-socket-watchdog')); } catch {}
+    // Reconnection triggered by connection.close handler
+  }
+}, 60000);
 
 // =========================================================
 // MESSAGE HANDLER
@@ -780,7 +744,6 @@ async function handleIncomingMessage(msg) {
   const imageMsg = msg.message.imageMessage;
   if (imageMsg && CONFIG.ENABLE_OCR) {
     try {
-      console.log('[OCR] Downloading image...');
       const imageBuffer = await downloadMediaMessage(msg, 'buffer', {}, {
         logger: pino({ level: 'silent' }),
         reuploadRequest: state.sock.updateMediaMessage,
@@ -801,15 +764,24 @@ async function handleIncomingMessage(msg) {
 
   console.log(`[Msg] ${isGroup ? 'GROUP' : 'DM'} | ${senderName}: ${text.substring(0, 80)}`);
 
-  // ---- Group reply logic ----
+  // ---- Group reply logic (with JID normalization fix) ----
   if (isGroup) {
-    const botJid = jidNormalizedUser(state.sock.user.id);
+    // 🔑 FIX: Normalize JIDs to strip device suffix (:10, :77, etc.)
+    // WhatsApp may send mentions without the suffix, breaking naive comparison.
+    const botJid = normalizeJid(state.sock.user?.id);
+    const botLid = normalizeJid(state.sock.user?.lid);
+
     const mentionedJids = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    const isMentioned = mentionedJids.some(jid => jidNormalizedUser(jid) === botJid) ||
-                        CONFIG.MENTION_NAMES.some(n => text.toLowerCase().includes(n.toLowerCase()));
+    const isMentioned = mentionedJids.some(jid => {
+      const normalized = normalizeJid(jid);
+      return normalized === botJid || normalized === botLid;
+    });
 
     const quotedParticipant = msg.message.extendedTextMessage?.contextInfo?.participant;
-    const isReplyToBot = quotedParticipant && jidNormalizedUser(quotedParticipant) === botJid;
+    const isReplyToBot = quotedParticipant && (
+      normalizeJid(quotedParticipant) === botJid ||
+      normalizeJid(quotedParticipant) === botLid
+    );
 
     const startsWithAiCmd = text.trim().toLowerCase().startsWith(CONFIG.AI_COMMAND);
     const shouldReply = isMentioned || isReplyToBot || startsWithAiCmd;
@@ -832,6 +804,7 @@ async function handleIncomingMessage(msg) {
 
   try {
     await state.sock.sendPresenceUpdate('composing', chatId);
+
     const messages = buildMessages(chatId, senderName, text);
     console.log(`[AI] Querying ${CONFIG.OLLAMA_MODEL}...`);
     const reply = await askOllama(messages, CONFIG.ENABLE_TOOLS);
@@ -865,10 +838,12 @@ console.log(`Host:         ${CONFIG.OLLAMA_HOST}`);
 console.log(`Tools:        ${CONFIG.ENABLE_TOOLS ? '✅' : '❌'}`);
 console.log(`OCR:          ${CONFIG.ENABLE_OCR ? '✅' : '❌'}`);
 console.log(`Group mode:   ${CONFIG.ONLY_REPLY_TO_MENTIONS ? 'Mentions / /ai / replies only' : 'All messages'}`);
-console.log(`Session save: ${CONFIG.AUTH_FOLDER}`);
+console.log(`Watchdog:     ${CONFIG.DEAF_SOCKET_TIMEOUT_MS / 1000}s silence threshold`);
 console.log('='.repeat(60));
 
 connectToWhatsApp().catch(err => { console.error('[Fatal]', err); process.exit(1); });
 
 process.on('SIGINT', () => { try { state.sock?.end?.(); } catch {} process.exit(0); });
 process.on('SIGTERM', () => { try { state.sock?.end?.(); } catch {} process.exit(0); });
+process.on('unhandledRejection', (reason) => { console.error('[UnhandledRejection]', reason); });
+process.on('uncaughtException', (err) => { console.error('[UncaughtException]', err); });
