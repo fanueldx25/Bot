@@ -1,17 +1,30 @@
 {
-  "name": "ollama-chat-app",
-  "version": "1.0.0",
-  "type": "module",
+  "name": "ai-system-pro-cloud",
+  "version": "2.5.0",
+  "description": "Local AI Agent Console with Ollama Cloud API, Gamma extraction, Web Search, PDF export, and Python Sandbox.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
+  "keywords": [
+    "ollama",
+    "ai",
+    "chatbot",
+    "ollama-cloud",
+    "express",
+    "gamma"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "express": "^4.19.2",
-    "dotenv": "^16.4.5",
+    "body-parser": "^1.20.2",
     "cors": "^2.8.5",
-    "ollama": "^0.5.0"
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "markdown-it": "^14.1.0",
+    "node-fetch": "^2.7.0",
+    "pdfkit": "^0.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

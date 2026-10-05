@@ -1,402 +1,315 @@
-// =============================================================
-//  Nexus Chat — Express backend for Ollama Cloud
-//  Features: streaming, vision, system prompt, tools
-// =============================================================
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
+const PDFDocument = require('pdfkit');
+const MarkdownIt = require('markdown-it');
+const { exec } = require('child_process');
 
-import 'dotenv/config'
-import express from 'express'
-import cors from 'cors'
-import path from 'path'
-import { fileURLToPath } from 'url'
-import { Ollama } from 'ollama'
+const app = express();
+const PORT = 3000;
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+// --- Ollama Cloud API Configuration ---
+const OLLAMA_CLOUD_URL = 'https://ollama.com/v1'; // OpenAI-compatible endpoint
+const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
 
-const app = express()
-const PORT = process.env.PORT || 3000
+if (!OLLAMA_API_KEY) {
+    console.error("WARNING: OLLAMA_API_KEY is not set in your .env file. Cloud API calls will fail.");
+}
 
-app.use(cors())
-app.use(express.json({ limit: '50mb' })) // large for base64 images
-app.use(express.static(path.join(__dirname, 'public')))
-
-// ---- Ollama Cloud client ----
-const OLLAMA_HOST = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
-const OLLAMA_KEY = process.env.OLLAMA_API_KEY
-
-if (!OLLAMA_KEY) console.warn('⚠️  OLLAMA_API_KEY is not set.')
-
-const ollama = new Ollama({
-  host: OLLAMA_HOST,
-  headers: { Authorization: `Bearer ${OLLAMA_KEY || ''}` },
-})
-
-// =============================================================
-//  Models
-// =============================================================
+// The exact models you have hosted
 const AVAILABLE_MODELS = [
-  { id: 'gemma4:31b',          name: 'Gemma 4 31B',          provider: 'Google',  vision: true,  tools: true, tag: 'Free' },
-  { id: 'gpt-oss:120b',        name: 'GPT-OSS 120B',         provider: 'OpenAI',  vision: false, tools: true, tag: 'Free' },
-  { id: 'gpt-oss:20b',         name: 'GPT-OSS 20B',          provider: 'OpenAI',  vision: false, tools: true, tag: 'Free' },
-  { id: 'nemotron-3-nano:30b', name: 'Nemotron 3 Nano 30B',  provider: 'NVIDIA',  vision: false, tools: true, tag: 'Free' },
-  { id: 'nemotron-3-super',    name: 'Nemotron 3 Super',     provider: 'NVIDIA',  vision: false, tools: true, tag: 'Free' },
-  { id: 'nemotron-3-ultra',    name: 'Nemotron 3 Ultra',     provider: 'NVIDIA',  vision: false, tools: true, tag: 'Free' },
-]
+    "gemma4:31b",
+    "gpt-oss:120b",
+    "gpt-oss:20b",
+    "nemotron-3-nano:30b",
+    "nemotron-3-super",
+    "nemotron-3-ultra"
+];
 
-// =============================================================
-//  Tool definitions (OpenAI-compatible JSON schema)
-// =============================================================
-const TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_current_time',
-      description: 'Get the current date and time. Optionally in a specific IANA timezone (e.g. "Africa/Douala", "America/New_York").',
-      parameters: {
-        type: 'object',
-        properties: {
-          timezone: {
-            type: 'string',
-            description: 'IANA timezone name. Defaults to UTC if omitted.',
-          },
+const DB_FILE = path.join(__dirname, 'chats.json');
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Initialize Markdown Parser
+const md = new MarkdownIt({
+    html: true,
+    linkify: true,
+    typographer: true
+});
+
+// --- Database Helpers ---
+const loadDB = () => {
+    if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify({ chats: {} }));
+    return JSON.parse(fs.readFileSync(DB_FILE));
+};
+
+const saveDB = (data) => {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+};
+
+// --- Helper: Python Script Execution ---
+const runPythonScript = (scriptContent) => {
+    return new Promise((resolve, reject) => {
+        const tempFile = path.join(__dirname, `temp_script_${Date.now()}.py`);
+        fs.writeFileSync(tempFile, scriptContent);
+
+        // Use 'python' on Windows, 'python3' on Linux/Mac
+        const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+
+        exec(`${pythonCmd} ${tempFile}`, (error, stdout, stderr) => {
+            if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+
+            if (error) {
+                resolve({ success: false, output: stderr || error.message });
+            } else {
+                resolve({ success: true, output: stdout });
+            }
+        });
+    });
+};
+
+// --- Helper: Call Ollama Cloud API (Streaming) ---
+async function streamOllamaCloud(model, messages, res) {
+    const response = await fetch(`${OLLAMA_CLOUD_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OLLAMA_API_KEY}`
         },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'calculate',
-      description: 'Evaluate a mathematical expression. Supports +, -, *, /, %, **, parentheses, and Math functions like sqrt, sin, cos, log, abs, round, floor, ceil, min, max, pow.',
-      parameters: {
-        type: 'object',
-        properties: {
-          expression: {
-            type: 'string',
-            description: 'The math expression to evaluate, e.g. "(2+3)*4" or "sqrt(16) + Math.PI".',
-          },
-        },
-        required: ['expression'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'date_math',
-      description: 'Compute a date offset from today. Useful for "what day is it in 2 weeks", "what was the date 30 days ago", "how many days until X".',
-      parameters: {
-        type: 'object',
-        properties: {
-          offset_days: { type: 'number', description: 'Number of days from today (can be negative).' },
-          offset_weeks: { type: 'number', description: 'Number of weeks from today (can be negative).' },
-          offset_months: { type: 'number', description: 'Number of months from today (can be negative).' },
-          offset_years: { type: 'number', description: 'Number of years from today (can be negative).' },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'days_between',
-      description: 'Calculate the number of days between two dates (YYYY-MM-DD format). Returns the absolute number of days and the signed difference (date2 - date1).',
-      parameters: {
-        type: 'object',
-        properties: {
-          date1: { type: 'string', description: 'First date in YYYY-MM-DD format.' },
-          date2: { type: 'string', description: 'Second date in YYYY-MM-DD format.' },
-        },
-        required: ['date1', 'date2'],
-      },
-    },
-  },
-]
-
-// =============================================================
-//  Tool implementations
-// =============================================================
-function safeCalculate(expression) {
-  if (typeof expression !== 'string' || expression.length > 500) {
-    throw new Error('Invalid expression')
-  }
-
-  // Whitelist: digits, operators, spaces, parens, dots, commas and Math.* calls
-  const allowedChars = /^[0-9+\-*/%().,\sA-Za-z_]+$/
-  if (!allowedChars.test(expression)) {
-    throw new Error('Expression contains disallowed characters')
-  }
-
-  // Block dangerous identifiers
-  const banned = /\b(import|require|eval|Function|process|global|window|this|constructor|__proto__|prototype)\b/
-  if (banned.test(expression)) {
-    throw new Error('Expression contains disallowed keywords')
-  }
-
-  // Replace Math.foo -> safe internal map (only allow listed)
-  const mathFns = ['sqrt','cbrt','abs','sin','cos','tan','asin','acos','atan','atan2','log','log2','log10','exp','pow','round','floor','ceil','min','max','random','sign','trunc','PI','E','LN2','LN10','SQRT2']
-  const mathRegex = /\bMath\.([A-Za-z0-9_]+)/g
-  let m
-  while ((m = mathRegex.exec(expression))) {
-    if (!mathFns.includes(m[1])) {
-      throw new Error(`Math.${m[1]} is not allowed`)
-    }
-  }
-
-  // Only Math.* prefix allowed for identifiers
-  const identRegex = /[A-Za-z_][A-Za-z0-9_]*/g
-  const ids = expression.match(identRegex) || []
-  for (const id of ids) {
-    // Must be preceded by "Math." — check the slice
-    const idx = expression.indexOf(id)
-    const before = expression.slice(Math.max(0, idx - 5), idx)
-    if (!before.endsWith('Math.')) {
-      // Allowed: Math itself (as part of Math.something)
-      if (id !== 'Math' && before.trim() !== 'Math.') {
-        throw new Error(`Unknown identifier: ${id}`)
-      }
-    }
-  }
-
-  // eslint-disable-next-line no-new-func
-  const fn = new Function(`"use strict"; return (${expression});`)
-  const result = fn()
-  if (typeof result === 'number' && !isFinite(result)) {
-    throw new Error('Result is not finite')
-  }
-  return result
-}
-
-function getCurrentTime({ timezone = 'UTC' } = {}) {
-  try {
-    const now = new Date()
-    const tz = timezone || 'UTC'
-    const fmt = new Intl.DateTimeFormat('en-GB', {
-      timeZone: tz,
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZoneName: 'short',
-    })
-    return {
-      iso_utc: now.toISOString(),
-      timezone: tz,
-      formatted: fmt.format(now),
-      unix: Math.floor(now.getTime() / 1000),
-    }
-  } catch (e) {
-    return { error: `Invalid timezone: ${timezone}` }
-  }
-}
-
-function dateMath({ offset_days = 0, offset_weeks = 0, offset_months = 0, offset_years = 0 } = {}) {
-  const d = new Date()
-  d.setDate(d.getDate() + Number(offset_days || 0))
-  d.setDate(d.getDate() + Number(offset_weeks || 0) * 7)
-  d.setMonth(d.getMonth() + Number(offset_months || 0))
-  d.setFullYear(d.getFullYear() + Number(offset_years || 0))
-  return {
-    result_date: d.toISOString().slice(0, 10),
-    weekday: d.toLocaleDateString('en-GB', { weekday: 'long' }),
-    full: d.toDateString(),
-  }
-}
-
-function daysBetween({ date1, date2 }) {
-  const d1 = new Date(date1 + 'T00:00:00Z')
-  const d2 = new Date(date2 + 'T00:00:00Z')
-  if (isNaN(d1) || isNaN(d2)) return { error: 'Invalid date format. Use YYYY-MM-DD.' }
-  const msPerDay = 86400000
-  const diff = Math.round((d2 - d1) / msPerDay)
-  return {
-    date1,
-    date2,
-    days_absolute: Math.abs(diff),
-    days_signed: diff,
-    note: diff >= 0 ? `${date2} is ${diff} days after ${date1}` : `${date2} is ${Math.abs(diff)} days before ${date1}`,
-  }
-}
-
-async function executeTool(name, args) {
-  console.log(`[tool] ${name}`, args)
-  try {
-    switch (name) {
-      case 'get_current_time': return getCurrentTime(args)
-      case 'calculate':        return { expression: args.expression, result: safeCalculate(args.expression) }
-      case 'date_math':        return dateMath(args)
-      case 'days_between':     return daysBetween(args)
-      default:                 return { error: `Unknown tool: ${name}` }
-    }
-  } catch (e) {
-    return { error: e.message }
-  }
-}
-
-// =============================================================
-//  Routes
-// =============================================================
-app.get('/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }))
-
-app.get('/api/models', (req, res) => res.json({ models: AVAILABLE_MODELS }))
-
-app.get('/api/debug/models', async (req, res) => {
-  try {
-    const list = await ollama.list()
-    res.json(list)
-  } catch (e) {
-    console.error('[debug] error:', e)
-    res.status(e?.status || 500).json({ error: e?.message, name: e?.name, status: e?.status })
-  }
-})
-
-// =============================================================
-//  POST /api/chat
-//  Body: { model, messages, system?, images? }
-//  - messages: [{role, content}]
-//  - system: optional system prompt string
-//  - images: array of base64 (no data: prefix) — will be attached to last user msg
-//  - useTools: boolean (default true)
-// =============================================================
-app.post('/api/chat', async (req, res) => {
-  const { model, messages, system, images, useTools = true } = req.body || {}
-
-  console.log(`\n[/api/chat] model=${model} msgs=${messages?.length} imgs=${images?.length || 0} tools=${useTools}`)
-
-  if (!model || !Array.isArray(messages)) {
-    return res.status(400).json({ error: 'Body must include { model, messages }' })
-  }
-  if (!OLLAMA_KEY) {
-    return res.status(500).json({ error: 'OLLAMA_API_KEY not configured' })
-  }
-
-  // Build full message list with system prompt
-  const fullMessages = []
-  if (system && system.trim()) {
-    fullMessages.push({ role: 'system', content: system.trim() })
-  }
-  fullMessages.push(...messages)
-
-  // Attach images to last user message
-  if (images?.length) {
-    for (let i = fullMessages.length - 1; i >= 0; i--) {
-      if (fullMessages[i].role === 'user') {
-        fullMessages[i].images = images
-        break
-      }
-    }
-  }
-
-  // SSE headers
-  res.setHeader('Content-Type', 'text/event-stream')
-  res.setHeader('Cache-Control', 'no-cache, no-transform')
-  res.setHeader('Connection', 'keep-alive')
-  res.setHeader('X-Accel-Buffering', 'no')
-  res.flushHeaders?.()
-
-  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`)
-
-  try {
-    // ----- Agent loop: allow multiple tool-call rounds -----
-    const workingMessages = [...fullMessages]
-    const MAX_ROUNDS = 5
-
-    for (let round = 0; round < MAX_ROUNDS; round++) {
-      const stream = await ollama.chat({
-        model,
-        messages: workingMessages,
-        tools: useTools ? TOOLS : undefined,
-        stream: true,
-      })
-
-      let assistantContent = ''
-      let assistantThinking = ''
-      let toolCalls = []
-
-      for await (const chunk of stream) {
-        const msg = chunk?.message || {}
-
-        if (msg.content) {
-          assistantContent += msg.content
-          send({ content: msg.content })
-        }
-        if (msg.thinking) {
-          assistantThinking += msg.thinking
-          send({ thinking: msg.thinking })
-        }
-        if (msg.tool_calls?.length) {
-          // accumulate (usually only sent once, non-streamed)
-          toolCalls = msg.tool_calls
-        }
-      }
-
-      // No tool calls -> we're done
-      if (!toolCalls.length) {
-        send({ done: true })
-        res.write('data: [DONE]\n\n')
-        res.end()
-        return
-      }
-
-      // Record the assistant's tool-call turn
-      workingMessages.push({
-        role: 'assistant',
-        content: assistantContent || '',
-        tool_calls: toolCalls,
-      })
-
-      // Execute each tool, push results
-      for (const call of toolCalls) {
-        const name = call.function?.name
-        let args = {}
-        try {
-          args = typeof call.function?.arguments === 'string'
-            ? JSON.parse(call.function.arguments)
-            : (call.function?.arguments || {})
-        } catch { /* leave args as {} */ }
-
-        // Notify the client a tool is running (optional UI hint)
-        send({ tool_call: { name, args } })
-
-        const result = await executeTool(name, args)
-
-        send({ tool_result: { name, result } })
-
-        workingMessages.push({
-          role: 'tool',
-          content: JSON.stringify(result),
+        body: JSON.stringify({
+            model: model,
+            messages: messages,
+            stream: true
         })
-      }
-      // Loop again so model can use the tool results
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ollama Cloud Error: ${response.status} - ${errorText}`);
     }
 
-    // Exceeded rounds
-    send({ error: 'Tool loop limit reached' })
-    send({ done: true })
-    res.write('data: [DONE]\n\n')
-    res.end()
-  } catch (err) {
-    console.error('[chat error]', err)
-    if (res.headersSent) {
-      send({ error: err?.message || 'stream error' })
-      res.write('data: [DONE]\n\n')
-      res.end()
-    } else {
-      res.status(err?.status || 500).json({ error: err?.message || 'chat failed' })
+    const reader = response.body;
+    let fullResponse = "";
+
+    reader.on('data', (chunk) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const dataStr = line.slice(6);
+                if (dataStr === '[DONE]') {
+                    res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
+                    res.end();
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    const content = parsed.choices[0]?.delta?.content || "";
+                    if (content) {
+                        fullResponse += content;
+                        res.write(`data: ${JSON.stringify({ content, done: false })}\n\n`);
+                    }
+                } catch (e) {
+                    // Ignore partial JSON
+                }
+            }
+        }
+    });
+
+    reader.on('end', () => {
+        if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
+            res.end();
+        }
+        return fullResponse;
+    });
+
+    reader.on('error', (err) => {
+        console.error("Stream error:", err);
+        res.write(`data: ${JSON.stringify({ content: '\n[Stream Error]', done: true })}\n\n`);
+        res.end();
+    });
+}
+
+// --- Helper: Non-Streaming Cloud Call (For Gamma extraction) ---
+async function callOllamaCloudNonStreaming(model, prompt) {
+    try {
+        const response = await fetch(`${OLLAMA_CLOUD_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OLLAMA_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: [{ role: 'user', content: prompt }],
+                stream: false
+            })
+        });
+
+        if (!response.ok) return null;
+        const data = await response.json();
+        return data.choices[0]?.message?.content || null;
+    } catch (e) {
+        console.error("Gamma extraction failed:", e);
+        return null;
     }
-  }
-})
+}
 
-// SPA fallback
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'))
-})
+// --- Main Chat Endpoint ---
+app.post('/api/chat', async (req, res) => {
+    const { 
+        chatId, 
+        model, 
+        messages, 
+        useWebSearch, 
+        useThinkingMode, 
+        extractTextWithGamma,
+        systemPrompt 
+    } = req.body;
 
+    const db = loadDB();
+    if (!db.chats[chatId]) {
+        db.chats[chatId] = { id: chatId, title: 'New Chat', messages: [], createdAt: new Date() };
+    }
+
+    const currentChat = db.chats[chatId];
+    const lastUserMessage = messages[messages.length - 1].content;
+
+    // 1. Web Search Logic (DuckDuckGo HTML scrape)
+    let webContext = "";
+    if (useWebSearch) {
+        try {
+            const searchRes = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(lastUserMessage)}`, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            });
+            const html = await searchRes.text();
+            const snippets = html.match(/<a class="result__snippet".*?>(.*?)<\/a>/g) || [];
+            webContext = "\n[WEB SEARCH RESULTS]:\n" + snippets.slice(0, 3).map(s => s.replace(/<[^>]*>?/gm, '')).join('\n');
+        } catch (e) {
+            console.error("Web search failed", e);
+        }
+    }
+
+    // 2. Gamma Model Text Extraction (Using gemma4:31b as the extractor)
+    let gammaExtractedContext = "";
+    if (extractTextWithGamma && lastUserMessage.length > 10) {
+        const extractionPrompt = `Extract key entities, code snippets, or specific data points from this text. Return only the extracted data:\n\n${lastUserMessage}`;
+        const gammaResult = await callOllamaCloudNonStreaming('gemma4:31b', extractionPrompt);
+        if (gammaResult) {
+            gammaExtractedContext = `\n[GAMMA EXTRACTED CONTEXT]: ${gammaResult}`;
+        }
+    }
+
+    // 3. Construct Final Messages Array
+    let finalMessages = [];
+    if (systemPrompt) {
+        finalMessages.push({ role: 'system', content: systemPrompt });
+    }
+    
+    // Add history (excluding the last user message which we will modify)
+    finalMessages.push(...messages.slice(0, -1));
+
+    // Add the modified current user message
+    let finalUserContent = lastUserMessage;
+    if (webContext) finalUserContent += webContext;
+    if (gammaExtractedContext) finalUserContent += gammaExtractedContext;
+    
+    // Thinking mode tag injection
+    if (useThinkingMode) {
+        finalUserContent = `<thinking>\n${finalUserContent}\n</thinking>`;
+    }
+
+    finalMessages.push({ role: 'user', content: finalUserContent });
+
+    // Save User Message (original, without injected context)
+    currentChat.messages.push({ role: 'user', content: lastUserMessage, timestamp: new Date() });
+    saveDB(db);
+
+    // 4. Stream Response from Ollama Cloud
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    try {
+        await streamOllamaCloud(model || 'gpt-oss:20b', finalMessages, res);
+        
+        // Note: Since streamOllamaCloud handles res.end(), we can't easily save the assistant message here 
+        // without wrapping the stream. For simplicity in this architecture, we rely on the frontend 
+        // to maintain state during the session, and we save the assistant response when the next message is sent.
+        // To properly save the assistant response, we would need to accumulate it in the stream function.
+        
+    } catch (error) {
+        console.error(error);
+        if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ content: `\n[Error: ${error.message}]`, done: true })}\n\n`);
+            res.end();
+        }
+    }
+});
+
+// --- Endpoint to get Available Models ---
+app.get('/api/models', (req, res) => {
+    res.json(AVAILABLE_MODELS);
+});
+
+// --- PDF Generation Endpoint ---
+app.post('/api/generate-pdf', (req, res) => {
+    const { content, title } = req.body;
+    const doc = new PDFDocument();
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${title || 'export'}.pdf`);
+    
+    doc.pipe(res);
+    doc.fontSize(20).text(title || 'Chat Export', { align: 'center' });
+    doc.moveDown();
+    
+    const plainText = content.replace(/[#*`]/g, '');
+    doc.fontSize(12).text(plainText);
+    
+    doc.end();
+});
+
+// --- Python Execution Endpoint ---
+app.post('/api/run-python', async (req, res) => {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: "No code provided" });
+
+    const result = await runPythonScript(code);
+    res.json(result);
+});
+
+// --- Chat Management Endpoints ---
+app.get('/api/chats', (req, res) => {
+    const db = loadDB();
+    const chatList = Object.values(db.chats).map(c => ({ id: c.id, title: c.title, date: c.createdAt }));
+    res.json(chatList);
+});
+
+app.get('/api/chats/:id', (req, res) => {
+    const db = loadDB();
+    const chat = db.chats[req.params.id];
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+    res.json(chat);
+});
+
+app.delete('/api/chats/:id', (req, res) => {
+    const db = loadDB();
+    delete db.chats[req.params.id];
+    saveDB(db);
+    res.json({ success: true });
+});
+
+// Start Server
 app.listen(PORT, () => {
-  console.log(`✅ Nexus Chat on :${PORT}`)
-  console.log(`   HOST: ${OLLAMA_HOST}  KEY: ${!!OLLAMA_KEY}`)
-})
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Using Ollama Cloud API at ${OLLAMA_CLOUD_URL}`);
+    console.log(`Available Models: ${AVAILABLE_MODELS.join(', ')}`);
+});
