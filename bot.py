@@ -2,7 +2,6 @@ import os
 import time
 import logging
 import threading
-from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from flask import Flask, render_template_string, jsonify
@@ -23,7 +22,18 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "").strip()
 
-DEFAULT_MODEL = "gpt-oss:20b"
+# System prompt comes from environment, with a default fallback
+DEFAULT_SYSTEM_PROMPT = os.getenv(
+    "SYSTEM_PROMPT",
+    (
+        "You are a helpful and friendly AI assistant. "
+        "Keep responses concise and well-structured. "
+        "Use plain text only — no markdown formatting."
+    ),
+).strip()
+
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-oss:20b").strip()
+
 AVAILABLE_MODELS = [
     "gemma4:31b",
     "gpt-oss:120b",
@@ -32,6 +42,10 @@ AVAILABLE_MODELS = [
     "nemotron-3-super",
     "nemotron-3-ultra",
 ]
+
+# Ensure the default model is always selectable
+if DEFAULT_MODEL not in AVAILABLE_MODELS:
+    AVAILABLE_MODELS.insert(0, DEFAULT_MODEL)
 
 # ---------- 2. Logging ----------
 logging.basicConfig(
@@ -74,6 +88,10 @@ def current_model(context: ContextTypes.DEFAULT_TYPE) -> str:
     return context.chat_data.get("model", DEFAULT_MODEL)
 
 
+def current_prompt(context: ContextTypes.DEFAULT_TYPE) -> str:
+    return context.chat_data.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+
+
 async def send_formatted(
     update: Update, text: str, parse_mode: str = ParseMode.MARKDOWN_V2
 ) -> None:
@@ -94,7 +112,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"Hi *{name}*\\! 👋\n\n"
         f"I'm an AI assistant powered by *Ollama Cloud*\\.\n"
         f"Current model: `{model}`\n\n"
-        f"Send me a message, or use /model to switch models\\!"
+        f"Send me a message, or use /model to switch models, "
+        f"or /prompt to change my personality\\!"
     )
     await send_formatted(update, text)
 
@@ -105,6 +124,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "`/start` \\- Welcome message\n"
         "`/help` \\- This help text\n"
         "`/model` \\- Switch the AI model\n"
+        "`/prompt` \\- View or set a custom system prompt\n"
+        "`/resetprompt` \\- Restore the default system prompt\n"
         "`/photo` \\- Send a sample photo\n"
         "`/document` \\- Send a sample document\n\n"
         "Or just type a message to chat\\!"
@@ -115,10 +136,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     active = current_model(context)
     buttons = [
-        [InlineKeyboardButton(
-            f"{'✅ ' if m == active else ''}{m}",
-            callback_data=f"model:{m}"
-        )]
+        [
+            InlineKeyboardButton(
+                f"{'✅ ' if m == active else ''}{m}",
+                callback_data=f"model:{m}",
+            )
+        ]
         for m in AVAILABLE_MODELS
     ]
     keyboard = InlineKeyboardMarkup(buttons)
@@ -142,8 +165,62 @@ async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
+async def prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """View or set the system prompt for this chat.
+    Usage:
+      /prompt                -> shows current prompt
+      /prompt <new prompt>   -> sets a custom prompt
+    """
+    # context.args contains the words after /prompt
+    args = context.args
+
+    if not args:
+        active = current_prompt(context)
+        text = (
+            "*Current system prompt:*\n"
+            f"```\n{active}\n```\n\n"
+            "To set a new prompt, send:\n"
+            "`/prompt You are a pirate who speaks in rhymes`\n\n"
+            "To restore the default, use /resetprompt"
+        )
+        try:
+            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception:
+            # Prompt may contain characters that break MarkdownV2; fall back
+            await update.message.reply_text(
+                f"Current system prompt:\n\n{active}\n\n"
+                "To set a new prompt, send: /prompt <your prompt>\n"
+                "To restore the default: /resetprompt"
+            )
+        return
+
+    new_prompt = " ".join(args).strip()
+    if not new_prompt:
+        await update.message.reply_text("❌ Prompt cannot be empty.")
+        return
+
+    context.chat_data["system_prompt"] = new_prompt
+    preview = escape_markdown(new_prompt[:200])
+    await update.message.reply_text(
+        f"✅ System prompt updated\\.\n\n*New prompt:*\n`{preview}`",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+
+async def reset_prompt_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    context.chat_data.pop("system_prompt", None)
+    await update.message.reply_text(
+        "✅ System prompt restored to default.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+
 async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
+    await context.bot.send_chat_action(
+        update.effective_chat.id, ChatAction.UPLOAD_PHOTO
+    )
     await update.message.reply_photo(
         photo="https://telegram.org/img/t_logo.png",
         caption=escape_markdown("Here's a sample photo! 📸"),
@@ -152,7 +229,9 @@ async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def document_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
+    await context.bot.send_chat_action(
+        update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT
+    )
     await update.message.reply_document(
         document="https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
         caption=escape_markdown("Here's a sample document! 📄"),
@@ -163,6 +242,7 @@ async def document_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_message = update.message.text
     model = current_model(context)
+    system_prompt = current_prompt(context)
     logger.info(f"User message [{model}]: {user_message}")
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
@@ -172,13 +252,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful and friendly AI assistant. "
-                        "Keep responses concise. Use plain text only, no markdown."
-                    ),
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
         )
@@ -196,10 +270,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 application.add_handler(CommandHandler("start", start_command))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("model", model_command))
+application.add_handler(CommandHandler("prompt", prompt_command))
+application.add_handler(CommandHandler("resetprompt", reset_prompt_command))
 application.add_handler(CommandHandler("photo", photo_command))
 application.add_handler(CommandHandler("document", document_command))
 application.add_handler(CallbackQueryHandler(model_callback, pattern=r"^model:"))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+)
 
 
 # ---------- 8. Frontend (HTML Status Page) ----------
@@ -220,7 +298,7 @@ INDEX_HTML = r"""
     padding: 20px;
   }
   .container {
-    max-width: 640px; width: 100%;
+    max-width: 680px; width: 100%;
     background: rgba(255,255,255,0.05);
     backdrop-filter: blur(20px);
     border: 1px solid rgba(255,255,255,0.1);
@@ -239,8 +317,11 @@ INDEX_HTML = r"""
     border: 1px solid rgba(34,197,94,0.3);
     border-radius: 12px; margin-bottom: 24px;
   }
+  .status.offline { background: rgba(239,68,68,0.1);
+                    border-color: rgba(239,68,68,0.3); }
   .dot { width: 10px; height: 10px; border-radius: 50%;
          background: #22c55e; animation: pulse 2s infinite; }
+  .status.offline .dot { background: #ef4444; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
           margin-bottom: 24px; }
@@ -251,7 +332,8 @@ INDEX_HTML = r"""
                  color: #94a3b8; letter-spacing: 1px; margin-bottom: 6px; }
   .card .value { font-size: 16px; font-weight: 600; }
   h2 { font-size: 14px; text-transform: uppercase;
-       letter-spacing: 1px; color: #94a3b8; margin-bottom: 12px; }
+       letter-spacing: 1px; color: #94a3b8; margin-bottom: 12px;
+       margin-top: 24px; }
   .commands { list-style: none; }
   .commands li {
     display: flex; align-items: center; gap: 12px;
@@ -261,6 +343,14 @@ INDEX_HTML = r"""
   }
   .cmd { font-family: monospace; background: rgba(167,139,250,0.2);
          color: #c4b5fd; padding: 3px 8px; border-radius: 6px; font-size: 13px; }
+  .prompt-box {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 16px;
+    font-family: monospace; font-size: 13px;
+    color: #cbd5e1; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+  }
   .footer { text-align: center; margin-top: 24px;
             color: #64748b; font-size: 12px; }
   a { color: #a78bfa; text-decoration: none; }
@@ -273,9 +363,12 @@ INDEX_HTML = r"""
     <h1>Ollama Telegram Bot</h1>
     <p class="subtitle">Powered by Ollama Cloud AI · Running on Render</p>
 
-    <div class="status">
+    <div class="status {{ 'offline' if not bot_running else '' }}">
       <span class="dot"></span>
-      <span><strong>Online</strong> — uptime {{ uptime }}</span>
+      <span>
+        {% if bot_running %}<strong>Online</strong>{% else %}<strong>Bot Offline</strong>{% endif %}
+        — uptime {{ uptime }}
+      </span>
     </div>
 
     <div class="grid">
@@ -289,11 +382,16 @@ INDEX_HTML = r"""
       </div>
     </div>
 
+    <h2>Default System Prompt</h2>
+    <div class="prompt-box">{{ system_prompt }}</div>
+
     <h2>Bot Commands</h2>
     <ul class="commands">
       <li><span class="cmd">/start</span> Welcome message</li>
       <li><span class="cmd">/help</span> Show help text</li>
       <li><span class="cmd">/model</span> Switch AI model</li>
+      <li><span class="cmd">/prompt</span> View or set a custom prompt</li>
+      <li><span class="cmd">/resetprompt</span> Restore the default prompt</li>
       <li><span class="cmd">/photo</span> Sample photo</li>
       <li><span class="cmd">/document</span> Sample document</li>
     </ul>
@@ -314,12 +412,23 @@ def index():
         uptime=get_uptime(),
         default_model=DEFAULT_MODEL,
         models_count=len(AVAILABLE_MODELS),
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        bot_running=BOT_STATE["running"],
     )
 
 
 @flask_app.route("/health")
 def health():
-    return jsonify({"status": "ok", "uptime": get_uptime()}), 200
+    return (
+        jsonify(
+            {
+                "status": "ok",
+                "uptime": get_uptime(),
+                "bot_running": BOT_STATE["running"],
+            }
+        ),
+        200,
+    )
 
 
 # ---------- 9. Self-Ping (keep-alive for Render free tier) ----------
@@ -350,16 +459,24 @@ def main() -> None:
         return
 
     def run_bot():
-        logger.info(f"🚀 Bot starting with default model: {DEFAULT_MODEL}")
-        BOT_STATE["running"] = True
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        try:
+            logger.info(f"🚀 Bot starting with default model: {DEFAULT_MODEL}")
+            BOT_STATE["running"] = True
+            # stop_signals=None is REQUIRED when running in a non-main thread
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                stop_signals=None,
+            )
+        except Exception as e:
+            BOT_STATE["running"] = False
+            logger.exception(f"❌ Bot thread crashed: {e}")
 
     threading.Thread(target=run_bot, daemon=True).start()
     start_keep_alive()
 
     port = int(os.getenv("PORT", 8080))
     logger.info(f"🌐 Web server listening on 0.0.0.0:{port}")
-    flask_app.run(host="0.0.0.0", port=port)
+    flask_app.run(host="0.0.0.0", port=port, threaded=True)
 
 
 if __name__ == "__main__":
