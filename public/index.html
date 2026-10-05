@@ -1,902 +1,235 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp AI Manager</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-        }
-
-        body {
-            background: #0a0e1a;
-            color: #e5e9f0;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-
-        .app {
-            max-width: 1400px;
-            width: 100%;
-            display: grid;
-            grid-template-columns: 1fr 1.2fr;
-            gap: 24px;
-            background: rgba(18, 24, 38, 0.8);
-            backdrop-filter: blur(12px);
-            border-radius: 36px;
-            padding: 28px;
-            border: 1px solid #2a3348;
-            box-shadow: 0 30px 50px -20px rgba(0, 0, 0, 0.8);
-        }
-
-        /* Left panel — connection & status */
-        .panel-left {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .card {
-            background: #0f131f;
-            border-radius: 24px;
-            padding: 24px;
-            border: 1px solid #252e42;
-            box-shadow: 0 8px 20px -8px #00000055;
-        }
-
-        .card h2 {
-            font-size: 1rem;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #8b9bb5;
-            margin-bottom: 18px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .status-badge {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 16px;
-            background: #1a212f;
-            border-radius: 100px;
-            font-size: 0.9rem;
-            border: 1px solid #2e3a52;
-        }
-
-        .indicator {
-            width: 10px;
-            height: 10px;
-            border-radius: 10px;
-            background: #f44;
-            box-shadow: 0 0 12px #f44;
-        }
-
-        .indicator.connected {
-            background: #4ade80;
-            box-shadow: 0 0 14px #4ade80;
-        }
-
-        .indicator.pairing {
-            background: #fbbf24;
-            box-shadow: 0 0 14px #fbbf24;
-            animation: pulse 1.2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #1f2637;
-            font-size: 0.9rem;
-        }
-
-        .info-row:last-child {
-            border-bottom: none;
-        }
-
-        .info-label {
-            color: #8b9bb5;
-        }
-
-        .info-value {
-            font-weight: 500;
-            max-width: 180px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .pairing-area {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-top: 8px;
-        }
-
-        .phone-input {
-            background: #1a212f;
-            border: 1px solid #2e3a52;
-            border-radius: 16px;
-            padding: 14px 18px;
-            color: #e5e9f0;
-            font-size: 1rem;
-            outline: none;
-            transition: border 0.2s;
-        }
-
-        .phone-input:focus {
-            border-color: #3b82f6;
-        }
-
-        .btn {
-            background: #1e293b;
-            border: none;
-            border-radius: 16px;
-            padding: 14px 20px;
-            font-weight: 500;
-            color: #e5e9f0;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            font-size: 0.95rem;
-            border: 1px solid #2e3a52;
-        }
-
-        .btn:hover:not(:disabled) {
-            background: #2d3b52;
-            border-color: #4b5e7a;
-        }
-
-        .btn.primary {
-            background: #3b82f6;
-            border-color: #3b82f6;
-            color: white;
-        }
-
-        .btn.primary:hover:not(:disabled) {
-            background: #2563eb;
-        }
-
-        .btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-
-        .pairing-code {
-            background: #000;
-            border-radius: 16px;
-            padding: 18px;
-            text-align: center;
-            font-size: 2rem;
-            font-weight: 700;
-            letter-spacing: 6px;
-            color: #4ade80;
-            font-family: 'Courier New', monospace;
-            border: 1px dashed #2e3a52;
-            margin-top: 8px;
-        }
-
-        .small-note {
-            font-size: 0.75rem;
-            color: #6b7a92;
-            margin-top: 6px;
-            text-align: center;
-        }
-
-        /* Right panel — chat / activity */
-        .panel-right {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .chat-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .chat-header h3 {
-            font-size: 1.1rem;
-            font-weight: 500;
-        }
-
-        .chat-selector {
-            background: #1a212f;
-            border: 1px solid #2e3a52;
-            border-radius: 12px;
-            padding: 10px 14px;
-            color: #e5e9f0;
-            outline: none;
-            font-size: 0.9rem;
-            max-width: 220px;
-        }
-
-        .chat-window {
-            background: #0b0f17;
-            border-radius: 24px;
-            padding: 20px;
-            flex: 1;
-            min-height: 320px;
-            max-height: 420px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            border: 1px solid #1f2637;
-            scroll-behavior: smooth;
-        }
-
-        .message {
-            max-width: 85%;
-            padding: 12px 16px;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            line-height: 1.5;
-            word-break: break-word;
-            animation: fadeIn 0.2s ease;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .message.user {
-            background: #1e2a3d;
-            align-self: flex-start;
-            border-bottom-left-radius: 6px;
-            border: 1px solid #2f3e58;
-        }
-
-        .message.assistant {
-            background: #1a2e2a;
-            align-self: flex-end;
-            border-bottom-right-radius: 6px;
-            border: 1px solid #2d4a40;
-            color: #d1fae5;
-        }
-
-        .message .meta {
-            font-size: 0.7rem;
-            color: #8b9bb5;
-            margin-bottom: 4px;
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        .message.assistant .meta {
-            color: #6b8f7e;
-        }
-
-        .typing-indicator {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 10px 16px;
-            background: #1a2e2a;
-            border-radius: 20px;
-            align-self: flex-end;
-            border: 1px solid #2d4a40;
-            width: fit-content;
-        }
-
-        .dot {
-            width: 8px;
-            height: 8px;
-            background: #4ade80;
-            border-radius: 50%;
-            animation: bounce 1.4s infinite ease-in-out both;
-        }
-
-        .dot:nth-child(1) { animation-delay: -0.32s; }
-        .dot:nth-child(2) { animation-delay: -0.16s; }
-        .dot:nth-child(3) { animation-delay: 0s; }
-
-        @keyframes bounce {
-            0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
-            40% { transform: scale(1); opacity: 1; }
-        }
-
-        .empty-state {
-            color: #4a5a72;
-            text-align: center;
-            margin-top: 60px;
-            font-style: italic;
-            font-size: 0.9rem;
-        }
-
-        .actions-bar {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .actions-bar .btn {
-            flex: 1;
-            min-width: 120px;
-        }
-
-        .toast {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background: #1e293b;
-            border-left: 4px solid #3b82f6;
-            padding: 14px 22px;
-            border-radius: 14px;
-            box-shadow: 0 12px 30px -8px black;
-            font-size: 0.9rem;
-            animation: slideUp 0.25s ease;
-            z-index: 999;
-            max-width: 320px;
-        }
-
-        .toast.error {
-            border-left-color: #ef4444;
-        }
-
-        .toast.success {
-            border-left-color: #4ade80;
-        }
-
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(12px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .config-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-top: 10px;
-        }
-
-        .config-item {
-            background: #1a212f;
-            border-radius: 12px;
-            padding: 12px 14px;
-            border: 1px solid #252e42;
-            font-size: 0.8rem;
-        }
-
-        .config-item .label {
-            color: #8b9bb5;
-            margin-bottom: 4px;
-        }
-
-        .config-item .value {
-            font-weight: 500;
-            font-size: 0.9rem;
-        }
-
-        .toggle-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 0;
-        }
-
-        .switch {
-            position: relative;
-            width: 44px;
-            height: 24px;
-            background: #2e3a52;
-            border-radius: 40px;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-
-        .switch.active {
-            background: #3b82f6;
-        }
-
-        .switch::after {
-            content: '';
-            position: absolute;
-            width: 18px;
-            height: 18px;
-            background: white;
-            border-radius: 50%;
-            top: 3px;
-            left: 3px;
-            transition: 0.2s;
-        }
-
-        .switch.active::after {
-            left: 23px;
-        }
-
-        @media (max-width: 900px) {
-            .app {
-                grid-template-columns: 1fr;
-                padding: 18px;
-            }
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp AI Manager</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, sans-serif; }
+    body { background: #0a0e1a; color: #e5e9f0; min-height: 100vh; padding: 20px; }
+    .app { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1.2fr; gap: 24px; }
+    .card { background: #0f131f; border-radius: 24px; padding: 24px; border: 1px solid #252e42; margin-bottom: 20px; }
+    .card h2 { font-size: 1rem; color: #8b9bb5; margin-bottom: 18px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .status-badge { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #1a212f; border-radius: 100px; }
+    .indicator { width: 10px; height: 10px; border-radius: 50%; background: #f44; box-shadow: 0 0 12px #f44; }
+    .indicator.connected { background: #4ade80; box-shadow: 0 0 12px #4ade80; }
+    .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #1f2637; font-size: 0.9rem; }
+    .info-label { color: #8b9bb5; }
+    .phone-input { width: 100%; background: #1a212f; border: 1px solid #2e3a52; border-radius: 16px; padding: 14px 18px; color: #e5e9f0; font-size: 1rem; outline: none; margin-bottom: 12px; }
+    .btn { background: #1e293b; border: 1px solid #2e3a52; border-radius: 16px; padding: 14px 20px; color: #e5e9f0; cursor: pointer; font-size: 0.95rem; width: 100%; margin-bottom: 10px; }
+    .btn.primary { background: #3b82f6; border-color: #3b82f6; }
+    .btn:hover:not(:disabled) { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .pairing-code { background: #000; border-radius: 16px; padding: 18px; text-align: center; font-size: 1.8rem; font-weight: 700; letter-spacing: 4px; color: #4ade80; font-family: monospace; border: 1px dashed #2e3a52; margin-top: 10px; }
+    .chat-window { background: #0b0f17; border-radius: 24px; padding: 20px; min-height: 300px; max-height: 400px; overflow-y: auto; border: 1px solid #1f2637; margin-bottom: 16px; }
+    .message { max-width: 85%; padding: 12px 16px; border-radius: 20px; font-size: 0.9rem; margin-bottom: 10px; word-break: break-word; }
+    .message.user { background: #1e2a3d; border: 1px solid #2f3e58; }
+    .message.assistant { background: #1a2e2a; border: 1px solid #2d4a40; color: #d1fae5; margin-left: auto; }
+    .meta { font-size: 0.7rem; color: #8b9bb5; margin-bottom: 4px; }
+    .toast { position: fixed; bottom: 24px; right: 24px; background: #1e293b; border-left: 4px solid #3b82f6; padding: 14px 22px; border-radius: 14px; z-index: 999; }
+    .toast.error { border-left-color: #ef4444; }
+    .toast.success { border-left-color: #4ade80; }
+    @media (max-width: 900px) { .app { grid-template-columns: 1fr; } }
+  </style>
 </head>
 <body>
-
-<div class="app">
-    <!-- LEFT: Connection & Status -->
-    <div class="panel-left">
-        <div class="card">
-            <h2>🔌 Connection</h2>
-            <div class="status-badge" id="connectionStatus">
-                <span class="indicator" id="statusIndicator"></span>
-                <span id="statusText">Disconnected</span>
-            </div>
-
-            <div class="info-row" style="margin-top:14px;">
-                <span class="info-label">Bot name</span>
-                <span class="info-value" id="botName">My AI Assistant</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Model</span>
-                <span class="info-value" id="modelName">gpt-oss:120b</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Host</span>
-                <span class="info-value" id="hostName">127.0.0.1:11434</span>
-            </div>
-
-            <!-- Pairing area -->
-            <div class="pairing-area" id="pairingArea">
-                <input type="tel" id="phoneInput" class="phone-input" placeholder="Phone (e.g. 15551234567)" />
-                <button class="btn primary" id="pairBtn">
-                    <span>📱</span> Request pairing code
-                </button>
-                <div id="pairingCodeDisplay" class="pairing-code" style="display:none;"></div>
-                <div class="small-note" id="pairingHint"></div>
-            </div>
-
-            <div style="margin-top:16px; display:flex; gap:10px;">
-                <button class="btn" id="reconnectBtn" style="flex:1;">
-                    <span>🔄</span> Reconnect
-                </button>
-                <button class="btn" id="logoutBtn" style="flex:1;">
-                    <span>🚪</span> Logout
-                </button>
-            </div>
+  <div class="app">
+    <div>
+      <div class="card">
+        <h2>🔌 Connection</h2>
+        <div class="status-badge">
+          <span class="indicator" id="statusIndicator"></span>
+          <span id="statusText">Disconnected</span>
         </div>
-
-        <div class="card">
-            <h2>⚙️ Bot behaviour</h2>
-            <div class="toggle-row">
-                <span>Group: mentions only</span>
-                <div class="switch active" id="toggleMentions"></div>
-            </div>
-            <div class="toggle-row">
-                <span>Typing indicator</span>
-                <div class="switch active" id="toggleTyping"></div>
-            </div>
-            <div class="config-grid">
-                <div class="config-item">
-                    <div class="label">Cooldown</div>
-                    <div class="value" id="cooldownVal">3000 ms</div>
-                </div>
-                <div class="config-item">
-                    <div class="label">Max/min</div>
-                    <div class="value" id="maxRepliesVal">10</div>
-                </div>
-            </div>
+        <div class="info-row" style="margin-top:14px;">
+          <span class="info-label">Bot</span><span id="botName">—</span>
         </div>
+        <div class="info-row">
+          <span class="info-label">Model</span><span id="modelName">—</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Host</span><span id="hostName">—</span>
+        </div>
+        <div style="margin-top:16px;">
+          <input type="tel" id="phoneInput" class="phone-input" placeholder="Phone (e.g. 15551234567)" />
+          <button class="btn primary" id="pairBtn">📱 Request pairing code</button>
+          <div id="pairingCodeDisplay" class="pairing-code" style="display:none;"></div>
+          <button class="btn" id="reconnectBtn">🔄 Reconnect</button>
+        </div>
+      </div>
     </div>
 
-    <!-- RIGHT: Chat / Activity -->
-    <div class="panel-right">
-        <div class="card" style="flex:1; display:flex; flex-direction:column;">
-            <div class="chat-header">
-                <h3>💬 Conversation preview</h3>
-                <select class="chat-selector" id="chatSelector">
-                    <option value="">— select chat —</option>
-                </select>
-            </div>
-
-            <div class="chat-window" id="chatWindow">
-                <div class="empty-state">No messages yet. Connect and start chatting.</div>
-            </div>
-
-            <div class="actions-bar" style="margin-top:16px;">
-                <button class="btn" id="clearHistoryBtn">
-                    <span>🗑️</span> Clear history
-                </button>
-                <button class="btn" id="refreshChatsBtn">
-                    <span>🔄</span> Refresh chats
-                </button>
-            </div>
+    <div>
+      <div class="card">
+        <h2>💬 Conversation</h2>
+        <select id="chatSelector" class="phone-input" style="margin-bottom:10px;">
+          <option value="">— select chat —</option>
+        </select>
+        <div class="chat-window" id="chatWindow">
+          <div style="color:#4a5a72; text-align:center; margin-top:60px;">No messages yet.</div>
         </div>
+        <button class="btn" id="refreshChatsBtn">🔄 Refresh</button>
+        <button class="btn" id="clearHistoryBtn">🗑️ Clear history</button>
+      </div>
 
-        <div class="card">
-            <h2>📤 Send test message</h2>
-            <input type="text" id="testTo" class="phone-input" placeholder="Recipient JID (e.g. 15551234567@s.whatsapp.net)" style="margin-bottom:12px;" />
-            <input type="text" id="testText" class="phone-input" placeholder="Message text..." style="margin-bottom:12px;" />
-            <button class="btn primary" id="sendTestBtn">
-                <span>✈️</span> Send via WhatsApp
-            </button>
-        </div>
+      <div class="card">
+        <h2>📤 Test message</h2>
+        <input type="text" id="testTo" class="phone-input" placeholder="Recipient (15551234567 or ...@s.whatsapp.net)" />
+        <input type="text" id="testText" class="phone-input" placeholder="Message..." />
+        <button class="btn primary" id="sendTestBtn">✈️ Send</button>
+      </div>
     </div>
-</div>
+  </div>
 
-<script>
-    // =========================================================
-    // CONFIG & STATE
-    // =========================================================
-    const API_BASE = window.location.origin; // same origin
+  <script>
+    const API = window.location.origin;
+    const state = { currentChat: null, typing: false, history: {}, chats: [] };
 
-    const state = {
-        connected: false,
-        user: null,
-        chats: [],            // list of chat IDs
-        currentChat: null,
-        history: {},          // chatId -> array of { role, content }
-        typing: false,
-        mentionsOnly: true,
-        typingIndicator: true,
-        cooldown: 3000,
-        maxReplies: 10,
-    };
-
-    // =========================================================
-    // DOM ELEMENTS
-    // =========================================================
-    const statusIndicator = document.getElementById('statusIndicator');
-    const statusText = document.getElementById('statusText');
-    const botNameEl = document.getElementById('botName');
-    const modelNameEl = document.getElementById('modelName');
-    const hostNameEl = document.getElementById('hostName');
-    const phoneInput = document.getElementById('phoneInput');
-    const pairBtn = document.getElementById('pairBtn');
-    const pairingCodeDisplay = document.getElementById('pairingCodeDisplay');
-    const pairingHint = document.getElementById('pairingHint');
-    const reconnectBtn = document.getElementById('reconnectBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
-    const toggleMentions = document.getElementById('toggleMentions');
-    const toggleTyping = document.getElementById('toggleTyping');
-    const cooldownVal = document.getElementById('cooldownVal');
-    const maxRepliesVal = document.getElementById('maxRepliesVal');
-    const chatSelector = document.getElementById('chatSelector');
-    const chatWindow = document.getElementById('chatWindow');
-    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
-    const refreshChatsBtn = document.getElementById('refreshChatsBtn');
-    const testTo = document.getElementById('testTo');
-    const testText = document.getElementById('testText');
-    const sendTestBtn = document.getElementById('sendTestBtn');
-
-    // =========================================================
-    // UTILS
-    // =========================================================
-    function showToast(message, type = 'info') {
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3500);
+    function toast(msg, type = 'info') {
+      const t = document.createElement('div');
+      t.className = `toast ${type}`;
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 3500);
     }
 
-    async function apiCall(endpoint, options = {}) {
-        const url = `${API_BASE}${endpoint}`;
-        const res = await fetch(url, {
-            headers: { 'Content-Type': 'application/json' },
-            ...options,
+    async function api(path, opts = {}) {
+      const res = await fetch(API + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    async function refreshStatus() {
+      try {
+        const d = await api('/health');
+        const ind = document.getElementById('statusIndicator');
+        const txt = document.getElementById('statusText');
+        if (d.connected) {
+          ind.classList.add('connected');
+          txt.textContent = 'Connected';
+          document.getElementById('botName').textContent = d.user || '—';
+        } else {
+          ind.classList.remove('connected');
+          txt.textContent = 'Disconnected';
+        }
+        document.getElementById('modelName').textContent = d.model || '—';
+        document.getElementById('hostName').textContent = d.host || '—';
+
+        if (d.pairing?.code) {
+          const el = document.getElementById('pairingCodeDisplay');
+          el.style.display = 'block';
+          el.textContent = d.pairing.code;
+        }
+      } catch (e) {
+        console.warn('status failed:', e.message);
+      }
+    }
+
+    async function refreshChats() {
+      try {
+        const d = await api('/chats');
+        state.chats = d.chats || [];
+        const sel = document.getElementById('chatSelector');
+        sel.innerHTML = '<option value="">— select chat —</option>';
+        state.chats.forEach((id) => {
+          const o = document.createElement('option');
+          o.value = id;
+          o.textContent = id.length > 35 ? id.slice(0, 33) + '…' : id;
+          sel.appendChild(o);
         });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: res.statusText }));
-            throw new Error(err.error || `HTTP ${res.status}`);
-        }
-        return res.json();
+      } catch (e) {
+        console.warn('chats failed:', e.message);
+      }
     }
 
-    // =========================================================
-    // STATUS POLLING
-    // =========================================================
-    async function fetchStatus() {
-        try {
-            const data = await apiCall('/health');
-            state.connected = data.connected;
-            state.user = data.user;
-
-            // Update UI
-            if (data.connected) {
-                statusIndicator.classList.add('connected');
-                statusIndicator.classList.remove('pairing');
-                statusText.textContent = 'Connected';
-                botNameEl.textContent = data.user || 'My AI Assistant';
-                modelNameEl.textContent = data.model || 'gpt-oss:120b';
-                hostNameEl.textContent = '127.0.0.1:11434';
-                pairingHint.textContent = '';
-            } else {
-                statusIndicator.classList.remove('connected');
-                statusText.textContent = 'Disconnected';
-                botNameEl.textContent = '—';
-                modelNameEl.textContent = '—';
-                hostNameEl.textContent = '—';
-            }
-        } catch (err) {
-            console.warn('Status fetch failed:', err.message);
-        }
+    function renderChat() {
+      const win = document.getElementById('chatWindow');
+      const h = state.history[state.currentChat] || [];
+      if (!h.length && !state.typing) {
+        win.innerHTML = '<div style="color:#4a5a72; text-align:center; margin-top:60px;">No messages.</div>';
+        return;
+      }
+      let html = '';
+      h.forEach((m) => {
+        const role = m.role === 'user' ? 'user' : 'assistant';
+        html += `<div class="message ${role}"><div class="meta">${role === 'user' ? 'User' : 'AI'}</div>${escapeHtml(m.content)}</div>`;
+      });
+      if (state.typing) {
+        html += `<div class="message assistant">...</div>`;
+      }
+      win.innerHTML = html;
+      win.scrollTop = win.scrollHeight;
     }
 
-    // =========================================================
-    // PAIRING
-    // =========================================================
-    pairBtn.addEventListener('click', async () => {
-        const phone = phoneInput.value.replace(/\D/g, '');
-        if (!phone) {
-            showToast('Please enter a phone number (digits only).', 'error');
-            return;
-        }
-
-        // In a real implementation, this would call an endpoint to request pairing.
-        // For this demo, we simulate the pairing code flow via the backend.
-        // The backend would need a dedicated endpoint, but we'll do a quick simulation.
-        // Since the original code uses readline, we'll just show a sample code.
-        // In production you'd wire this to the actual Baileys pairing request.
-        pairingCodeDisplay.style.display = 'block';
-        pairingCodeDisplay.textContent = 'PAIR-1234';
-        pairingHint.textContent = 'Enter this in WhatsApp > Linked Devices > Link with phone number';
-        showToast('Pairing code generated (simulated). Check WhatsApp.', 'success');
-    });
-
-    // =========================================================
-    // CONVERSATION PREVIEW
-    // =========================================================
-    function renderChatWindow() {
-        if (!state.currentChat) {
-            chatWindow.innerHTML = '<div class="empty-state">Select a chat to view messages.</div>';
-            return;
-        }
-        const history = state.history[state.currentChat] || [];
-
-        if (state.typingIndicator && state.typing) {
-            // Typing indicator shown at bottom
-        }
-
-        if (history.length === 0 && !state.typing) {
-            chatWindow.innerHTML = '<div class="empty-state">No messages in this chat.</div>';
-            return;
-        }
-
-        let html = '';
-        history.forEach((msg) => {
-            const role = msg.role === 'user' ? 'user' : 'assistant';
-            const label = role === 'user' ? 'User' : 'AI';
-            html += `
-                <div class="message ${role}">
-                    <div class="meta"><span>${label}</span></div>
-                    <div>${escapeHtml(msg.content)}</div>
-                </div>
-            `;
-        });
-
-        if (state.typingIndicator && state.typing) {
-            html += `
-                <div class="typing-indicator">
-                    <div class="dot"></div>
-                    <div class="dot"></div>
-                    <div class="dot"></div>
-                </div>
-            `;
-        }
-
-        chatWindow.innerHTML = html;
-        chatWindow.scrollTop = chatWindow.scrollHeight;
-    }
-
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    // =========================================================
-    // CHAT LIST MANAGEMENT
-    // =========================================================
-    async function fetchChats() {
-        // In a real backend you'd have an endpoint to list all chats.
-        // For now we simulate with a few sample chats.
-        const sampleChats = [
-            '15551234567@s.whatsapp.net',
-            'group123@g.us',
-            '15559876543@s.whatsapp.net',
-        ];
-        state.chats = sampleChats;
-        updateChatSelector();
-    }
-
-    function updateChatSelector() {
-        const current = chatSelector.value;
-        chatSelector.innerHTML = '<option value="">— select chat —</option>';
-        state.chats.forEach((chatId) => {
-            const opt = document.createElement('option');
-            opt.value = chatId;
-            opt.textContent = chatId.length > 30 ? chatId.substring(0, 28) + '…' : chatId;
-            chatSelector.appendChild(opt);
-        });
-        if (current && state.chats.includes(current)) {
-            chatSelector.value = current;
-            state.currentChat = current;
-        }
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
     }
 
     async function loadHistory(chatId) {
-        if (!chatId) return;
-        try {
-            const data = await apiCall(`/history/${encodeURIComponent(chatId)}`);
-            state.history[chatId] = data.history || [];
-            renderChatWindow();
-        } catch (err) {
-            showToast(`Failed to load history: ${err.message}`, 'error');
-        }
+      if (!chatId) return;
+      const d = await api(`/history/${encodeURIComponent(chatId)}`);
+      state.history[chatId] = d.history || [];
+      renderChat();
     }
 
-    // =========================================================
-    // EVENT LISTENERS
-    // =========================================================
-    chatSelector.addEventListener('change', async (e) => {
-        const chatId = e.target.value;
-        state.currentChat = chatId || null;
-        if (chatId) {
-            await loadHistory(chatId);
-        } else {
-            renderChatWindow();
-        }
-    });
+    document.getElementById('pairBtn').onclick = async () => {
+      const phone = document.getElementById('phoneInput').value.replace(/\D/g, '');
+      if (!phone) return toast('Enter a phone number', 'error');
+      try {
+        const d = await api('/pair', { method: 'POST', body: JSON.stringify({ phone }) });
+        const el = document.getElementById('pairingCodeDisplay');
+        el.style.display = 'block';
+        el.textContent = d.code;
+        toast('Pairing code received!', 'success');
+      } catch (e) {
+        toast('Pairing failed: ' + e.message, 'error');
+      }
+    };
 
-    clearHistoryBtn.addEventListener('click', async () => {
-        if (!state.currentChat) {
-            showToast('No chat selected.', 'error');
-            return;
-        }
-        try {
-            await apiCall(`/history/${encodeURIComponent(state.currentChat)}`, { method: 'DELETE' });
-            state.history[state.currentChat] = [];
-            renderChatWindow();
-            showToast('History cleared.', 'success');
-        } catch (err) {
-            showToast(`Error: ${err.message}`, 'error');
-        }
-    });
+    document.getElementById('reconnectBtn').onclick = async () => {
+      try {
+        await api('/reconnect', { method: 'POST' });
+        toast('Reconnecting…');
+      } catch (e) { toast(e.message, 'error'); }
+    };
 
-    refreshChatsBtn.addEventListener('click', async () => {
-        await fetchChats();
-        showToast('Chat list refreshed.', 'info');
-    });
+    document.getElementById('refreshChatsBtn').onclick = refreshChats;
 
-    sendTestBtn.addEventListener('click', async () => {
-        const to = testTo.value.trim();
-        const text = testText.value.trim();
-        if (!to || !text) {
-            showToast('Recipient and message required.', 'error');
-            return;
-        }
-        try {
-            await apiCall('/send', {
-                method: 'POST',
-                body: JSON.stringify({ to, text }),
-            });
-            showToast('Message sent!', 'success');
-            testText.value = '';
-            // Optionally refresh history for that chat
-            if (state.currentChat === to || state.chats.includes(to)) {
-                await loadHistory(to);
-            }
-        } catch (err) {
-            showToast(`Send failed: ${err.message}`, 'error');
-        }
-    });
+    document.getElementById('chatSelector').onchange = (e) => {
+      state.currentChat = e.target.value || null;
+      if (state.currentChat) loadHistory(state.currentChat);
+      else renderChat();
+    };
 
-    // Toggle switches
-    toggleMentions.addEventListener('click', () => {
-        toggleMentions.classList.toggle('active');
-        state.mentionsOnly = toggleMentions.classList.contains('active');
-        showToast(`Group mentions: ${state.mentionsOnly ? 'ON' : 'OFF'}`, 'info');
-    });
+    document.getElementById('clearHistoryBtn').onclick = async () => {
+      if (!state.currentChat) return toast('No chat selected', 'error');
+      await api(`/history/${encodeURIComponent(state.currentChat)}`, { method: 'DELETE' });
+      state.history[state.currentChat] = [];
+      renderChat();
+      toast('Cleared', 'success');
+    };
 
-    toggleTyping.addEventListener('click', () => {
-        toggleTyping.classList.toggle('active');
-        state.typingIndicator = toggleTyping.classList.contains('active');
-        showToast(`Typing indicator: ${state.typingIndicator ? 'ON' : 'OFF'}`, 'info');
-        renderChatWindow();
-    });
+    document.getElementById('sendTestBtn').onclick = async () => {
+      const to = document.getElementById('testTo').value.trim();
+      const text = document.getElementById('testText').value.trim();
+      if (!to || !text) return toast('Recipient + text required', 'error');
+      try {
+        await api('/send', { method: 'POST', body: JSON.stringify({ to, text }) });
+        toast('Sent!', 'success');
+        document.getElementById('testText').value = '';
+        if (state.currentChat === to) await loadHistory(to);
+      } catch (e) { toast('Failed: ' + e.message, 'error'); }
+    };
 
-    reconnectBtn.addEventListener('click', () => {
-        showToast('Reconnecting… (refresh page if needed)', 'info');
-        // In production, call an endpoint to reconnect
-        fetchStatus();
-    });
-
-    logoutBtn.addEventListener('click', () => {
-        showToast('Logout not implemented in demo.', 'error');
-    });
-
-    // =========================================================
-    // SIMULATED INCOMING MESSAGES (for demo)
-    // =========================================================
-    function simulateIncomingMessage(chatId, userName, text, reply) {
-        if (!state.history[chatId]) state.history[chatId] = [];
-        state.history[chatId].push({ role: 'user', content: `${userName}: ${text}` });
-
-        // Show typing
-        state.typing = true;
-        renderChatWindow();
-
-        setTimeout(() => {
-            state.typing = false;
-            state.history[chatId].push({ role: 'assistant', content: reply });
-            renderChatWindow();
-            // Update chat list if new
-            if (!state.chats.includes(chatId)) {
-                state.chats.push(chatId);
-                updateChatSelector();
-            }
-        }, 1500);
-    }
-
-    // =========================================================
-    // INIT
-    // =========================================================
-    async function init() {
-        // Fetch initial status
-        await fetchStatus();
-        // Load sample chats
-        await fetchChats();
-        // Set config values
-        cooldownVal.textContent = state.cooldown + ' ms';
-        maxRepliesVal.textContent = state.maxReplies;
-
-        // Auto-select first chat for demo
-        if (state.chats.length > 0) {
-            chatSelector.value = state.chats[0];
-            state.currentChat = state.chats[0];
-            await loadHistory(state.currentChat);
-        }
-
-        // Simulate a couple of messages for demo
-        setTimeout(() => {
-            simulateIncomingMessage(
-                '15551234567@s.whatsapp.net',
-                'Alice',
-                'Hey, can you help me with a task?',
-                'Of course! What do you need help with?'
-            );
-        }, 2000);
-
-        setTimeout(() => {
-            simulateIncomingMessage(
-                'group123@g.us',
-                'Bob',
-                '@ai what is the weather like?',
-                'I cannot access real-time weather data, but I can help you find a weather API!'
-            );
-        }, 5000);
-
-        // Poll status every 10 seconds
-        setInterval(fetchStatus, 10000);
-    }
-
-    init();
-</script>
+    refreshStatus();
+    refreshChats();
+    setInterval(refreshStatus, 8000);
+  </script>
 </body>
 </html>

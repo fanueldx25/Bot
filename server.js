@@ -1,3 +1,11 @@
+// =========================================================
+// ENVIRONMENT (must be first)
+// =========================================================
+import 'dotenv/config';
+
+// =========================================================
+// IMPORTS
+// =========================================================
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -12,6 +20,10 @@ import readline from 'readline';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // =========================================================
 // CONFIGURATION
@@ -23,20 +35,21 @@ const CONFIG = {
   OLLAMA_API_KEY: process.env.OLLAMA_API_KEY || '',
 
   // Bot behavior
-  BOT_NAME: 'My AI Assistant',
-  SYSTEM_PROMPT: 'You are a helpful, concise AI assistant on WhatsApp. Keep replies short (under 200 words). If someone asks you to do a task, confirm what you will do.',
+  BOT_NAME: process.env.BOT_NAME || 'My AI Assistant',
+  SYSTEM_PROMPT:
+    'You are a helpful, concise AI assistant on WhatsApp. Keep replies short (under 200 words). If someone asks you to do a task, confirm what you will do.',
 
   // Group behavior
-  ONLY_REPLY_TO_MENTIONS: true,
+  ONLY_REPLY_TO_MENTIONS: process.env.ONLY_REPLY_TO_MENTIONS !== 'false',
   MENTION_NAMES: ['@ai', '@bot', 'assistant'],
 
   // Rate limiting
   MAX_HISTORY_PER_CHAT: 20,
-  COOLDOWN_MS: 3000, // Min time between replies per chat
-  MAX_REPLIES_PER_MINUTE: 10,
+  COOLDOWN_MS: parseInt(process.env.COOLDOWN_MS || '3000', 10),
+  MAX_REPLIES_PER_MINUTE: parseInt(process.env.MAX_REPLIES_PER_MINUTE || '10', 10),
 
   // Session
-  AUTH_FOLDER: './auth_info_baileys',
+  AUTH_FOLDER: process.env.AUTH_FOLDER || './auth_info_baileys',
   PORT: process.env.PORT || 3000,
 };
 
@@ -53,39 +66,90 @@ const state = {
   replyTimestamps: new Map(),
   // Prevent concurrent processing per chat
   processing: new Set(),
+  // Pairing state
+  pairing: {
+    active: false,
+    phone: null,
+    code: null,
+    requestedAt: null,
+  },
 };
 
 // =========================================================
-// EXPRESS SERVER (Minimal API)
+// EXPRESS SERVER
 // =========================================================
 const app = express();
 app.use(express.json());
 
-// Health check
+// ---- Serve frontend (must come before API routes) ----
+const publicDir = path.join(__dirname, 'public');
+app.use(express.static(publicDir));
+
+// Root → dashboard
+app.get('/', (req, res) => {
+  const indexPath = path.join(publicDir, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>WhatsApp AI Bot</title></head>
+        <body style="font-family: system-ui; background: #0a0e1a; color: #e5e9f0; padding: 40px;">
+          <h1>WhatsApp AI Bot</h1>
+          <p>Dashboard not found at <code>public/index.html</code>.</p>
+          <p>API endpoints available:</p>
+          <ul>
+            <li><a href="/health" style="color:#3b82f6">GET /health</a></li>
+            <li>GET /history/:chatId</li>
+            <li>DELETE /history/:chatId</li>
+            <li>POST /send</li>
+            <li>POST /pair</li>
+          </ul>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// ---- Health check ----
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     connected: state.sock?.user ? true : false,
     user: state.sock?.user?.id || null,
+    name: state.sock?.user?.name || null,
     model: CONFIG.OLLAMA_MODEL,
+    host: CONFIG.OLLAMA_HOST,
+    pairing: {
+      active: state.pairing.active,
+      phone: state.pairing.phone,
+      code: state.pairing.code,
+    },
   });
 });
 
-// Get conversation history for a chat
+// ---- Get conversation history for a chat ----
 app.get('/history/:chatId', (req, res) => {
   const chatId = decodeURIComponent(req.params.chatId);
   const history = state.conversations.get(chatId) || [];
   res.json({ chatId, history });
 });
 
-// Clear conversation history for a chat
+// ---- List all known chats ----
+app.get('/chats', (req, res) => {
+  const chatIds = Array.from(state.conversations.keys());
+  res.json({ chats: chatIds });
+});
+
+// ---- Clear conversation history for a chat ----
 app.delete('/history/:chatId', (req, res) => {
   const chatId = decodeURIComponent(req.params.chatId);
   state.conversations.delete(chatId);
   res.json({ ok: true, cleared: chatId });
 });
 
-// Send a message manually (useful for testing)
+// ---- Send a message manually ----
 app.post('/send', async (req, res) => {
   try {
     const { to, text } = req.body;
@@ -100,6 +164,53 @@ app.post('/send', async (req, res) => {
   }
 });
 
+// ---- Request pairing code (from frontend) ----
+app.post('/pair', async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Missing "phone"' });
+    if (!state.sock) return res.status(503).json({ error: 'WhatsApp socket not ready' });
+    if (state.sock.authState?.creds?.registered) {
+      return res.status(400).json({ error: 'Already registered' });
+    }
+
+    const cleaned = String(phone).replace(/\D/g, '');
+    if (cleaned.length < 8) {
+      return res.status(400).json({ error: 'Phone number too short' });
+    }
+
+    const code = await state.sock.requestPairingCode(cleaned);
+
+    state.pairing = {
+      active: true,
+      phone: cleaned,
+      code,
+      requestedAt: Date.now(),
+    };
+
+    console.log(`[WA] Pairing code for ${cleaned}: ${code}`);
+    res.json({ ok: true, code, phone: cleaned });
+  } catch (err) {
+    console.error('[WA] Pairing request failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Reconnect endpoint ----
+app.post('/reconnect', async (req, res) => {
+  try {
+    console.log('[WA] Manual reconnect requested');
+    if (state.sock) {
+      try { state.sock.end?.(); } catch {}
+    }
+    setTimeout(() => connectToWhatsApp().catch(console.error), 500);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Start HTTP server ----
 app.listen(CONFIG.PORT, () => {
   console.log(`[HTTP] API server on http://localhost:${CONFIG.PORT}`);
 });
@@ -159,12 +270,11 @@ function appendHistory(chatId, role, content) {
 
 function buildMessages(chatId, userName, userText) {
   const history = getHistory(chatId);
-  const messages = [
+  return [
     { role: 'system', content: CONFIG.SYSTEM_PROMPT },
     ...history,
     { role: 'user', content: `${userName}: ${userText}` },
   ];
-  return messages;
 }
 
 // =========================================================
@@ -173,14 +283,12 @@ function buildMessages(chatId, userName, userText) {
 function canReply(chatId) {
   const now = Date.now();
 
-  // Cooldown check
   const last = state.lastReplyTime.get(chatId) || 0;
   if (now - last < CONFIG.COOLDOWN_MS) {
     console.log(`[RateLimit] Cooldown active for ${chatId}`);
     return false;
   }
 
-  // Per-minute cap
   const timestamps = state.replyTimestamps.get(chatId) || [];
   const recent = timestamps.filter((t) => now - t < 60000);
   if (recent.length >= CONFIG.MAX_REPLIES_PER_MINUTE) {
@@ -232,29 +340,36 @@ async function connectToWhatsApp() {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // Pairing code flow
+    // QR received → if not registered and no pairing code active, show QR in logs
     if (qr && !sock.authState.creds.registered) {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const question = (text) => new Promise((resolve) => rl.question(text, resolve));
+      console.log('\n[WA] QR received. Use the /pair endpoint or scan the QR below.');
+      console.log('[WA] (Pairing code is the recommended flow on Render.)\n');
 
-      console.log('\n[WA] QR received but pairing code mode is active.');
-      const rawNumber = await question('Enter your phone number (digits only, with country code): ');
-      const phoneNumber = rawNumber.replace(/\D/g, '');
+      // Optional: still allow terminal pairing if running locally
+      if (process.stdin.isTTY && !state.pairing.active) {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const question = (text) => new Promise((resolve) => rl.question(text, resolve));
 
-      if (!phoneNumber) {
-        console.log('[WA] Invalid phone number. Restart and try again.');
-        process.exit(1);
+        const rawNumber = await question('Enter your phone number (digits only, with country code): ');
+        const phoneNumber = rawNumber.replace(/\D/g, '');
+
+        if (phoneNumber) {
+          try {
+            const code = await sock.requestPairingCode(phoneNumber);
+            state.pairing = {
+              active: true,
+              phone: phoneNumber,
+              code,
+              requestedAt: Date.now(),
+            };
+            console.log(`\n>>> PAIRING CODE: ${code} <<<\n`);
+            console.log('Enter this in WhatsApp > Settings > Linked Devices > Link with phone number\n');
+          } catch (err) {
+            console.error('[WA] Failed to request pairing code:', err.message);
+          }
+        }
+        rl.close();
       }
-
-      try {
-        const code = await sock.requestPairingCode(phoneNumber);
-        console.log(`\n>>> PAIRING CODE: ${code} <<<\n`);
-        console.log('Enter this in WhatsApp > Settings > Linked Devices > Link with phone number\n');
-      } catch (err) {
-        console.error('[WA] Failed to request pairing code:', err.message);
-      }
-
-      rl.close();
     }
 
     if (connection === 'close') {
@@ -267,7 +382,6 @@ async function connectToWhatsApp() {
         setTimeout(connectToWhatsApp, 5000);
       } else {
         console.log('[WA] Logged out. Delete auth folder and restart.');
-        process.exit(1);
       }
     }
 
@@ -275,6 +389,14 @@ async function connectToWhatsApp() {
       console.log(`[WA] Connected as ${sock.user?.id}`);
       console.log(`[WA] Name: ${sock.user?.name}`);
       console.log(`[WA] Model: ${CONFIG.OLLAMA_MODEL}`);
+
+      // Reset pairing state
+      state.pairing = {
+        active: false,
+        phone: null,
+        code: null,
+        requestedAt: null,
+      };
     }
   });
 
@@ -316,7 +438,9 @@ async function handleIncomingMessage(msg) {
 
   if (!text.trim()) return;
 
-  console.log(`[Msg] ${isGroup ? 'GROUP' : 'DM'} | ${senderName} (${senderJid}): ${text.substring(0, 80)}`);
+  console.log(
+    `[Msg] ${isGroup ? 'GROUP' : 'DM'} | ${senderName} (${senderJid}): ${text.substring(0, 80)}`
+  );
 
   // ---- Group mention check ----
   if (isGroup && CONFIG.ONLY_REPLY_TO_MENTIONS) {
@@ -328,13 +452,13 @@ async function handleIncomingMessage(msg) {
       CONFIG.MENTION_NAMES.some((name) => text.toLowerCase().includes(name.toLowerCase()));
 
     if (!isMentioned) {
-      // Store message in history silently but don't reply
+      // Store in history silently but don't reply
       appendHistory(chatId, 'user', `${senderName}: ${text}`);
       return;
     }
   }
 
-  // ---- Rate limit check ----
+  // ---- Rate limit ----
   if (!canReply(chatId)) return;
 
   // ---- Prevent concurrent processing ----
@@ -348,13 +472,14 @@ async function handleIncomingMessage(msg) {
     // Typing indicator
     await state.sock.sendPresenceUpdate('composing', chatId);
 
-    // Build messages with history
     const messages = buildMessages(chatId, senderName, text);
 
-    // Ask Ollama
     console.log(`[AI] Querying ${CONFIG.OLLAMA_MODEL}...`);
     const reply = await askOllama(messages);
     console.log(`[AI] Reply: ${reply.substring(0, 100)}...`);
+
+    // Stop typing
+    await state.sock.sendPresenceUpdate('paused', chatId);
 
     // Send reply
     await state.sock.sendMessage(chatId, { text: reply }, { quoted: msg });
@@ -363,14 +488,16 @@ async function handleIncomingMessage(msg) {
     appendHistory(chatId, 'user', `${senderName}: ${text}`);
     appendHistory(chatId, 'assistant', reply);
 
-    // Record rate limit
     recordReply(chatId);
   } catch (err) {
     console.error('[Handler] AI error:', err.message);
     try {
-      await state.sock.sendMessage(chatId, {
-        text: `Sorry, I hit an error: ${err.message}`,
-      }, { quoted: msg });
+      await state.sock.sendPresenceUpdate('paused', chatId);
+      await state.sock.sendMessage(
+        chatId,
+        { text: `Sorry, I hit an error: ${err.message}` },
+        { quoted: msg }
+      );
     } catch {}
   } finally {
     state.processing.delete(chatId);
@@ -387,10 +514,34 @@ console.log(`Model:      ${CONFIG.OLLAMA_MODEL}`);
 console.log(`Host:       ${CONFIG.OLLAMA_HOST}`);
 console.log(`Auth:       ${CONFIG.AUTH_FOLDER}`);
 console.log(`Group mode: ${CONFIG.ONLY_REPLY_TO_MENTIONS ? 'Mentions only' : 'All messages'}`);
+console.log(`API key:    ${CONFIG.OLLAMA_API_KEY ? '***set***' : '(not set)'}`);
 console.log('='.repeat(60));
 console.log();
 
 connectToWhatsApp().catch((err) => {
   console.error('[Fatal]', err);
   process.exit(1);
+});
+
+// =========================================================
+// GRACEFUL SHUTDOWN
+// =========================================================
+process.on('SIGINT', () => {
+  console.log('\n[Shutdown] SIGINT received');
+  try { state.sock?.end?.(); } catch {}
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n[Shutdown] SIGTERM received');
+  try { state.sock?.end?.(); } catch {}
+  process.exit(0);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught]', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[UnhandledRejection]', reason);
 });
