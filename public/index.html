@@ -1,235 +1,977 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WhatsApp AI Manager</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, sans-serif; }
-    body { background: #0a0e1a; color: #e5e9f0; min-height: 100vh; padding: 20px; }
-    .app { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1.2fr; gap: 24px; }
-    .card { background: #0f131f; border-radius: 24px; padding: 24px; border: 1px solid #252e42; margin-bottom: 20px; }
-    .card h2 { font-size: 1rem; color: #8b9bb5; margin-bottom: 18px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .status-badge { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #1a212f; border-radius: 100px; }
-    .indicator { width: 10px; height: 10px; border-radius: 50%; background: #f44; box-shadow: 0 0 12px #f44; }
-    .indicator.connected { background: #4ade80; box-shadow: 0 0 12px #4ade80; }
-    .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #1f2637; font-size: 0.9rem; }
-    .info-label { color: #8b9bb5; }
-    .phone-input { width: 100%; background: #1a212f; border: 1px solid #2e3a52; border-radius: 16px; padding: 14px 18px; color: #e5e9f0; font-size: 1rem; outline: none; margin-bottom: 12px; }
-    .btn { background: #1e293b; border: 1px solid #2e3a52; border-radius: 16px; padding: 14px 20px; color: #e5e9f0; cursor: pointer; font-size: 0.95rem; width: 100%; margin-bottom: 10px; }
-    .btn.primary { background: #3b82f6; border-color: #3b82f6; }
-    .btn:hover:not(:disabled) { opacity: 0.85; }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .pairing-code { background: #000; border-radius: 16px; padding: 18px; text-align: center; font-size: 1.8rem; font-weight: 700; letter-spacing: 4px; color: #4ade80; font-family: monospace; border: 1px dashed #2e3a52; margin-top: 10px; }
-    .chat-window { background: #0b0f17; border-radius: 24px; padding: 20px; min-height: 300px; max-height: 400px; overflow-y: auto; border: 1px solid #1f2637; margin-bottom: 16px; }
-    .message { max-width: 85%; padding: 12px 16px; border-radius: 20px; font-size: 0.9rem; margin-bottom: 10px; word-break: break-word; }
-    .message.user { background: #1e2a3d; border: 1px solid #2f3e58; }
-    .message.assistant { background: #1a2e2a; border: 1px solid #2d4a40; color: #d1fae5; margin-left: auto; }
-    .meta { font-size: 0.7rem; color: #8b9bb5; margin-bottom: 4px; }
-    .toast { position: fixed; bottom: 24px; right: 24px; background: #1e293b; border-left: 4px solid #3b82f6; padding: 14px 22px; border-radius: 14px; z-index: 999; }
-    .toast.error { border-left-color: #ef4444; }
-    .toast.success { border-left-color: #4ade80; }
-    @media (max-width: 900px) { .app { grid-template-columns: 1fr; } }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WhatsApp AI Manager</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  body {
+    background: #0a0e1a;
+    color: #e5e9f0;
+    min-height: 100vh;
+    padding: 20px;
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(59, 130, 246, 0.08), transparent 40%),
+      radial-gradient(circle at 80% 100%, rgba(74, 222, 128, 0.06), transparent 40%);
+  }
+
+  .app {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1.25fr;
+    gap: 24px;
+  }
+
+  /* ---------- Cards ---------- */
+  .card {
+    background: rgba(15, 19, 31, 0.85);
+    backdrop-filter: blur(12px);
+    border-radius: 24px;
+    padding: 24px;
+    border: 1px solid #252e42;
+    margin-bottom: 20px;
+    box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.6);
+  }
+
+  .card h2 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #8b9bb5;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* ---------- Status badge ---------- */
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    background: #1a212f;
+    border-radius: 100px;
+    border: 1px solid #2e3a52;
+    font-size: 0.95rem;
+    font-weight: 500;
+  }
+
+  .indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #f44;
+    box-shadow: 0 0 12px #f44;
+    transition: all 0.3s;
+  }
+
+  .indicator.connected {
+    background: #4ade80;
+    box-shadow: 0 0 14px #4ade80;
+  }
+
+  .indicator.connecting {
+    background: #fbbf24;
+    box-shadow: 0 0 14px #fbbf24;
+    animation: pulse 1.2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ---------- Info rows ---------- */
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #1a2233;
+    font-size: 0.9rem;
+  }
+
+  .info-row:last-child { border-bottom: none; }
+
+  .info-label { color: #8b9bb5; }
+
+  .info-value {
+    font-weight: 500;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'SF Mono', Menlo, monospace;
+    font-size: 0.85rem;
+  }
+
+  /* ---------- Inputs ---------- */
+  .input {
+    width: 100%;
+    background: #1a212f;
+    border: 1px solid #2e3a52;
+    border-radius: 14px;
+    padding: 13px 16px;
+    color: #e5e9f0;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border 0.2s;
+    margin-bottom: 10px;
+    font-family: inherit;
+  }
+
+  .input:focus { border-color: #3b82f6; }
+
+  .input::placeholder { color: #566381; }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    background: #1e293b;
+    border: 1px solid #2e3a52;
+    border-radius: 14px;
+    padding: 13px 18px;
+    color: #e5e9f0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.15s;
+    width: 100%;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: #2d3b52;
+    border-color: #4b5e7a;
+    transform: translateY(-1px);
+  }
+
+  .btn:active:not(:disabled) { transform: translateY(0); }
+
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn.primary {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: white;
+  }
+
+  .btn.primary:hover:not(:disabled) {
+    background: #2563eb;
+    border-color: #2563eb;
+  }
+
+  .btn.danger {
+    background: #7f1d1d;
+    border-color: #991b1b;
+    color: #fecaca;
+  }
+
+  .btn.danger:hover:not(:disabled) {
+    background: #991b1b;
+    border-color: #b91c1c;
+  }
+
+  .btn-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .btn-row .btn { margin-bottom: 0; }
+
+  /* ---------- Pairing code display ---------- */
+  .pairing-code {
+    background: #000;
+    border-radius: 16px;
+    padding: 22px;
+    text-align: center;
+    font-size: 1.9rem;
+    font-weight: 700;
+    letter-spacing: 6px;
+    color: #4ade80;
+    font-family: 'SF Mono', Menlo, monospace;
+    border: 2px dashed #2e3a52;
+    margin: 12px 0;
+    animation: glow 2s ease-in-out infinite;
+  }
+
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 0 0 rgba(74, 222, 128, 0); }
+    50% { box-shadow: 0 0 24px rgba(74, 222, 128, 0.25); }
+  }
+
+  .pairing-hint {
+    font-size: 0.78rem;
+    color: #6b7a92;
+    text-align: center;
+    line-height: 1.5;
+    margin-top: 8px;
+  }
+
+  .pairing-hint b { color: #8b9bb5; }
+
+  /* ---------- Chat area ---------- */
+  .chat-window {
+    background: #0b0f17;
+    border-radius: 20px;
+    padding: 20px;
+    min-height: 320px;
+    max-height: 460px;
+    overflow-y: auto;
+    border: 1px solid #1f2637;
+    margin-bottom: 14px;
+    scroll-behavior: smooth;
+  }
+
+  .chat-window::-webkit-scrollbar { width: 6px; }
+  .chat-window::-webkit-scrollbar-track { background: transparent; }
+  .chat-window::-webkit-scrollbar-thumb {
+    background: #2e3a52;
+    border-radius: 3px;
+  }
+
+  .message {
+    max-width: 85%;
+    padding: 11px 15px;
+    border-radius: 18px;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    margin-bottom: 12px;
+    word-break: break-word;
+    animation: fadeIn 0.2s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .message.user {
+    background: #1e2a3d;
+    border: 1px solid #2f3e58;
+    border-bottom-left-radius: 6px;
+  }
+
+  .message.assistant {
+    background: #1a2e2a;
+    border: 1px solid #2d4a40;
+    color: #d1fae5;
+    border-bottom-right-radius: 6px;
+    margin-left: auto;
+  }
+
+  .meta {
+    font-size: 0.68rem;
+    color: #8b9bb5;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+
+  .message.assistant .meta { color: #6b8f7e; }
+
+  .empty-state {
+    color: #4a5a72;
+    text-align: center;
+    margin-top: 100px;
+    font-style: italic;
+    font-size: 0.9rem;
+  }
+
+  /* ---------- Typing indicator ---------- */
+  .typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 14px 18px;
+    background: #1a2e2a;
+    border: 1px solid #2d4a40;
+    border-radius: 18px;
+    border-bottom-right-radius: 6px;
+    margin-left: auto;
+    margin-bottom: 12px;
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #4ade80;
+    animation: bounce 1.4s infinite ease-in-out both;
+  }
+
+  .dot:nth-child(1) { animation-delay: -0.32s; }
+  .dot:nth-child(2) { animation-delay: -0.16s; }
+  .dot:nth-child(3) { animation-delay: 0s; }
+
+  @keyframes bounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ---------- Toast ---------- */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #1e293b;
+    border-left: 4px solid #3b82f6;
+    padding: 14px 22px;
+    border-radius: 14px;
+    box-shadow: 0 12px 30px -8px black;
+    font-size: 0.9rem;
+    animation: slideUp 0.25s ease;
+    z-index: 999;
+    max-width: 340px;
+    line-height: 1.4;
+  }
+
+  .toast.error { border-left-color: #ef4444; }
+  .toast.success { border-left-color: #4ade80; }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ---------- Section title ---------- */
+  .section-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: #e5e9f0;
+  }
+
+  /* ---------- Mobile ---------- */
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+    .pairing-code { font-size: 1.5rem; letter-spacing: 4px; }
+  }
+
+  /* ---------- Browser tabs ---------- */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    background: #1a212f;
+    border-radius: 14px;
+    padding: 4px;
+    margin-bottom: 16px;
+    border: 1px solid #252e42;
+  }
+
+  .tab {
+    flex: 1;
+    padding: 10px 12px;
+    background: transparent;
+    border: none;
+    color: #8b9bb5;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+
+  .tab:hover { color: #e5e9f0; }
+
+  .tab.active {
+    background: #2d3b52;
+    color: #e5e9f0;
+    box-shadow: 0 4px 12px -4px rgba(0,0,0,0.4);
+  }
+
+  /* ---------- Select ---------- */
+  select.input {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b9bb5' stroke-width='2'%3e%3cpolyline points='6 9 12 15 18 9'/%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 16px;
+    padding-right: 40px;
+  }
+
+  select.input option {
+    background: #1a212f;
+    color: #e5e9f0;
+  }
+</style>
 </head>
 <body>
-  <div class="app">
-    <div>
-      <div class="card">
-        <h2>🔌 Connection</h2>
-        <div class="status-badge">
-          <span class="indicator" id="statusIndicator"></span>
-          <span id="statusText">Disconnected</span>
-        </div>
-        <div class="info-row" style="margin-top:14px;">
-          <span class="info-label">Bot</span><span id="botName">—</span>
+
+<div class="app">
+  <!-- ========================================================= -->
+  <!-- LEFT COLUMN — Connection & Config                         -->
+  <!-- ========================================================= -->
+  <div>
+    <div class="card">
+      <h2>🔌 Connection</h2>
+
+      <div class="status-badge">
+        <span class="indicator" id="statusIndicator"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+
+      <div style="margin-top: 18px;">
+        <div class="info-row">
+          <span class="info-label">Bot ID</span>
+          <span class="info-value" id="botId">—</span>
         </div>
         <div class="info-row">
-          <span class="info-label">Model</span><span id="modelName">—</span>
+          <span class="info-label">Model</span>
+          <span class="info-value" id="modelName">—</span>
         </div>
         <div class="info-row">
-          <span class="info-label">Host</span><span id="hostName">—</span>
+          <span class="info-label">Host</span>
+          <span class="info-value" id="hostName">—</span>
         </div>
-        <div style="margin-top:16px;">
-          <input type="tel" id="phoneInput" class="phone-input" placeholder="Phone (e.g. 15551234567)" />
-          <button class="btn primary" id="pairBtn">📱 Request pairing code</button>
-          <div id="pairingCodeDisplay" class="pairing-code" style="display:none;"></div>
-          <button class="btn" id="reconnectBtn">🔄 Reconnect</button>
+        <div class="info-row">
+          <span class="info-label">Registered</span>
+          <span class="info-value" id="registeredStatus">—</span>
         </div>
       </div>
     </div>
 
-    <div>
-      <div class="card">
-        <h2>💬 Conversation</h2>
-        <select id="chatSelector" class="phone-input" style="margin-bottom:10px;">
-          <option value="">— select chat —</option>
-        </select>
-        <div class="chat-window" id="chatWindow">
-          <div style="color:#4a5a72; text-align:center; margin-top:60px;">No messages yet.</div>
-        </div>
-        <button class="btn" id="refreshChatsBtn">🔄 Refresh</button>
-        <button class="btn" id="clearHistoryBtn">🗑️ Clear history</button>
-      </div>
+    <!-- ========================================================= -->
+    <!-- PAIRING CARD                                               -->
+    <!-- ========================================================= -->
+    <div class="card">
+      <h2>📱 Link Device</h2>
 
-      <div class="card">
-        <h2>📤 Test message</h2>
-        <input type="text" id="testTo" class="phone-input" placeholder="Recipient (15551234567 or ...@s.whatsapp.net)" />
-        <input type="text" id="testText" class="phone-input" placeholder="Message..." />
-        <button class="btn primary" id="sendTestBtn">✈️ Send</button>
+      <input
+        type="tel"
+        id="phoneInput"
+        class="input"
+        placeholder="Phone (e.g. 15551234567)"
+        autocomplete="off"
+      />
+
+      <button class="btn primary" id="pairBtn">
+        🔗 Request pairing code
+      </button>
+
+      <div id="pairingCodeDisplay" class="pairing-code" style="display: none;"></div>
+      <p id="pairingHint" class="pairing-hint"></p>
+
+      <div class="btn-row" style="margin-top: 14px;">
+        <button class="btn" id="reconnectBtn">🔄 Reconnect</button>
+        <button class="btn danger" id="logoutBtn">🚪 Logout</button>
+      </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- CONFIG CARD                                                -->
+    <!-- ========================================================= -->
+    <div class="card">
+      <h2>⚙️ Bot Configuration</h2>
+
+      <div class="info-row">
+        <span class="info-label">Group mode</span>
+        <span class="info-value" id="groupMode">Mentions only</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Cooldown</span>
+        <span class="info-value" id="cooldownVal">3000 ms</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Max/min</span>
+        <span class="info-value" id="maxRepliesVal">10</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">History</span>
+        <span class="info-value" id="historyLimit">20 msgs</span>
       </div>
     </div>
   </div>
 
-  <script>
-    const API = window.location.origin;
-    const state = { currentChat: null, typing: false, history: {}, chats: [] };
+  <!-- ========================================================= -->
+  <!-- RIGHT COLUMN — Chat & Test                                -->
+  <!-- ========================================================= -->
+  <div>
+    <div class="card">
+      <div class="section-title">💬 Conversations</div>
 
-    function toast(msg, type = 'info') {
-      const t = document.createElement('div');
-      t.className = `toast ${type}`;
-      t.textContent = msg;
-      document.body.appendChild(t);
-      setTimeout(() => t.remove(), 3500);
+      <select id="chatSelector" class="input">
+        <option value="">— select a chat —</option>
+      </select>
+
+      <div class="chat-window" id="chatWindow">
+        <div class="empty-state">No chat selected</div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn" id="refreshChatsBtn">🔄 Refresh</button>
+        <button class="btn danger" id="clearHistoryBtn">🗑️ Clear</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">📤 Send Test Message</div>
+
+      <input
+        type="text"
+        id="testTo"
+        class="input"
+        placeholder="Recipient (15551234567 or ...@s.whatsapp.net)"
+        autocomplete="off"
+      />
+
+      <input
+        type="text"
+        id="testText"
+        class="input"
+        placeholder="Type your message..."
+        autocomplete="off"
+      />
+
+      <button class="btn primary" id="sendTestBtn">
+        ✈️ Send via WhatsApp
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="section-title">📊 Live Activity</div>
+
+      <div class="info-row">
+        <span class="info-label">Status</span>
+        <span class="info-value" id="activityStatus">Idle</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Last reply</span>
+        <span class="info-value" id="lastReplyTime">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Total chats</span>
+        <span class="info-value" id="totalChats">0</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// =========================================================
+// STATE
+// =========================================================
+const API = window.location.origin;
+
+const appState = {
+  connected: false,
+  registered: false,
+  connectionStatus: 'disconnected',
+  currentChat: null,
+  history: {},
+  chats: [],
+  typing: false,
+  pairingPollInterval: null,
+  statusInterval: null,
+  lastReplyTime: null,
+};
+
+// =========================================================
+// DOM HELPERS
+// =========================================================
+const $ = (id) => document.getElementById(id);
+
+// =========================================================
+// TOAST
+// =========================================================
+function toast(message, type = 'info', duration = 3500) {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = message;
+  document.body.appendChild(t);
+  setTimeout(() => {
+    t.style.transition = 'opacity 0.3s, transform 0.3s';
+    t.style.opacity = '0';
+    t.style.transform = 'translateY(12px)';
+    setTimeout(() => t.remove(), 300);
+  }, duration);
+}
+
+// =========================================================
+// API WRAPPER
+// =========================================================
+async function api(path, options = {}) {
+  const res = await fetch(`${API}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// =========================================================
+// ESCAPE HTML
+// =========================================================
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// =========================================================
+// STATUS
+// =========================================================
+async function refreshStatus() {
+  try {
+    const data = await api('/health');
+
+    appState.connected = data.connected;
+    appState.registered = data.registered;
+    appState.connectionStatus = data.connectionStatus || 'disconnected';
+
+    // Indicator
+    const ind = $('statusIndicator');
+    const txt = $('statusText');
+    ind.classList.remove('connected', 'connecting');
+
+    if (data.connected) {
+      ind.classList.add('connected');
+      txt.textContent = 'Connected';
+    } else if (data.connectionStatus === 'connecting' || data.pairing?.active) {
+      ind.classList.add('connecting');
+      txt.textContent = data.pairing?.active ? 'Pairing…' : 'Connecting…';
+    } else {
+      txt.textContent = 'Disconnected';
     }
 
-    async function api(path, opts = {}) {
-      const res = await fetch(API + path, {
-        headers: { 'Content-Type': 'application/json' },
-        ...opts,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || res.statusText);
-      return data;
+    // Info rows
+    $('botId').textContent = data.user || '—';
+    $('modelName').textContent = data.model || '—';
+    $('hostName').textContent = data.host || '—';
+    $('registeredStatus').textContent = data.registered ? '✅ Yes' : '❌ No';
+
+    // Pairing code
+    if (data.pairing?.code && data.pairing.active) {
+      const codeEl = $('pairingCodeDisplay');
+      codeEl.style.display = 'block';
+      codeEl.textContent = data.pairing.code;
+      $('pairingHint').innerHTML =
+        'Open <b>WhatsApp → Settings → Linked Devices → Link with phone number</b> and enter the code above.';
+    } else if (data.connected) {
+      $('pairingCodeDisplay').style.display = 'none';
+      $('pairingHint').textContent = '';
     }
 
-    async function refreshStatus() {
-      try {
-        const d = await api('/health');
-        const ind = document.getElementById('statusIndicator');
-        const txt = document.getElementById('statusText');
-        if (d.connected) {
-          ind.classList.add('connected');
-          txt.textContent = 'Connected';
-          document.getElementById('botName').textContent = d.user || '—';
-        } else {
-          ind.classList.remove('connected');
-          txt.textContent = 'Disconnected';
-        }
-        document.getElementById('modelName').textContent = d.model || '—';
-        document.getElementById('hostName').textContent = d.host || '—';
+    if (data.pairing?.error) {
+      toast(`Pairing error: ${data.pairing.error}`, 'error');
+    }
 
-        if (d.pairing?.code) {
-          const el = document.getElementById('pairingCodeDisplay');
-          el.style.display = 'block';
-          el.textContent = d.pairing.code;
-        }
-      } catch (e) {
-        console.warn('status failed:', e.message);
+    // Activity
+    $('activityStatus').textContent = data.connected
+      ? 'Online'
+      : data.pairing?.active
+        ? 'Pairing'
+        : 'Idle';
+  } catch (e) {
+    console.warn('[Status]', e.message);
+  }
+}
+
+// =========================================================
+// CHATS
+// =========================================================
+async function refreshChats() {
+  try {
+    const data = await api('/chats');
+    appState.chats = data.chats || [];
+
+    const sel = $('chatSelector');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— select a chat —</option>';
+
+    appState.chats.forEach((chatId) => {
+      const opt = document.createElement('option');
+      opt.value = chatId;
+      opt.textContent = chatId.length > 38 ? chatId.slice(0, 36) + '…' : chatId;
+      sel.appendChild(opt);
+    });
+
+    if (current && appState.chats.includes(current)) {
+      sel.value = current;
+      appState.currentChat = current;
+    }
+
+    $('totalChats').textContent = appState.chats.length;
+  } catch (e) {
+    console.warn('[Chats]', e.message);
+  }
+}
+
+// =========================================================
+// HISTORY / CHAT RENDER
+// =========================================================
+function renderChat() {
+  const win = $('chatWindow');
+  const chatId = appState.currentChat;
+
+  if (!chatId) {
+    win.innerHTML = '<div class="empty-state">No chat selected</div>';
+    return;
+  }
+
+  const history = appState.history[chatId] || [];
+
+  if (history.length === 0 && !appState.typing) {
+    win.innerHTML = '<div class="empty-state">No messages in this chat yet</div>';
+    return;
+  }
+
+  let html = '';
+  history.forEach((m) => {
+    const role = m.role === 'user' ? 'user' : 'assistant';
+    const label = role === 'user' ? 'User' : 'AI';
+    html += `
+      <div class="message ${role}">
+        <div class="meta">${label}</div>
+        <div>${escapeHtml(m.content)}</div>
+      </div>
+    `;
+  });
+
+  if (appState.typing) {
+    html += `
+      <div class="typing">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+    `;
+  }
+
+  win.innerHTML = html;
+  win.scrollTop = win.scrollHeight;
+}
+
+async function loadHistory(chatId) {
+  if (!chatId) return;
+  try {
+    const data = await api(`/history/${encodeURIComponent(chatId)}`);
+    appState.history[chatId] = data.history || [];
+    renderChat();
+  } catch (e) {
+    toast('Failed to load history: ' + e.message, 'error');
+  }
+}
+
+// =========================================================
+// PAIRING
+// =========================================================
+async function requestPairing() {
+  const phoneRaw = $('phoneInput').value;
+  const phone = phoneRaw.replace(/\D/g, '');
+
+  if (!phone || phone.length < 8) {
+    toast('Enter a valid phone number (digits only, with country code)', 'error');
+    return;
+  }
+
+  const btn = $('pairBtn');
+  const hint = $('pairingHint');
+  const codeEl = $('pairingCodeDisplay');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Requesting code...';
+  hint.textContent = 'Talking to WhatsApp servers…';
+  codeEl.style.display = 'none';
+
+  try {
+    const data = await api('/pair', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    });
+
+    codeEl.style.display = 'block';
+    codeEl.textContent = data.code;
+    hint.innerHTML =
+      'Open <b>WhatsApp → Settings → Linked Devices → Link with phone number</b> and enter the code above. The code expires in ~60 seconds.';
+    toast('Pairing code received!', 'success');
+
+    // Keep polling status to detect when connection opens
+    if (appState.pairingPollInterval) clearInterval(appState.pairingPollInterval);
+    appState.pairingPollInterval = setInterval(async () => {
+      await refreshStatus();
+      if (appState.connected) {
+        clearInterval(appState.pairingPollInterval);
+        appState.pairingPollInterval = null;
+        codeEl.style.display = 'none';
+        hint.textContent = '✅ Linked successfully!';
+        toast('WhatsApp linked successfully!', 'success');
       }
+    }, 3000);
+  } catch (e) {
+    codeEl.style.display = 'none';
+    hint.textContent = '';
+    toast('Pairing failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔗 Request pairing code';
+  }
+}
+
+// =========================================================
+// LOGOUT
+// =========================================================
+async function logout() {
+  if (!confirm('Delete session and log out? You will need to re-pair.')) return;
+
+  try {
+    await api('/logout', { method: 'POST' });
+    toast('Logged out. Restarting socket…', 'success');
+
+    $('pairingCodeDisplay').style.display = 'none';
+    $('pairingHint').textContent = '';
+
+    setTimeout(refreshStatus, 2000);
+    setTimeout(refreshStatus, 5000);
+  } catch (e) {
+    toast('Logout failed: ' + e.message, 'error');
+  }
+}
+
+// =========================================================
+// RECONNECT
+// =========================================================
+async function reconnect() {
+  try {
+    await api('/reconnect', { method: 'POST' });
+    toast('Reconnecting…', 'info');
+    setTimeout(refreshStatus, 2000);
+    setTimeout(refreshStatus, 5000);
+  } catch (e) {
+    toast('Reconnect failed: ' + e.message, 'error');
+  }
+}
+
+// =========================================================
+// SEND TEST MESSAGE
+// =========================================================
+async function sendTestMessage() {
+  const to = $('testTo').value.trim();
+  const text = $('testText').value.trim();
+
+  if (!to || !text) {
+    toast('Recipient and message are required', 'error');
+    return;
+  }
+
+  const btn = $('sendTestBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending…';
+
+  try {
+    await api('/send', {
+      method: 'POST',
+      body: JSON.stringify({ to, text }),
+    });
+
+    toast('Message sent!', 'success');
+    $('testText').value = '';
+    $('lastReplyTime').textContent = new Date().toLocaleTimeString();
+
+    if (appState.currentChat === to) {
+      await loadHistory(to);
     }
+  } catch (e) {
+    toast('Send failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✈️ Send via WhatsApp';
+  }
+}
 
-    async function refreshChats() {
-      try {
-        const d = await api('/chats');
-        state.chats = d.chats || [];
-        const sel = document.getElementById('chatSelector');
-        sel.innerHTML = '<option value="">— select chat —</option>';
-        state.chats.forEach((id) => {
-          const o = document.createElement('option');
-          o.value = id;
-          o.textContent = id.length > 35 ? id.slice(0, 33) + '…' : id;
-          sel.appendChild(o);
-        });
-      } catch (e) {
-        console.warn('chats failed:', e.message);
-      }
+// =========================================================
+// EVENT LISTENERS
+// =========================================================
+$('pairBtn').addEventListener('click', requestPairing);
+$('reconnectBtn').addEventListener('click', reconnect);
+$('logoutBtn').addEventListener('click', logout);
+$('refreshChatsBtn').addEventListener('click', async () => {
+  await refreshChats();
+  toast('Chat list refreshed');
+});
+$('sendTestBtn').addEventListener('click', sendTestMessage);
+
+$('clearHistoryBtn').addEventListener('click', async () => {
+  if (!appState.currentChat) {
+    toast('No chat selected', 'error');
+    return;
+  }
+  if (!confirm(`Clear history for ${appState.currentChat}?`)) return;
+
+  try {
+    await api(`/history/${encodeURIComponent(appState.currentChat)}`, { method: 'DELETE' });
+    appState.history[appState.currentChat] = [];
+    renderChat();
+    toast('History cleared', 'success');
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  }
+});
+
+$('chatSelector').addEventListener('change', async (e) => {
+  const chatId = e.target.value;
+  appState.currentChat = chatId || null;
+
+  if (chatId) {
+    await loadHistory(chatId);
+  } else {
+    renderChat();
+  }
+});
+
+// Send message on Enter key
+$('testText').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') sendTestMessage();
+});
+$('phoneInput').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') requestPairing();
+});
+
+// =========================================================
+// INIT
+// =========================================================
+async function init() {
+  await refreshStatus();
+  await refreshChats();
+
+  // Set config display values (hardcoded — matches server defaults)
+  $('cooldownVal').textContent = '3000 ms';
+  $('maxRepliesVal').textContent = '10';
+  $('historyLimit').textContent = '20 msgs';
+
+  // Poll status every 6s
+  appState.statusInterval = setInterval(async () => {
+    await refreshStatus();
+    // Auto-refresh chats occasionally
+    if (appState.connected) {
+      await refreshChats();
     }
+  }, 6000);
+}
 
-    function renderChat() {
-      const win = document.getElementById('chatWindow');
-      const h = state.history[state.currentChat] || [];
-      if (!h.length && !state.typing) {
-        win.innerHTML = '<div style="color:#4a5a72; text-align:center; margin-top:60px;">No messages.</div>';
-        return;
-      }
-      let html = '';
-      h.forEach((m) => {
-        const role = m.role === 'user' ? 'user' : 'assistant';
-        html += `<div class="message ${role}"><div class="meta">${role === 'user' ? 'User' : 'AI'}</div>${escapeHtml(m.content)}</div>`;
-      });
-      if (state.typing) {
-        html += `<div class="message assistant">...</div>`;
-      }
-      win.innerHTML = html;
-      win.scrollTop = win.scrollHeight;
-    }
+init();
+</script>
 
-    function escapeHtml(s) {
-      const d = document.createElement('div');
-      d.textContent = s;
-      return d.innerHTML;
-    }
-
-    async function loadHistory(chatId) {
-      if (!chatId) return;
-      const d = await api(`/history/${encodeURIComponent(chatId)}`);
-      state.history[chatId] = d.history || [];
-      renderChat();
-    }
-
-    document.getElementById('pairBtn').onclick = async () => {
-      const phone = document.getElementById('phoneInput').value.replace(/\D/g, '');
-      if (!phone) return toast('Enter a phone number', 'error');
-      try {
-        const d = await api('/pair', { method: 'POST', body: JSON.stringify({ phone }) });
-        const el = document.getElementById('pairingCodeDisplay');
-        el.style.display = 'block';
-        el.textContent = d.code;
-        toast('Pairing code received!', 'success');
-      } catch (e) {
-        toast('Pairing failed: ' + e.message, 'error');
-      }
-    };
-
-    document.getElementById('reconnectBtn').onclick = async () => {
-      try {
-        await api('/reconnect', { method: 'POST' });
-        toast('Reconnecting…');
-      } catch (e) { toast(e.message, 'error'); }
-    };
-
-    document.getElementById('refreshChatsBtn').onclick = refreshChats;
-
-    document.getElementById('chatSelector').onchange = (e) => {
-      state.currentChat = e.target.value || null;
-      if (state.currentChat) loadHistory(state.currentChat);
-      else renderChat();
-    };
-
-    document.getElementById('clearHistoryBtn').onclick = async () => {
-      if (!state.currentChat) return toast('No chat selected', 'error');
-      await api(`/history/${encodeURIComponent(state.currentChat)}`, { method: 'DELETE' });
-      state.history[state.currentChat] = [];
-      renderChat();
-      toast('Cleared', 'success');
-    };
-
-    document.getElementById('sendTestBtn').onclick = async () => {
-      const to = document.getElementById('testTo').value.trim();
-      const text = document.getElementById('testText').value.trim();
-      if (!to || !text) return toast('Recipient + text required', 'error');
-      try {
-        await api('/send', { method: 'POST', body: JSON.stringify({ to, text }) });
-        toast('Sent!', 'success');
-        document.getElementById('testText').value = '';
-        if (state.currentChat === to) await loadHistory(to);
-      } catch (e) { toast('Failed: ' + e.message, 'error'); }
-    };
-
-    refreshStatus();
-    refreshChats();
-    setInterval(refreshStatus, 8000);
-  </script>
 </body>
 </html>
