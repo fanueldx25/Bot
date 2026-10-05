@@ -1,19 +1,25 @@
 require('dotenv').config();
-const { Bot } = require('node-telegram-bot-api');
-const { run } = require('node-telegram-bot-api/node');
+const { Bot, webhookCallback } = require('node-telegram-bot-api');
+const express = require('express');
 const OpenAI = require('openai');
 
 // --- Configuration ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
+// Render automatically provides the PORT and RENDER_EXTERNAL_URL environment variables
+const PORT = process.env.PORT || 3000;
+const WEBHOOK_URL = process.env.RENDER_EXTERNAL_URL;
 
 if (!TELEGRAM_TOKEN || !OLLAMA_API_KEY) {
   console.error('❌ Missing environment variables. Check your .env file or Render settings.');
   process.exit(1);
 }
+if (!WEBHOOK_URL) {
+  console.error('❌ RENDER_EXTERNAL_URL is not set. Webhook mode requires this.');
+  process.exit(1);
+}
 
 // Choose a model from your Ollama Cloud dashboard
-// Options: "gemma4:31b", "gpt-oss:120b", "gpt-oss:20b", "nemotron-3-nano:30b", "nemotron-3-super"
 const OLLAMA_MODEL = 'gpt-oss:20b';
 
 // Initialize the OpenAI client pointing to Ollama's cloud endpoint
@@ -25,9 +31,7 @@ const openai = new OpenAI({
 // Initialize the Telegram Bot using the v2 API
 const bot = new Bot(TELEGRAM_TOKEN);
 
-console.log(`✅ Bot is starting... Using model: ${OLLAMA_MODEL}`);
-
-// --- Telegram Bot Handlers (v2 Middleware Style) ---
+// --- Bot Command and Message Handlers (v2 Middleware Style) ---
 
 // Handle the /start command
 bot.command('start', (ctx) => {
@@ -77,8 +81,26 @@ bot.catch((err, ctx) => {
   console.error('❌ Bot handler failed:', err);
 });
 
-// --- Start the bot ---
-run(bot).catch((error) => {
-  console.error('❌ Failed to start bot:', error);
-  process.exit(1);
+// --- Set up the web server and webhook ---
+const app = express();
+app.use(express.json());
+
+// The webhook endpoint that Telegram will send updates to
+app.use(`/webhook/${TELEGRAM_TOKEN}`, webhookCallback(bot, 'express'));
+
+// A simple health check endpoint for Render
+app.get('/', (req, res) => {
+  res.send('Bot is running!');
+});
+
+// Start the server
+app.listen(PORT, async () => {
+  console.log(`✅ Web server is listening on port ${PORT}`);
+  try {
+    // Set the webhook with Telegram
+    await bot.api.setWebhook(`${WEBHOOK_URL}/webhook/${TELEGRAM_TOKEN}`);
+    console.log(`✅ Webhook set to: ${WEBHOOK_URL}/webhook/${TELEGRAM_TOKEN}`);
+  } catch (error) {
+    console.error('❌ Failed to set webhook:', error.message || error);
+  }
 });
