@@ -1,589 +1,902 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Ollama Cloud Tools</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<style>
-  /* Minimal custom styles for things Tailwind doesn't cover easily */
-  .msg pre { position: relative; }
-  .msg p { margin-bottom: 10px; }
-  .msg p:last-child { margin-bottom: 0; }
-  .msg code { font-family: ui-monospace, monospace; }
-  .cursor { display: inline-block; width: 7px; height: 15px; background: #6c8cff; vertical-align: text-bottom; margin-left: 2px; animation: blink 1s steps(2) infinite; border-radius: 1px; }
-  @keyframes blink { 50% { opacity: 0; } }
-  /* Scrollbar */
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2a2f3a; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3a3f4a; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp AI Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        }
+
+        body {
+            background: #0a0e1a;
+            color: #e5e9f0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .app {
+            max-width: 1400px;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 24px;
+            background: rgba(18, 24, 38, 0.8);
+            backdrop-filter: blur(12px);
+            border-radius: 36px;
+            padding: 28px;
+            border: 1px solid #2a3348;
+            box-shadow: 0 30px 50px -20px rgba(0, 0, 0, 0.8);
+        }
+
+        /* Left panel — connection & status */
+        .panel-left {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .card {
+            background: #0f131f;
+            border-radius: 24px;
+            padding: 24px;
+            border: 1px solid #252e42;
+            box-shadow: 0 8px 20px -8px #00000055;
+        }
+
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #8b9bb5;
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            background: #1a212f;
+            border-radius: 100px;
+            font-size: 0.9rem;
+            border: 1px solid #2e3a52;
+        }
+
+        .indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 10px;
+            background: #f44;
+            box-shadow: 0 0 12px #f44;
+        }
+
+        .indicator.connected {
+            background: #4ade80;
+            box-shadow: 0 0 14px #4ade80;
+        }
+
+        .indicator.pairing {
+            background: #fbbf24;
+            box-shadow: 0 0 14px #fbbf24;
+            animation: pulse 1.2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #1f2637;
+            font-size: 0.9rem;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: #8b9bb5;
+        }
+
+        .info-value {
+            font-weight: 500;
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .pairing-area {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        .phone-input {
+            background: #1a212f;
+            border: 1px solid #2e3a52;
+            border-radius: 16px;
+            padding: 14px 18px;
+            color: #e5e9f0;
+            font-size: 1rem;
+            outline: none;
+            transition: border 0.2s;
+        }
+
+        .phone-input:focus {
+            border-color: #3b82f6;
+        }
+
+        .btn {
+            background: #1e293b;
+            border: none;
+            border-radius: 16px;
+            padding: 14px 20px;
+            font-weight: 500;
+            color: #e5e9f0;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 0.95rem;
+            border: 1px solid #2e3a52;
+        }
+
+        .btn:hover:not(:disabled) {
+            background: #2d3b52;
+            border-color: #4b5e7a;
+        }
+
+        .btn.primary {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+        }
+
+        .btn.primary:hover:not(:disabled) {
+            background: #2563eb;
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .pairing-code {
+            background: #000;
+            border-radius: 16px;
+            padding: 18px;
+            text-align: center;
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: 6px;
+            color: #4ade80;
+            font-family: 'Courier New', monospace;
+            border: 1px dashed #2e3a52;
+            margin-top: 8px;
+        }
+
+        .small-note {
+            font-size: 0.75rem;
+            color: #6b7a92;
+            margin-top: 6px;
+            text-align: center;
+        }
+
+        /* Right panel — chat / activity */
+        .panel-right {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h3 {
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .chat-selector {
+            background: #1a212f;
+            border: 1px solid #2e3a52;
+            border-radius: 12px;
+            padding: 10px 14px;
+            color: #e5e9f0;
+            outline: none;
+            font-size: 0.9rem;
+            max-width: 220px;
+        }
+
+        .chat-window {
+            background: #0b0f17;
+            border-radius: 24px;
+            padding: 20px;
+            flex: 1;
+            min-height: 320px;
+            max-height: 420px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            border: 1px solid #1f2637;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            word-break: break-word;
+            animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            background: #1e2a3d;
+            align-self: flex-start;
+            border-bottom-left-radius: 6px;
+            border: 1px solid #2f3e58;
+        }
+
+        .message.assistant {
+            background: #1a2e2a;
+            align-self: flex-end;
+            border-bottom-right-radius: 6px;
+            border: 1px solid #2d4a40;
+            color: #d1fae5;
+        }
+
+        .message .meta {
+            font-size: 0.7rem;
+            color: #8b9bb5;
+            margin-bottom: 4px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .message.assistant .meta {
+            color: #6b8f7e;
+        }
+
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 16px;
+            background: #1a2e2a;
+            border-radius: 20px;
+            align-self: flex-end;
+            border: 1px solid #2d4a40;
+            width: fit-content;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            background: #4ade80;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .dot:nth-child(1) { animation-delay: -0.32s; }
+        .dot:nth-child(2) { animation-delay: -0.16s; }
+        .dot:nth-child(3) { animation-delay: 0s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+
+        .empty-state {
+            color: #4a5a72;
+            text-align: center;
+            margin-top: 60px;
+            font-style: italic;
+            font-size: 0.9rem;
+        }
+
+        .actions-bar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .actions-bar .btn {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #1e293b;
+            border-left: 4px solid #3b82f6;
+            padding: 14px 22px;
+            border-radius: 14px;
+            box-shadow: 0 12px 30px -8px black;
+            font-size: 0.9rem;
+            animation: slideUp 0.25s ease;
+            z-index: 999;
+            max-width: 320px;
+        }
+
+        .toast.error {
+            border-left-color: #ef4444;
+        }
+
+        .toast.success {
+            border-left-color: #4ade80;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .config-item {
+            background: #1a212f;
+            border-radius: 12px;
+            padding: 12px 14px;
+            border: 1px solid #252e42;
+            font-size: 0.8rem;
+        }
+
+        .config-item .label {
+            color: #8b9bb5;
+            margin-bottom: 4px;
+        }
+
+        .config-item .value {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+        }
+
+        .switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: #2e3a52;
+            border-radius: 40px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .switch.active {
+            background: #3b82f6;
+        }
+
+        .switch::after {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            top: 3px;
+            left: 3px;
+            transition: 0.2s;
+        }
+
+        .switch.active::after {
+            left: 23px;
+        }
+
+        @media (max-width: 900px) {
+            .app {
+                grid-template-columns: 1fr;
+                padding: 18px;
+            }
+        }
+    </style>
 </head>
-<body class="bg-slate-950 text-slate-100 h-dvh overflow-hidden flex font-sans">
+<body>
 
-<!-- ========== SIDEBAR ========== -->
-<aside id="sidebar" class="w-72 bg-slate-900 border-r border-slate-800 flex flex-col flex-shrink-0 fixed md:static inset-y-0 z-40 -translate-x-full md:translate-x-0 transition-transform">
-  <div class="p-4 border-b border-slate-800 flex items-center gap-3">
-    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-sm font-bold">O</div>
-    <span class="font-bold text-sm tracking-tight">Ollama Cloud Tools</span>
-  </div>
+<div class="app">
+    <!-- LEFT: Connection & Status -->
+    <div class="panel-left">
+        <div class="card">
+            <h2>🔌 Connection</h2>
+            <div class="status-badge" id="connectionStatus">
+                <span class="indicator" id="statusIndicator"></span>
+                <span id="statusText">Disconnected</span>
+            </div>
 
-  <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold px-4 pt-3 pb-1">Models</div>
-  <div id="modelList" class="flex-1 overflow-y-auto px-2 py-1"></div>
+            <div class="info-row" style="margin-top:14px;">
+                <span class="info-label">Bot name</span>
+                <span class="info-value" id="botName">My AI Assistant</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Model</span>
+                <span class="info-value" id="modelName">gpt-oss:120b</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Host</span>
+                <span class="info-value" id="hostName">127.0.0.1:11434</span>
+            </div>
 
-  <div class="p-3 border-t border-slate-800 flex gap-2">
-    <button id="newChatBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg py-2 text-sm text-slate-400 transition-colors">+ New chat</button>
-    <button id="settingsBtn" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 text-slate-400 transition-colors" title="Settings">⚙</button>
-  </div>
-</aside>
-<div id="sidebarBackdrop" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden"></div>
+            <!-- Pairing area -->
+            <div class="pairing-area" id="pairingArea">
+                <input type="tel" id="phoneInput" class="phone-input" placeholder="Phone (e.g. 15551234567)" />
+                <button class="btn primary" id="pairBtn">
+                    <span>📱</span> Request pairing code
+                </button>
+                <div id="pairingCodeDisplay" class="pairing-code" style="display:none;"></div>
+                <div class="small-note" id="pairingHint"></div>
+            </div>
 
-<!-- ========== MAIN ========== -->
-<main class="flex-1 flex flex-col min-w-0">
-  <!-- Topbar -->
-  <div class="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900 min-h-[56px] flex-shrink-0">
-    <button id="menuBtn" class="md:hidden w-9 h-9 border border-slate-800 rounded-lg text-slate-400 flex items-center justify-center" aria-label="Menu">☰</button>
-    <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-600 flex-shrink-0"></span>
-    <span id="currentModelName" class="font-semibold text-sm truncate">gpt-oss:120b</span>
-    <button id="settingsBtn2" class="ml-auto w-9 h-9 border border-slate-800 rounded-lg text-slate-400 flex items-center justify-center" title="Settings">⚙</button>
-  </div>
-
-  <!-- Chat Area -->
-  <div id="chat" class="flex-1 overflow-y-auto px-4 py-6 flex flex-col gap-4 scroll-smooth"></div>
-
-  <!-- Composer -->
-  <div class="p-3 border-t border-slate-800 bg-slate-900 flex-shrink-0">
-    <div class="max-w-3xl mx-auto flex gap-2 items-end bg-slate-800/60 border border-slate-700 rounded-xl px-4 py-2 focus-within:border-indigo-500 transition-colors">
-      <textarea id="input" rows="1" placeholder="Message the model... (Enter to send)" class="flex-1 bg-transparent border-none outline-none resize-none max-h-[200px] min-h-[24px] py-2 text-[15px] text-slate-100 placeholder-slate-500"></textarea>
-      <button id="send" class="w-9 h-9 rounded-lg bg-indigo-500 hover:bg-indigo-400 flex items-center justify-center disabled:opacity-30 transition-colors flex-shrink-0" title="Send">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-      </button>
-    </div>
-    <div class="text-center text-xs text-slate-600 mt-2">Tools enabled: time, calculator, location, web search, web fetch, Python</div>
-  </div>
-</main>
-
-<!-- ========== SETTINGS DRAWER ========== -->
-<div id="overlay" class="fixed inset-0 bg-black/60 z-50 hidden"></div>
-<aside id="drawer" class="fixed top-0 right-0 bottom-0 w-96 max-w-full bg-slate-900 border-l border-slate-800 z-[60] flex flex-col transform translate-x-full transition-transform duration-200">
-  <div class="p-4 border-b border-slate-800 flex items-center gap-3 flex-shrink-0">
-    <h2 class="font-semibold text-base flex-1">Settings</h2>
-    <button id="closeDrawer" class="w-8 h-8 border border-slate-800 rounded-lg text-slate-400 flex items-center justify-center" aria-label="Close">✕</button>
-  </div>
-  <div class="p-5 overflow-y-auto flex-1 space-y-6">
-    <div>
-      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2" for="apikey">Ollama Cloud API Key</label>
-      <input id="apikey" type="password" placeholder="ollama_..." class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm focus:border-indigo-500 outline-none transition-colors" autocomplete="off" />
-      <p class="text-xs text-slate-600 mt-2">Stored in your browser. Sent only to your proxy, which forwards it to ollama.com.</p>
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2" for="tempSlider">Temperature</label>
-      <div class="flex items-center gap-3">
-        <input id="tempSlider" type="range" min="0" max="2" step="0.1" value="0.7" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-        <span id="tempValue" class="text-sm text-slate-400 w-10 text-right font-mono">0.7</span>
-      </div>
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2" for="systemPrompt">System Prompt</label>
-      <textarea id="systemPrompt" rows="3" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none resize-y transition-colors" placeholder="You are a helpful assistant."></textarea>
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Behavior</label>
-      <div class="flex items-center justify-between py-2">
-        <div>
-          <div class="text-sm">Markdown rendering</div>
-          <div class="text-xs text-slate-600">Format responses as rich text</div>
+            <div style="margin-top:16px; display:flex; gap:10px;">
+                <button class="btn" id="reconnectBtn" style="flex:1;">
+                    <span>🔄</span> Reconnect
+                </button>
+                <button class="btn" id="logoutBtn" style="flex:1;">
+                    <span>🚪</span> Logout
+                </button>
+            </div>
         </div>
-        <label class="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" id="toggleMarkdown" class="sr-only peer" checked />
-          <div class="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
-        </label>
-      </div>
-      <div class="flex items-center justify-between py-2">
-        <div>
-          <div class="text-sm">Show token stats</div>
-          <div class="text-xs text-slate-600">Display response time and token counts</div>
+
+        <div class="card">
+            <h2>⚙️ Bot behaviour</h2>
+            <div class="toggle-row">
+                <span>Group: mentions only</span>
+                <div class="switch active" id="toggleMentions"></div>
+            </div>
+            <div class="toggle-row">
+                <span>Typing indicator</span>
+                <div class="switch active" id="toggleTyping"></div>
+            </div>
+            <div class="config-grid">
+                <div class="config-item">
+                    <div class="label">Cooldown</div>
+                    <div class="value" id="cooldownVal">3000 ms</div>
+                </div>
+                <div class="config-item">
+                    <div class="label">Max/min</div>
+                    <div class="value" id="maxRepliesVal">10</div>
+                </div>
+            </div>
         </div>
-        <label class="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" id="toggleStats" class="sr-only peer" />
-          <div class="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
-        </label>
-      </div>
     </div>
 
-    <div>
-      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Data</label>
-      <div class="flex gap-2">
-        <button id="exportBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg py-2 text-sm text-slate-300 transition-colors">Export chat</button>
-        <button id="clearAllBtn" class="flex-1 bg-transparent hover:bg-red-500/10 border border-red-500/40 text-red-400 rounded-lg py-2 text-sm transition-colors">Clear all</button>
-      </div>
-    </div>
+    <!-- RIGHT: Chat / Activity -->
+    <div class="panel-right">
+        <div class="card" style="flex:1; display:flex; flex-direction:column;">
+            <div class="chat-header">
+                <h3>💬 Conversation preview</h3>
+                <select class="chat-selector" id="chatSelector">
+                    <option value="">— select chat —</option>
+                </select>
+            </div>
 
-    <button id="saveSettings" class="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-semibold rounded-lg py-2.5 text-sm transition-colors">Save & close</button>
-  </div>
-</aside>
+            <div class="chat-window" id="chatWindow">
+                <div class="empty-state">No messages yet. Connect and start chatting.</div>
+            </div>
+
+            <div class="actions-bar" style="margin-top:16px;">
+                <button class="btn" id="clearHistoryBtn">
+                    <span>🗑️</span> Clear history
+                </button>
+                <button class="btn" id="refreshChatsBtn">
+                    <span>🔄</span> Refresh chats
+                </button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📤 Send test message</h2>
+            <input type="text" id="testTo" class="phone-input" placeholder="Recipient JID (e.g. 15551234567@s.whatsapp.net)" style="margin-bottom:12px;" />
+            <input type="text" id="testText" class="phone-input" placeholder="Message text..." style="margin-bottom:12px;" />
+            <button class="btn primary" id="sendTestBtn">
+                <span>✈️</span> Send via WhatsApp
+            </button>
+        </div>
+    </div>
+</div>
 
 <script>
-/* =========================================================
-   State & Constants
-   ========================================================= */
-const DEFAULT_MODELS = [
-  { id: "gemma4:31b", label: "gemma4:31b", badge: "31B" },
-  { id: "gpt-oss:120b", label: "gpt-oss:120b", badge: "120B" },
-  { id: "gpt-oss:20b", label: "gpt-oss:20b", badge: "20B" },
-  { id: "nemotron-3-nano:30b", label: "nemotron-3-nano:30b", badge: "30B" },
-  { id: "nemotron-3-super", label: "nemotron-3-super", badge: "SUPER" },
-  { id: "nemotron-3-ultra", label: "nemotron-3-ultra", badge: "ULTRA" },
-];
+    // =========================================================
+    // CONFIG & STATE
+    // =========================================================
+    const API_BASE = window.location.origin; // same origin
 
-const state = {
-  models: [...DEFAULT_MODELS],
-  currentModel: localStorage.getItem("ollama_model") || "gpt-oss:120b",
-  apiKey: localStorage.getItem("ollama_key") || "",
-  temperature: parseFloat(localStorage.getItem("ollama_temp")) || 0.7,
-  systemPrompt: localStorage.getItem("ollama_system") || "",
-  markdown: localStorage.getItem("ollama_md") !== "false",
-  showStats: localStorage.getItem("ollama_stats") === "true",
-  messages: [],
-  busy: false,
-};
+    const state = {
+        connected: false,
+        user: null,
+        chats: [],            // list of chat IDs
+        currentChat: null,
+        history: {},          // chatId -> array of { role, content }
+        typing: false,
+        mentionsOnly: true,
+        typingIndicator: true,
+        cooldown: 3000,
+        maxReplies: 10,
+    };
 
-/* =========================================================
-   DOM References
-   ========================================================= */
-const chatEl = document.getElementById("chat");
-const emptyEl = document.createElement("div"); // Placeholder created lazily
-const inputEl = document.getElementById("input");
-const sendEl = document.getElementById("send");
-const statusDot = document.getElementById("statusDot");
-const currentModelName = document.getElementById("currentModelName");
-const modelListEl = document.getElementById("modelList");
-const sidebarEl = document.getElementById("sidebar");
-const sidebarBackdrop = document.getElementById("sidebarBackdrop");
-const menuBtn = document.getElementById("menuBtn");
-const newChatBtn = document.getElementById("newChatBtn");
-const settingsBtn = document.getElementById("settingsBtn");
-const settingsBtn2 = document.getElementById("settingsBtn2");
-const drawerEl = document.getElementById("drawer");
-const overlayEl = document.getElementById("overlay");
-const closeDrawer = document.getElementById("closeDrawer");
-const apikeyEl = document.getElementById("apikey");
-const tempSlider = document.getElementById("tempSlider");
-const tempValue = document.getElementById("tempValue");
-const systemPromptEl = document.getElementById("systemPrompt");
-const toggleMarkdown = document.getElementById("toggleMarkdown");
-const toggleStats = document.getElementById("toggleStats");
-const saveSettings = document.getElementById("saveSettings");
-const exportBtn = document.getElementById("exportBtn");
-const clearAllBtn = document.getElementById("clearAllBtn");
+    // =========================================================
+    // DOM ELEMENTS
+    // =========================================================
+    const statusIndicator = document.getElementById('statusIndicator');
+    const statusText = document.getElementById('statusText');
+    const botNameEl = document.getElementById('botName');
+    const modelNameEl = document.getElementById('modelName');
+    const hostNameEl = document.getElementById('hostName');
+    const phoneInput = document.getElementById('phoneInput');
+    const pairBtn = document.getElementById('pairBtn');
+    const pairingCodeDisplay = document.getElementById('pairingCodeDisplay');
+    const pairingHint = document.getElementById('pairingHint');
+    const reconnectBtn = document.getElementById('reconnectBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const toggleMentions = document.getElementById('toggleMentions');
+    const toggleTyping = document.getElementById('toggleTyping');
+    const cooldownVal = document.getElementById('cooldownVal');
+    const maxRepliesVal = document.getElementById('maxRepliesVal');
+    const chatSelector = document.getElementById('chatSelector');
+    const chatWindow = document.getElementById('chatWindow');
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    const refreshChatsBtn = document.getElementById('refreshChatsBtn');
+    const testTo = document.getElementById('testTo');
+    const testText = document.getElementById('testText');
+    const sendTestBtn = document.getElementById('sendTestBtn');
 
-/* =========================================================
-   Sidebar & Model List
-   ========================================================= */
-function renderModelList() {
-  modelListEl.innerHTML = "";
-  state.models.forEach((m) => {
-    const item = document.createElement("div");
-    item.className = `flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer text-sm transition-colors border ${
-      m.id === state.currentModel
-        ? "bg-indigo-500/15 border-indigo-500/30 text-indigo-200"
-        : "border-transparent hover:bg-slate-800 text-slate-300"
-    }`;
-    item.innerHTML = `
-      <span class="w-1.5 h-1.5 rounded-full ${m.id === state.currentModel ? "bg-indigo-400" : "bg-slate-600"}"></span>
-      <span class="flex-1 truncate">${m.label}</span>
-      ${m.badge ? `<span class="text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider ${m.id === state.currentModel ? "bg-indigo-500/20 text-indigo-300" : "bg-slate-800 text-slate-500"}">${m.badge}</span>` : ""}
-    `;
-    item.addEventListener("click", () => selectModel(m.id));
-    modelListEl.appendChild(item);
-  });
-}
-
-function selectModel(id) {
-  state.currentModel = id;
-  localStorage.setItem("ollama_model", id);
-  currentModelName.textContent = id;
-  renderModelList();
-  closeSidebarMobile();
-  inputEl.focus();
-}
-
-function openSidebarMobile() { sidebarEl.classList.remove("-translate-x-full"); sidebarBackdrop.classList.remove("hidden"); }
-function closeSidebarMobile() { sidebarEl.classList.add("-translate-x-full"); sidebarBackdrop.classList.add("hidden"); }
-
-menuBtn.addEventListener("click", openSidebarMobile);
-sidebarBackdrop.addEventListener("click", closeSidebarMobile);
-
-/* =========================================================
-   Settings Drawer
-   ========================================================= */
-function openDrawer() {
-  apikeyEl.value = state.apiKey;
-  tempSlider.value = state.temperature;
-  tempValue.textContent = Number(state.temperature).toFixed(1);
-  systemPromptEl.value = state.systemPrompt;
-  toggleMarkdown.checked = state.markdown;
-  toggleStats.checked = state.showStats;
-  drawerEl.classList.remove("translate-x-full");
-  overlayEl.classList.remove("hidden");
-}
-function closeDrawerFn() {
-  drawerEl.classList.add("translate-x-full");
-  overlayEl.classList.add("hidden");
-}
-
-settingsBtn.addEventListener("click", openDrawer);
-settingsBtn2.addEventListener("click", openDrawer);
-closeDrawer.addEventListener("click", closeDrawerFn);
-overlayEl.addEventListener("click", closeDrawerFn);
-
-tempSlider.addEventListener("input", () => {
-  tempValue.textContent = Number(tempSlider.value).toFixed(1);
-});
-
-saveSettings.addEventListener("click", () => {
-  state.apiKey = apikeyEl.value.trim();
-  state.temperature = parseFloat(tempSlider.value);
-  state.systemPrompt = systemPromptEl.value;
-  state.markdown = toggleMarkdown.checked;
-  state.showStats = toggleStats.checked;
-
-  localStorage.setItem("ollama_key", state.apiKey);
-  localStorage.setItem("ollama_temp", state.temperature);
-  localStorage.setItem("ollama_system", state.systemPrompt);
-  localStorage.setItem("ollama_md", state.markdown);
-  localStorage.setItem("ollama_stats", state.showStats);
-
-  closeDrawerFn();
-});
-
-exportBtn.addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify(state.messages, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `ollama-chat-${Date.now()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
-
-clearAllBtn.addEventListener("click", () => {
-  if (!confirm("Clear chat and reset all settings?")) return;
-  localStorage.clear();
-  state.messages = [];
-  state.apiKey = "";
-  state.systemPrompt = "";
-  state.temperature = 0.7;
-  state.markdown = true;
-  state.showStats = false;
-  state.currentModel = "gpt-oss:120b";
-  currentModelName.textContent = state.currentModel;
-  renderModelList();
-  chatEl.innerHTML = "";
-  setStatus(null);
-  closeDrawerFn();
-});
-
-/* =========================================================
-   Status
-   ========================================================= */
-function setStatus(s) {
-  statusDot.classList.remove("bg-emerald-500", "bg-red-500");
-  if (s === "ok") statusDot.classList.add("bg-emerald-500");
-  if (s === "err") statusDot.classList.add("bg-red-500");
-}
-
-/* =========================================================
-   Chat Rendering
-   ========================================================= */
-function scrollBottom() {
-  chatEl.scrollTop = chatEl.scrollHeight;
-}
-
-function showEmptyState() {
-  if (chatEl.querySelector(".empty-state")) return;
-  const empty = document.createElement("div");
-  empty.className = "empty-state m-auto text-center text-slate-500 text-sm leading-relaxed max-w-md p-5";
-  empty.innerHTML = `
-    <h2 class="text-slate-200 text-xl font-bold mb-2">Ready when you are</h2>
-    <p>Pick a model from the sidebar, then start chatting.</p>
-    <p class="mt-4 text-xs">
-      <span class="inline-block bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono">Enter</span> to send &nbsp;·&nbsp;
-      <span class="inline-block bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono">Shift</span> + <span class="inline-block bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono">Enter</span> for newline
-    </p>
-  `;
-  chatEl.appendChild(empty);
-}
-
-function addMessage(role, text = "") {
-  chatEl.querySelector(".empty-state")?.remove();
-  const wrap = document.createElement("div");
-  wrap.className = `max-w-3xl w-full mx-auto flex gap-3 ${role === "user" ? "justify-end" : ""}`;
-
-  if (role === "assistant" || role === "user") {
-    const av = document.createElement("div");
-    av.className = `w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
-      role === "assistant"
-        ? "bg-gradient-to-br from-indigo-500 to-purple-500 text-white"
-        : "bg-slate-800 text-slate-400"
-    }`;
-    av.textContent = role === "assistant" ? "AI" : "You";
-    wrap.appendChild(av);
-  }
-
-  const msg = document.createElement("div");
-  msg.className = `px-4 py-3 rounded-xl text-sm leading-relaxed break-words min-w-0 ${
-    role === "user"
-      ? "bg-indigo-950/60 border border-indigo-900/50 rounded-br-sm"
-      : role === "assistant"
-      ? "bg-slate-800/80 border border-slate-700 rounded-bl-sm flex-1"
-      : "bg-red-500/10 border border-red-500/30 text-red-300 text-xs mx-auto"
-  }`;
-
-  if (role === "error") {
-    msg.textContent = text;
-    wrap.removeChild(wrap.firstChild);
-    wrap.appendChild(msg);
-    chatEl.appendChild(wrap);
-    scrollBottom();
-    return msg;
-  }
-
-  const body = document.createElement("div");
-  body.className = "body";
-  body.textContent = text;
-  msg.appendChild(body);
-  wrap.appendChild(msg);
-  chatEl.appendChild(wrap);
-  scrollBottom();
-  return body;
-}
-
-/* ---------- Markdown Parser (no deps) ---------- */
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-function renderMarkdown(text) {
-  const codeBlocks = [];
-  let src = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    codeBlocks.push({ lang, code });
-    return `\u0000CODE${codeBlocks.length - 1}\u0000`;
-  });
-
-  src = escapeHtml(src);
-  src = src.replace(/^### (.*)$/gm, "<h3 class=\"text-base font-semibold mt-3 mb-1\">$1</h3>");
-  src = src.replace(/^## (.*)$/gm, "<h2 class=\"text-lg font-semibold mt-3 mb-1\">$1</h2>");
-  src = src.replace(/^# (.*)$/gm, "<h1 class=\"text-xl font-bold mt-4 mb-2\">$1</h1>");
-  src = src.replace(/^&gt; (.*)$/gm, "<blockquote class=\"border-l-2 border-slate-600 pl-3 my-2 text-slate-400\">$1</blockquote>");
-  src = src.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  src = src.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  src = src.replace(/`([^`\n]+)`/g, '<code class="bg-slate-700/50 px-1.5 py-0.5 rounded text-[0.88em] font-mono">$1</code>');
-  src = src.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-indigo-400 hover:underline">$1</a>');
-
-  // Lists
-  src = src.replace(/(?:^|\n)((?:[-*] .*(?:\n|$))+)/g, (m, block) => {
-    const items = block.trim().split("\n").map((l) => "<li class=\"ml-5 list-disc\">" + l.replace(/^[-*]\s/, "") + "</li>").join("");
-    return "\n<ul class=\"my-2 space-y-1\">" + items + "</ul>";
-  });
-  src = src.replace(/(?:^|\n)((?:\d+\. .*(?:\n|$))+)/g, (m, block) => {
-    const items = block.trim().split("\n").map((l) => "<li class=\"ml-5 list-decimal\">" + l.replace(/^\d+\.\s/, "") + "</li>").join("");
-    return "\n<ol class=\"my-2 space-y-1\">" + items + "</ol>";
-  });
-
-  // Paragraphs
-  src = src.split(/\n{2,}/).map((p) => {
-    if (/^\s*<(h\d|ul|ol|blockquote|pre)/.test(p.trim())) return p;
-    if (!p.trim()) return "";
-    return "<p>" + p.replace(/\n/g, "<br>") + "</p>";
-  }).join("\n");
-
-  // Restore code blocks
-  src = src.replace(/\u0000CODE(\d+)\u0000/g, (_, i) => {
-    const { lang, code } = codeBlocks[+i];
-    return `<pre class="bg-slate-950 border border-slate-700 rounded-lg p-3 overflow-x-auto my-3 text-[13px] leading-relaxed relative"><button class="copy-code absolute top-2 right-2 bg-slate-800 border border-slate-700 text-slate-400 rounded px-2 py-0.5 text-[10px] opacity-0 hover:opacity-100 transition-opacity" data-code="${encodeURIComponent(code)}">Copy</button><code class="font-mono">${escapeHtml(code)}</code></pre>`;
-  });
-
-  return src;
-}
-
-function attachCopyButtons(container) {
-  container.querySelectorAll(".copy-code").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const code = decodeURIComponent(btn.dataset.code);
-      try {
-        await navigator.clipboard.writeText(code);
-        btn.textContent = "Copied";
-        btn.classList.add("text-emerald-400");
-        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("text-emerald-400"); }, 1400);
-      } catch {}
-    });
-  });
-}
-
-/* =========================================================
-   Send / Stream
-   ========================================================= */
-async function send() {
-  const text = inputEl.value.trim();
-  if (!text || state.busy) return;
-
-  if (!state.apiKey) {
-    addMessage("error", "No API key set. Open settings to add one.");
-    setStatus("err");
-    return;
-  }
-
-  inputEl.value = "";
-  autoGrow();
-  state.busy = true;
-  sendEl.disabled = true;
-
-  if (state.messages.length === 0 && state.systemPrompt.trim()) {
-    state.messages.push({ role: "system", content: state.systemPrompt.trim() });
-  }
-  addMessage("user", text);
-  state.messages.push({ role: "user", content: text });
-
-  const bodyEl = addMessage("assistant", "");
-  const cursor = document.createElement("span");
-  cursor.className = "cursor";
-  bodyEl.appendChild(cursor);
-
-  let assistantText = "";
-  const startTime = performance.now();
-  let finalChunk = null;
-
-  try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Ollama-Key": state.apiKey },
-      body: JSON.stringify({
-        model: state.currentModel,
-        messages: state.messages,
-        options: { temperature: state.temperature },
-      }),
-    });
-
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || `HTTP ${res.status}`);
+    // =========================================================
+    // UTILS
+    // =========================================================
+    function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3500);
     }
 
-    setStatus("ok");
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    async function apiCall(endpoint, options = {}) {
+        const url = `${API_BASE}${endpoint}`;
+        const res = await fetch(url, {
+            headers: { 'Content-Type': 'application/json' },
+            ...options,
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        return res.json();
+    }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
+    // =========================================================
+    // STATUS POLLING
+    // =========================================================
+    async function fetchStatus() {
         try {
-          const chunk = JSON.parse(line);
-          if (chunk.message?.content) {
-            assistantText += chunk.message.content;
-            if (state.markdown) {
-              bodyEl.innerHTML = renderMarkdown(assistantText);
-              attachCopyButtons(bodyEl);
+            const data = await apiCall('/health');
+            state.connected = data.connected;
+            state.user = data.user;
+
+            // Update UI
+            if (data.connected) {
+                statusIndicator.classList.add('connected');
+                statusIndicator.classList.remove('pairing');
+                statusText.textContent = 'Connected';
+                botNameEl.textContent = data.user || 'My AI Assistant';
+                modelNameEl.textContent = data.model || 'gpt-oss:120b';
+                hostNameEl.textContent = '127.0.0.1:11434';
+                pairingHint.textContent = '';
             } else {
-              bodyEl.textContent = assistantText;
+                statusIndicator.classList.remove('connected');
+                statusText.textContent = 'Disconnected';
+                botNameEl.textContent = '—';
+                modelNameEl.textContent = '—';
+                hostNameEl.textContent = '—';
             }
-            bodyEl.appendChild(cursor);
-            scrollBottom();
-          }
-          if (chunk.done) finalChunk = chunk;
-          if (chunk.error) throw new Error(chunk.error);
-        } catch {}
-      }
+        } catch (err) {
+            console.warn('Status fetch failed:', err.message);
+        }
     }
 
-    cursor.remove();
-    if (assistantText) {
-      state.messages.push({ role: "assistant", content: assistantText });
-    } else {
-      bodyEl.textContent = "(empty response)";
+    // =========================================================
+    // PAIRING
+    // =========================================================
+    pairBtn.addEventListener('click', async () => {
+        const phone = phoneInput.value.replace(/\D/g, '');
+        if (!phone) {
+            showToast('Please enter a phone number (digits only).', 'error');
+            return;
+        }
+
+        // In a real implementation, this would call an endpoint to request pairing.
+        // For this demo, we simulate the pairing code flow via the backend.
+        // The backend would need a dedicated endpoint, but we'll do a quick simulation.
+        // Since the original code uses readline, we'll just show a sample code.
+        // In production you'd wire this to the actual Baileys pairing request.
+        pairingCodeDisplay.style.display = 'block';
+        pairingCodeDisplay.textContent = 'PAIR-1234';
+        pairingHint.textContent = 'Enter this in WhatsApp > Linked Devices > Link with phone number';
+        showToast('Pairing code generated (simulated). Check WhatsApp.', 'success');
+    });
+
+    // =========================================================
+    // CONVERSATION PREVIEW
+    // =========================================================
+    function renderChatWindow() {
+        if (!state.currentChat) {
+            chatWindow.innerHTML = '<div class="empty-state">Select a chat to view messages.</div>';
+            return;
+        }
+        const history = state.history[state.currentChat] || [];
+
+        if (state.typingIndicator && state.typing) {
+            // Typing indicator shown at bottom
+        }
+
+        if (history.length === 0 && !state.typing) {
+            chatWindow.innerHTML = '<div class="empty-state">No messages in this chat.</div>';
+            return;
+        }
+
+        let html = '';
+        history.forEach((msg) => {
+            const role = msg.role === 'user' ? 'user' : 'assistant';
+            const label = role === 'user' ? 'User' : 'AI';
+            html += `
+                <div class="message ${role}">
+                    <div class="meta"><span>${label}</span></div>
+                    <div>${escapeHtml(msg.content)}</div>
+                </div>
+            `;
+        });
+
+        if (state.typingIndicator && state.typing) {
+            html += `
+                <div class="typing-indicator">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+            `;
+        }
+
+        chatWindow.innerHTML = html;
+        chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
-    if (state.showStats && finalChunk) {
-      const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-      const meta = document.createElement("div");
-      meta.className = "text-[11px] text-slate-600 mt-2 flex gap-3";
-      const parts = [`${elapsed}s`];
-      if (finalChunk.eval_count) parts.push(`${finalChunk.eval_count} tokens`);
-      if (finalChunk.eval_count && finalChunk.eval_duration) {
-        parts.push(`${(finalChunk.eval_count / (finalChunk.eval_duration / 1e9)).toFixed(1)} tok/s`);
-      }
-      meta.textContent = parts.join(" · ");
-      bodyEl.parentElement.appendChild(meta);
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
-  } catch (err) {
-    cursor.remove();
-    bodyEl.parentElement?.parentElement?.remove();
-    addMessage("error", err.message || String(err));
-    setStatus("err");
-  } finally {
-    state.busy = false;
-    sendEl.disabled = false;
-    inputEl.focus();
-  }
-}
 
-/* =========================================================
-   Input Handling
-   ========================================================= */
-function autoGrow() {
-  inputEl.style.height = "auto";
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
-}
-inputEl.addEventListener("input", autoGrow);
-inputEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    send();
-  }
-});
-sendEl.addEventListener("click", send);
+    // =========================================================
+    // CHAT LIST MANAGEMENT
+    // =========================================================
+    async function fetchChats() {
+        // In a real backend you'd have an endpoint to list all chats.
+        // For now we simulate with a few sample chats.
+        const sampleChats = [
+            '15551234567@s.whatsapp.net',
+            'group123@g.us',
+            '15559876543@s.whatsapp.net',
+        ];
+        state.chats = sampleChats;
+        updateChatSelector();
+    }
 
-/* =========================================================
-   New Chat
-   ========================================================= */
-newChatBtn.addEventListener("click", () => {
-  if (state.busy) return;
-  if (state.messages.length && !confirm("Start a new chat? Current conversation will be cleared.")) return;
-  state.messages = [];
-  chatEl.innerHTML = "";
-  showEmptyState();
-  setStatus(null);
-  closeSidebarMobile();
-  inputEl.focus();
-});
+    function updateChatSelector() {
+        const current = chatSelector.value;
+        chatSelector.innerHTML = '<option value="">— select chat —</option>';
+        state.chats.forEach((chatId) => {
+            const opt = document.createElement('option');
+            opt.value = chatId;
+            opt.textContent = chatId.length > 30 ? chatId.substring(0, 28) + '…' : chatId;
+            chatSelector.appendChild(opt);
+        });
+        if (current && state.chats.includes(current)) {
+            chatSelector.value = current;
+            state.currentChat = current;
+        }
+    }
 
-/* =========================================================
-   Init
-   ========================================================= */
-currentModelName.textContent = state.currentModel;
-renderModelList();
-showEmptyState();
-autoGrow();
-inputEl.focus();
+    async function loadHistory(chatId) {
+        if (!chatId) return;
+        try {
+            const data = await apiCall(`/history/${encodeURIComponent(chatId)}`);
+            state.history[chatId] = data.history || [];
+            renderChatWindow();
+        } catch (err) {
+            showToast(`Failed to load history: ${err.message}`, 'error');
+        }
+    }
 
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    closeDrawerFn();
-    closeSidebarMobile();
-  }
-});
+    // =========================================================
+    // EVENT LISTENERS
+    // =========================================================
+    chatSelector.addEventListener('change', async (e) => {
+        const chatId = e.target.value;
+        state.currentChat = chatId || null;
+        if (chatId) {
+            await loadHistory(chatId);
+        } else {
+            renderChatWindow();
+        }
+    });
+
+    clearHistoryBtn.addEventListener('click', async () => {
+        if (!state.currentChat) {
+            showToast('No chat selected.', 'error');
+            return;
+        }
+        try {
+            await apiCall(`/history/${encodeURIComponent(state.currentChat)}`, { method: 'DELETE' });
+            state.history[state.currentChat] = [];
+            renderChatWindow();
+            showToast('History cleared.', 'success');
+        } catch (err) {
+            showToast(`Error: ${err.message}`, 'error');
+        }
+    });
+
+    refreshChatsBtn.addEventListener('click', async () => {
+        await fetchChats();
+        showToast('Chat list refreshed.', 'info');
+    });
+
+    sendTestBtn.addEventListener('click', async () => {
+        const to = testTo.value.trim();
+        const text = testText.value.trim();
+        if (!to || !text) {
+            showToast('Recipient and message required.', 'error');
+            return;
+        }
+        try {
+            await apiCall('/send', {
+                method: 'POST',
+                body: JSON.stringify({ to, text }),
+            });
+            showToast('Message sent!', 'success');
+            testText.value = '';
+            // Optionally refresh history for that chat
+            if (state.currentChat === to || state.chats.includes(to)) {
+                await loadHistory(to);
+            }
+        } catch (err) {
+            showToast(`Send failed: ${err.message}`, 'error');
+        }
+    });
+
+    // Toggle switches
+    toggleMentions.addEventListener('click', () => {
+        toggleMentions.classList.toggle('active');
+        state.mentionsOnly = toggleMentions.classList.contains('active');
+        showToast(`Group mentions: ${state.mentionsOnly ? 'ON' : 'OFF'}`, 'info');
+    });
+
+    toggleTyping.addEventListener('click', () => {
+        toggleTyping.classList.toggle('active');
+        state.typingIndicator = toggleTyping.classList.contains('active');
+        showToast(`Typing indicator: ${state.typingIndicator ? 'ON' : 'OFF'}`, 'info');
+        renderChatWindow();
+    });
+
+    reconnectBtn.addEventListener('click', () => {
+        showToast('Reconnecting… (refresh page if needed)', 'info');
+        // In production, call an endpoint to reconnect
+        fetchStatus();
+    });
+
+    logoutBtn.addEventListener('click', () => {
+        showToast('Logout not implemented in demo.', 'error');
+    });
+
+    // =========================================================
+    // SIMULATED INCOMING MESSAGES (for demo)
+    // =========================================================
+    function simulateIncomingMessage(chatId, userName, text, reply) {
+        if (!state.history[chatId]) state.history[chatId] = [];
+        state.history[chatId].push({ role: 'user', content: `${userName}: ${text}` });
+
+        // Show typing
+        state.typing = true;
+        renderChatWindow();
+
+        setTimeout(() => {
+            state.typing = false;
+            state.history[chatId].push({ role: 'assistant', content: reply });
+            renderChatWindow();
+            // Update chat list if new
+            if (!state.chats.includes(chatId)) {
+                state.chats.push(chatId);
+                updateChatSelector();
+            }
+        }, 1500);
+    }
+
+    // =========================================================
+    // INIT
+    // =========================================================
+    async function init() {
+        // Fetch initial status
+        await fetchStatus();
+        // Load sample chats
+        await fetchChats();
+        // Set config values
+        cooldownVal.textContent = state.cooldown + ' ms';
+        maxRepliesVal.textContent = state.maxReplies;
+
+        // Auto-select first chat for demo
+        if (state.chats.length > 0) {
+            chatSelector.value = state.chats[0];
+            state.currentChat = state.chats[0];
+            await loadHistory(state.currentChat);
+        }
+
+        // Simulate a couple of messages for demo
+        setTimeout(() => {
+            simulateIncomingMessage(
+                '15551234567@s.whatsapp.net',
+                'Alice',
+                'Hey, can you help me with a task?',
+                'Of course! What do you need help with?'
+            );
+        }, 2000);
+
+        setTimeout(() => {
+            simulateIncomingMessage(
+                'group123@g.us',
+                'Bob',
+                '@ai what is the weather like?',
+                'I cannot access real-time weather data, but I can help you find a weather API!'
+            );
+        }, 5000);
+
+        // Poll status every 10 seconds
+        setInterval(fetchStatus, 10000);
+    }
+
+    init();
 </script>
 </body>
 </html>
