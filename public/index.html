@@ -3,858 +3,141 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#0f1115" />
-<title>Ollama Cloud Tester</title>
+<title>Ollama Cloud Tools</title>
+<script src="https://cdn.tailwindcss.com"></script>
 <style>
-  :root {
-    --bg: #0b0d12;
-    --panel: #12151c;
-    --panel-2: #171b24;
-    --panel-3: #1e232e;
-    --border: #262b36;
-    --border-2: #333a48;
-    --text: #e8ebf2;
-    --muted: #8b93a7;
-    --muted-2: #5e6577;
-    --accent: #6c8cff;
-    --accent-hover: #5a7aff;
-    --accent-soft: rgba(108, 140, 255, 0.12);
-    --user: #24304d;
-    --assistant: #171b24;
-    --error: #ff6b6b;
-    --success: #4ade80;
-    --sidebar-w: 280px;
-    --radius: 12px;
-    --radius-sm: 8px;
-  }
-
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-
-  html, body {
-    margin: 0; padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    height: 100%;
-    height: 100dvh;
-    overflow: hidden;
-    font-size: 15px;
-    line-height: 1.5;
-  }
-
-  /* ---------- Layout ---------- */
-  .app {
-    display: flex;
-    height: 100dvh;
-    overflow: hidden;
-  }
-
-  /* ---------- Sidebar ---------- */
-  .sidebar {
-    width: var(--sidebar-w);
-    flex-shrink: 0;
-    background: var(--panel);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    transition: transform 0.25s ease;
-    z-index: 40;
-  }
-
-  .sidebar-header {
-    padding: 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .brand {
-    display: flex; align-items: center; gap: 10px; flex: 1;
-    font-weight: 700; font-size: 15px; letter-spacing: -0.01em;
-  }
-
-  .brand-logo {
-    width: 28px; height: 28px; border-radius: 8px;
-    background: linear-gradient(135deg, var(--accent), #a06cff);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px; font-weight: 800; color: white;
-  }
-
-  .sidebar-section {
-    padding: 12px 12px 4px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--muted-2);
-    font-weight: 600;
-  }
-
-  .model-list {
-    padding: 0 8px 8px;
-    overflow-y: auto;
-    flex: 1;
-  }
-
-  .model-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-size: 14px;
-    color: var(--text);
-    transition: background 0.12s;
-    border: 1px solid transparent;
-  }
-
-  .model-item:hover { background: var(--panel-2); }
-
-  .model-item.active {
-    background: var(--accent-soft);
-    border-color: rgba(108, 140, 255, 0.35);
-    color: #c9d4ff;
-  }
-
-  .model-item .badge {
-    font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: var(--panel-3);
-    color: var(--muted);
-    font-weight: 600;
-    margin-left: auto;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .model-item.active .badge {
-    background: rgba(108, 140, 255, 0.2);
-    color: #a9bcff;
-  }
-
-  .model-item .dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--muted-2); flex-shrink: 0;
-  }
-
-  .sidebar-footer {
-    padding: 12px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    gap: 8px;
-  }
-
-  .sidebar-footer button {
-    flex: 1;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    padding: 9px 10px;
-    border-radius: var(--radius-sm);
-    font-size: 13px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.12s;
-  }
-
-  .sidebar-footer button:hover {
-    color: var(--text);
-    border-color: var(--border-2);
-    background: var(--panel-3);
-  }
-
-  /* ---------- Main area ---------- */
-  .main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .topbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    background: var(--panel);
-    flex-shrink: 0;
-    min-height: 56px;
-  }
-
-  .menu-btn {
-    display: none;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-    width: 36px; height: 36px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .current-model {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .current-model .name {
-    font-weight: 600;
-    font-size: 14px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .status-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--muted-2);
-    flex-shrink: 0;
-    transition: background 0.2s;
-  }
-  .status-dot.on { background: var(--success); box-shadow: 0 0 8px rgba(74, 222, 128, 0.5); }
-  .status-dot.err { background: var(--error); }
-
-  .topbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
-
-  .icon-btn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    width: 36px; height: 36px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 15px;
-    transition: all 0.12s;
-  }
-
-  .icon-btn:hover { color: var(--text); border-color: var(--border-2); background: var(--panel-2); }
-
-  #chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 24px 16px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    scroll-behavior: smooth;
-  }
-
-  .empty {
-    margin: auto;
-    text-align: center;
-    color: var(--muted);
-    font-size: 14px;
-    line-height: 1.7;
-    padding: 20px;
-    max-width: 420px;
-  }
-  .empty h2 { color: var(--text); font-size: 22px; margin: 0 0 8px; font-weight: 700; }
-  .empty p { margin: 4px 0; }
-  .empty .kbd {
-    display: inline-block;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-size: 12px;
-    font-family: ui-monospace, monospace;
-    color: var(--muted);
-  }
-
-  .msg-wrap {
-    max-width: 860px;
-    width: 100%;
-    margin: 0 auto;
-    display: flex;
-    gap: 12px;
-  }
-  .msg-wrap.user { justify-content: flex-end; }
-
-  .avatar {
-    width: 30px; height: 30px; border-radius: 50%;
-    flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 700;
-    margin-top: 2px;
-  }
-  .avatar.assistant {
-    background: linear-gradient(135deg, var(--accent), #a06cff);
-    color: white;
-  }
-  .avatar.user { background: var(--panel-3); color: var(--muted); }
-
-  .msg {
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    line-height: 1.6;
-    font-size: 14.5px;
-    word-wrap: break-word;
-    overflow-wrap: anywhere;
-    min-width: 0;
-  }
-
-  .msg.user {
-    background: var(--user);
-    border-bottom-right-radius: 4px;
-  }
-  .msg.assistant {
-    background: var(--assistant);
-    border: 1px solid var(--border);
-    border-bottom-left-radius: 4px;
-    flex: 1;
-  }
-  .msg.error {
-    background: rgba(255, 107, 107, 0.08);
-    border: 1px solid rgba(255, 107, 107, 0.35);
-    color: #ffb4b4;
-    font-size: 13px;
-    margin: 0 auto;
-    max-width: 860px;
-    width: 100%;
-  }
-
-  /* Markdown */
-  .msg p { margin: 0 0 10px; }
+  /* Minimal custom styles for things Tailwind doesn't cover easily */
+  .msg pre { position: relative; }
+  .msg p { margin-bottom: 10px; }
   .msg p:last-child { margin-bottom: 0; }
-  .msg h1, .msg h2, .msg h3 { margin: 14px 0 8px; line-height: 1.3; }
-  .msg h1 { font-size: 20px; }
-  .msg h2 { font-size: 17px; }
-  .msg h3 { font-size: 15px; }
-  .msg ul, .msg ol { margin: 6px 0 10px; padding-left: 22px; }
-  .msg li { margin: 3px 0; }
-  .msg code {
-    background: rgba(255,255,255,0.08);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.88em;
-  }
-  .msg pre {
-    background: #0a0c10;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 12px 14px;
-    overflow-x: auto;
-    margin: 10px 0;
-    position: relative;
-    font-size: 13px;
-    line-height: 1.5;
-  }
-  .msg pre code {
-    background: transparent;
-    padding: 0;
-    font-size: inherit;
-  }
-  .msg blockquote {
-    border-left: 3px solid var(--border-2);
-    margin: 8px 0;
-    padding: 2px 0 2px 12px;
-    color: var(--muted);
-  }
-  .msg a { color: var(--accent); text-decoration: none; }
-  .msg a:hover { text-decoration: underline; }
-  .msg table {
-    border-collapse: collapse;
-    margin: 8px 0;
-    font-size: 13px;
-    display: block;
-    overflow-x: auto;
-  }
-  .msg th, .msg td {
-    border: 1px solid var(--border);
-    padding: 6px 10px;
-    text-align: left;
-  }
-  .msg th { background: var(--panel-3); font-weight: 600; }
-
-  .copy-code {
-    position: absolute;
-    top: 8px; right: 8px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    padding: 3px 8px;
-    border-radius: 5px;
-    font-size: 11px;
-    cursor: pointer;
-    font-family: inherit;
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-  .msg pre:hover .copy-code { opacity: 1; }
-  .copy-code:hover { color: var(--text); border-color: var(--border-2); }
-  .copy-code.copied { color: var(--success); border-color: var(--success); }
-
-  .cursor {
-    display: inline-block;
-    width: 7px; height: 15px;
-    background: var(--accent);
-    vertical-align: text-bottom;
-    margin-left: 2px;
-    animation: blink 1s steps(2) infinite;
-    border-radius: 1px;
-  }
+  .msg code { font-family: ui-monospace, monospace; }
+  .cursor { display: inline-block; width: 7px; height: 15px; background: #6c8cff; vertical-align: text-bottom; margin-left: 2px; animation: blink 1s steps(2) infinite; border-radius: 1px; }
   @keyframes blink { 50% { opacity: 0; } }
-
-  .msg-meta {
-    font-size: 11px;
-    color: var(--muted-2);
-    margin-top: 6px;
-    display: flex;
-    gap: 10px;
-  }
-
-  /* ---------- Composer ---------- */
-  .composer-wrap {
-    padding: 12px 16px 16px;
-    border-top: 1px solid var(--border);
-    background: var(--panel);
-    flex-shrink: 0;
-  }
-
-  .composer {
-    max-width: 860px;
-    margin: 0 auto;
-    display: flex;
-    gap: 10px;
-    align-items: flex-end;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 8px 8px 8px 14px;
-    transition: border-color 0.15s;
-  }
-  .composer:focus-within { border-color: var(--accent); }
-
-  textarea {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    padding: 8px 0;
-    font-family: inherit;
-    font-size: 15px;
-    resize: none;
-    max-height: 200px;
-    min-height: 24px;
-    outline: none;
-    line-height: 1.5;
-  }
-  textarea::placeholder { color: var(--muted-2); }
-
-  .send-btn {
-    background: var(--accent);
-    color: white;
-    border: none;
-    width: 38px; height: 38px;
-    border-radius: 10px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: background 0.15s, transform 0.1s;
-  }
-  .send-btn:hover:not(:disabled) { background: var(--accent-hover); }
-  .send-btn:active:not(:disabled) { transform: scale(0.95); }
-  .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-  .composer-hint {
-    text-align: center;
-    color: var(--muted-2);
-    font-size: 11px;
-    margin-top: 8px;
-  }
-
-  /* ---------- Settings drawer ---------- */
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    backdrop-filter: blur(2px);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s;
-    z-index: 50;
-  }
-  .overlay.open { opacity: 1; pointer-events: auto; }
-
-  .drawer {
-    position: fixed;
-    top: 0; right: 0;
-    bottom: 0;
-    width: 380px;
-    max-width: 100vw;
-    background: var(--panel);
-    border-left: 1px solid var(--border);
-    transform: translateX(100%);
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    z-index: 60;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .drawer.open { transform: translateX(0); }
-
-  .drawer-header {
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
-  }
-  .drawer-header h2 {
-    margin: 0; font-size: 16px; font-weight: 600; flex: 1;
-  }
-
-  .drawer-body {
-    padding: 20px;
-    overflow-y: auto;
-    flex: 1;
-  }
-
-  .field { margin-bottom: 20px; }
-  .field label {
-    display: block;
-    font-size: 12px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-  .field .desc {
-    font-size: 12px;
-    color: var(--muted-2);
-    margin-top: 6px;
-    line-height: 1.5;
-  }
-
-  .field input[type="text"],
-  .field input[type="password"],
-  .field input[type="number"],
-  .field select,
-  .field textarea {
-    width: 100%;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    padding: 10px 12px;
-    font-size: 14px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.15s;
-  }
-  .field input:focus, .field select:focus, .field textarea:focus {
-    border-color: var(--accent);
-  }
-
-  .field-row {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-  }
-
-  .slider-wrap {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .slider-wrap input[type="range"] {
-    flex: 1;
-    -webkit-appearance: none;
-    appearance: none;
-    height: 4px;
-    background: var(--panel-3);
-    border-radius: 2px;
-    outline: none;
-  }
-  .slider-wrap input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 16px; height: 16px;
-    border-radius: 50%;
-    background: var(--accent);
-    cursor: pointer;
-    border: 2px solid var(--panel);
-    box-shadow: 0 0 0 1px var(--accent);
-  }
-  .slider-wrap input[type="range"]::-moz-range-thumb {
-    width: 16px; height: 16px;
-    border-radius: 50%;
-    background: var(--accent);
-    cursor: pointer;
-    border: 2px solid var(--panel);
-  }
-  .slider-value {
-    min-width: 42px;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    font-size: 13px;
-    color: var(--muted);
-  }
-
-  .btn-primary, .btn-secondary, .btn-danger {
-    width: 100%;
-    padding: 11px 16px;
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    font-family: inherit;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-    border: 1px solid transparent;
-  }
-  .btn-primary { background: var(--accent); color: white; }
-  .btn-primary:hover { background: var(--accent-hover); }
-  .btn-secondary {
-    background: var(--panel-2);
-    border-color: var(--border);
-    color: var(--text);
-  }
-  .btn-secondary:hover { background: var(--panel-3); border-color: var(--border-2); }
-  .btn-danger {
-    background: transparent;
-    border-color: rgba(255, 107, 107, 0.4);
-    color: #ff9b9b;
-  }
-  .btn-danger:hover { background: rgba(255, 107, 107, 0.1); }
-
-  .btn-row { display: flex; gap: 10px; }
-
-  .toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 0;
-  }
-  .toggle-label { font-size: 14px; }
-  .toggle-desc { font-size: 12px; color: var(--muted-2); margin-top: 2px; }
-
-  .switch {
-    position: relative;
-    width: 40px; height: 22px;
-    flex-shrink: 0;
-  }
-  .switch input { opacity: 0; width: 0; height: 0; }
-  .switch span {
-    position: absolute;
-    inset: 0;
-    background: var(--panel-3);
-    border-radius: 22px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  .switch span::before {
-    content: "";
-    position: absolute;
-    width: 16px; height: 16px;
-    left: 3px; top: 3px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.2s;
-  }
-  .switch input:checked + span { background: var(--accent); }
-  .switch input:checked + span::before { transform: translateX(18px); }
-
-  /* ---------- Mobile ---------- */
-  .sidebar-backdrop {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: 35;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s;
-  }
-  .sidebar-backdrop.open { opacity: 1; pointer-events: auto; }
-
-  @media (max-width: 820px) {
-    .sidebar {
-      position: fixed;
-      top: 0; left: 0; bottom: 0;
-      transform: translateX(-100%);
-      box-shadow: 4px 0 24px rgba(0,0,0,0.4);
-    }
-    .sidebar.open { transform: translateX(0); }
-    .sidebar-backdrop { display: block; }
-    .menu-btn { display: flex; }
-    #chat { padding: 16px 12px 8px; gap: 14px; }
-    .composer-wrap { padding: 10px 12px 12px; }
-    .msg { font-size: 14px; padding: 10px 14px; }
-    .avatar { width: 26px; height: 26px; font-size: 11px; }
-    .drawer { width: 100%; border-left: none; }
-    .topbar { padding: 10px 12px; min-height: 52px; }
-  }
-
-  @media (max-width: 420px) {
-    .msg-wrap { gap: 8px; }
-    .avatar { width: 24px; height: 24px; }
-  }
-
-  /* Scrollbars */
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb {
-    background: var(--panel-3);
-    border-radius: 5px;
-    border: 2px solid var(--bg);
-  }
-  ::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
+  ::-webkit-scrollbar-thumb { background: #2a2f3a; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3f4a; }
 </style>
 </head>
-<body>
+<body class="bg-slate-950 text-slate-100 h-dvh overflow-hidden flex font-sans">
 
-<div class="app">
-
-  <!-- Sidebar -->
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-      <div class="brand">
-        <div class="brand-logo">O</div>
-        <span>Ollama Cloud</span>
-      </div>
-    </div>
-
-    <div class="sidebar-section">Models</div>
-    <div class="model-list" id="modelList"></div>
-
-    <div class="sidebar-footer">
-      <button id="newChatBtn">+ New chat</button>
-      <button id="settingsBtn" title="Settings">⚙</button>
-    </div>
-  </aside>
-  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
-
-  <!-- Main -->
-  <main class="main">
-    <div class="topbar">
-      <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
-      <div class="current-model">
-        <span class="status-dot" id="statusDot"></span>
-        <span class="name" id="currentModelName">gpt-oss:120b</span>
-      </div>
-      <div class="topbar-actions">
-        <button class="icon-btn" id="settingsBtn2" title="Settings">⚙</button>
-      </div>
-    </div>
-
-    <div id="chat">
-      <div class="empty" id="empty">
-        <h2>Ready when you are</h2>
-        <p>Pick a model from the sidebar, then start chatting.</p>
-        <p style="margin-top:14px;">
-          <span class="kbd">Enter</span> to send &nbsp;·&nbsp;
-          <span class="kbd">Shift</span> + <span class="kbd">Enter</span> for newline
-        </p>
-      </div>
-    </div>
-
-    <div class="composer-wrap">
-      <div class="composer">
-        <textarea id="input" rows="1" placeholder="Message the model..." autocomplete="off"></textarea>
-        <button class="send-btn" id="send" aria-label="Send">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-        </button>
-      </div>
-      <div class="composer-hint" id="hint">Streaming via your proxy · key stored locally</div>
-    </div>
-  </main>
-</div>
-
-<!-- Settings drawer -->
-<div class="overlay" id="overlay"></div>
-<aside class="drawer" id="drawer">
-  <div class="drawer-header">
-    <h2>Settings</h2>
-    <button class="icon-btn" id="closeDrawer" aria-label="Close">✕</button>
+<!-- ========== SIDEBAR ========== -->
+<aside id="sidebar" class="w-72 bg-slate-900 border-r border-slate-800 flex flex-col flex-shrink-0 fixed md:static inset-y-0 z-40 -translate-x-full md:translate-x-0 transition-transform">
+  <div class="p-4 border-b border-slate-800 flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-sm font-bold">O</div>
+    <span class="font-bold text-sm tracking-tight">Ollama Cloud Tools</span>
   </div>
-  <div class="drawer-body">
 
-    <div class="field">
-      <label for="apikey">Ollama Cloud API Key</label>
-      <input id="apikey" type="password" placeholder="ollama_..." autocomplete="off" />
-      <div class="desc">Stored in your browser's localStorage. Sent only to your own proxy, which forwards it to ollama.com.</div>
+  <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold px-4 pt-3 pb-1">Models</div>
+  <div id="modelList" class="flex-1 overflow-y-auto px-2 py-1"></div>
+
+  <div class="p-3 border-t border-slate-800 flex gap-2">
+    <button id="newChatBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg py-2 text-sm text-slate-400 transition-colors">+ New chat</button>
+    <button id="settingsBtn" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 text-slate-400 transition-colors" title="Settings">⚙</button>
+  </div>
+</aside>
+<div id="sidebarBackdrop" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden"></div>
+
+<!-- ========== MAIN ========== -->
+<main class="flex-1 flex flex-col min-w-0">
+  <!-- Topbar -->
+  <div class="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900 min-h-[56px] flex-shrink-0">
+    <button id="menuBtn" class="md:hidden w-9 h-9 border border-slate-800 rounded-lg text-slate-400 flex items-center justify-center" aria-label="Menu">☰</button>
+    <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-600 flex-shrink-0"></span>
+    <span id="currentModelName" class="font-semibold text-sm truncate">gpt-oss:120b</span>
+    <button id="settingsBtn2" class="ml-auto w-9 h-9 border border-slate-800 rounded-lg text-slate-400 flex items-center justify-center" title="Settings">⚙</button>
+  </div>
+
+  <!-- Chat Area -->
+  <div id="chat" class="flex-1 overflow-y-auto px-4 py-6 flex flex-col gap-4 scroll-smooth"></div>
+
+  <!-- Composer -->
+  <div class="p-3 border-t border-slate-800 bg-slate-900 flex-shrink-0">
+    <div class="max-w-3xl mx-auto flex gap-2 items-end bg-slate-800/60 border border-slate-700 rounded-xl px-4 py-2 focus-within:border-indigo-500 transition-colors">
+      <textarea id="input" rows="1" placeholder="Message the model... (Enter to send)" class="flex-1 bg-transparent border-none outline-none resize-none max-h-[200px] min-h-[24px] py-2 text-[15px] text-slate-100 placeholder-slate-500"></textarea>
+      <button id="send" class="w-9 h-9 rounded-lg bg-indigo-500 hover:bg-indigo-400 flex items-center justify-center disabled:opacity-30 transition-colors flex-shrink-0" title="Send">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+      </button>
+    </div>
+    <div class="text-center text-xs text-slate-600 mt-2">Tools enabled: time, calculator, location, web search, web fetch, Python</div>
+  </div>
+</main>
+
+<!-- ========== SETTINGS DRAWER ========== -->
+<div id="overlay" class="fixed inset-0 bg-black/60 z-50 hidden"></div>
+<aside id="drawer" class="fixed top-0 right-0 bottom-0 w-96 max-w-full bg-slate-900 border-l border-slate-800 z-[60] flex flex-col transform translate-x-full transition-transform duration-200">
+  <div class="p-4 border-b border-slate-800 flex items-center gap-3 flex-shrink-0">
+    <h2 class="font-semibold text-base flex-1">Settings</h2>
+    <button id="closeDrawer" class="w-8 h-8 border border-slate-800 rounded-lg text-slate-400 flex items-center justify-center" aria-label="Close">✕</button>
+  </div>
+  <div class="p-5 overflow-y-auto flex-1 space-y-6">
+    <div>
+      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2" for="apikey">Ollama Cloud API Key</label>
+      <input id="apikey" type="password" placeholder="ollama_..." class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm focus:border-indigo-500 outline-none transition-colors" autocomplete="off" />
+      <p class="text-xs text-slate-600 mt-2">Stored in your browser. Sent only to your proxy, which forwards it to ollama.com.</p>
     </div>
 
-    <div class="field">
-      <label for="tempSlider">Temperature</label>
-      <div class="slider-wrap">
-        <input id="tempSlider" type="range" min="0" max="2" step="0.1" value="0.7" />
-        <span class="slider-value" id="tempValue">0.7</span>
+    <div>
+      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2" for="tempSlider">Temperature</label>
+      <div class="flex items-center gap-3">
+        <input id="tempSlider" type="range" min="0" max="2" step="0.1" value="0.7" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
+        <span id="tempValue" class="text-sm text-slate-400 w-10 text-right font-mono">0.7</span>
       </div>
-      <div class="desc">Lower = more focused, higher = more creative.</div>
     </div>
 
-    <div class="field">
-      <label for="systemPrompt">System Prompt</label>
-      <textarea id="systemPrompt" rows="3" placeholder="You are a helpful assistant."></textarea>
-      <div class="desc">Prepended to every new conversation.</div>
+    <div>
+      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2" for="systemPrompt">System Prompt</label>
+      <textarea id="systemPrompt" rows="3" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none resize-y transition-colors" placeholder="You are a helpful assistant."></textarea>
     </div>
 
-    <div class="field">
-      <label>Behavior</label>
-      <div class="toggle">
+    <div>
+      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Behavior</label>
+      <div class="flex items-center justify-between py-2">
         <div>
-          <div class="toggle-label">Markdown rendering</div>
-          <div class="toggle-desc">Format responses as rich text</div>
+          <div class="text-sm">Markdown rendering</div>
+          <div class="text-xs text-slate-600">Format responses as rich text</div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggleMarkdown" checked />
-          <span></span>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="toggleMarkdown" class="sr-only peer" checked />
+          <div class="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
         </label>
       </div>
-      <div class="toggle">
+      <div class="flex items-center justify-between py-2">
         <div>
-          <div class="toggle-label">Show token stats</div>
-          <div class="toggle-desc">Display response time and token counts</div>
+          <div class="text-sm">Show token stats</div>
+          <div class="text-xs text-slate-600">Display response time and token counts</div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggleStats" />
-          <span></span>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="toggleStats" class="sr-only peer" />
+          <div class="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
         </label>
       </div>
     </div>
 
-    <div class="field">
-      <label>Data</label>
-      <div class="btn-row">
-        <button class="btn-secondary" id="exportBtn">Export chat</button>
-        <button class="btn-danger" id="clearAllBtn">Clear all</button>
+    <div>
+      <label class="block text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Data</label>
+      <div class="flex gap-2">
+        <button id="exportBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg py-2 text-sm text-slate-300 transition-colors">Export chat</button>
+        <button id="clearAllBtn" class="flex-1 bg-transparent hover:bg-red-500/10 border border-red-500/40 text-red-400 rounded-lg py-2 text-sm transition-colors">Clear all</button>
       </div>
     </div>
 
-    <button class="btn-primary" id="saveSettings">Save & close</button>
-
+    <button id="saveSettings" class="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-semibold rounded-lg py-2.5 text-sm transition-colors">Save & close</button>
   </div>
 </aside>
 
 <script>
 /* =========================================================
-   State
+   State & Constants
    ========================================================= */
 const DEFAULT_MODELS = [
-  { id: "gemma4:31b",          label: "gemma4:31b",          badge: "31B" },
-  { id: "gpt-oss:120b",        label: "gpt-oss:120b",        badge: "120B" },
-  { id: "gpt-oss:20b",         label: "gpt-oss:20b",         badge: "20B" },
+  { id: "gemma4:31b", label: "gemma4:31b", badge: "31B" },
+  { id: "gpt-oss:120b", label: "gpt-oss:120b", badge: "120B" },
+  { id: "gpt-oss:20b", label: "gpt-oss:20b", badge: "20B" },
   { id: "nemotron-3-nano:30b", label: "nemotron-3-nano:30b", badge: "30B" },
-  { id: "nemotron-3-super",    label: "nemotron-3-super",    badge: "SUPER" },
-  { id: "nemotron-3-ultra",    label: "nemotron-3-ultra",    badge: "ULTRA" },
+  { id: "nemotron-3-super", label: "nemotron-3-super", badge: "SUPER" },
+  { id: "nemotron-3-ultra", label: "nemotron-3-ultra", badge: "ULTRA" },
 ];
 
 const state = {
@@ -870,10 +153,10 @@ const state = {
 };
 
 /* =========================================================
-   DOM refs
+   DOM References
    ========================================================= */
 const chatEl = document.getElementById("chat");
-const emptyEl = document.getElementById("empty");
+const emptyEl = document.createElement("div"); // Placeholder created lazily
 const inputEl = document.getElementById("input");
 const sendEl = document.getElementById("send");
 const statusDot = document.getElementById("statusDot");
@@ -897,20 +180,23 @@ const toggleStats = document.getElementById("toggleStats");
 const saveSettings = document.getElementById("saveSettings");
 const exportBtn = document.getElementById("exportBtn");
 const clearAllBtn = document.getElementById("clearAllBtn");
-const hintEl = document.getElementById("hint");
 
 /* =========================================================
-   Sidebar / model list
+   Sidebar & Model List
    ========================================================= */
 function renderModelList() {
   modelListEl.innerHTML = "";
   state.models.forEach((m) => {
     const item = document.createElement("div");
-    item.className = "model-item" + (m.id === state.currentModel ? " active" : "");
+    item.className = `flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer text-sm transition-colors border ${
+      m.id === state.currentModel
+        ? "bg-indigo-500/15 border-indigo-500/30 text-indigo-200"
+        : "border-transparent hover:bg-slate-800 text-slate-300"
+    }`;
     item.innerHTML = `
-      <span class="dot"></span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.label}</span>
-      ${m.badge ? `<span class="badge">${m.badge}</span>` : ""}
+      <span class="w-1.5 h-1.5 rounded-full ${m.id === state.currentModel ? "bg-indigo-400" : "bg-slate-600"}"></span>
+      <span class="flex-1 truncate">${m.label}</span>
+      ${m.badge ? `<span class="text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider ${m.id === state.currentModel ? "bg-indigo-500/20 text-indigo-300" : "bg-slate-800 text-slate-500"}">${m.badge}</span>` : ""}
     `;
     item.addEventListener("click", () => selectModel(m.id));
     modelListEl.appendChild(item);
@@ -926,14 +212,14 @@ function selectModel(id) {
   inputEl.focus();
 }
 
-function openSidebarMobile() { sidebarEl.classList.add("open"); sidebarBackdrop.classList.add("open"); }
-function closeSidebarMobile() { sidebarEl.classList.remove("open"); sidebarBackdrop.classList.remove("open"); }
+function openSidebarMobile() { sidebarEl.classList.remove("-translate-x-full"); sidebarBackdrop.classList.remove("hidden"); }
+function closeSidebarMobile() { sidebarEl.classList.add("-translate-x-full"); sidebarBackdrop.classList.add("hidden"); }
 
 menuBtn.addEventListener("click", openSidebarMobile);
 sidebarBackdrop.addEventListener("click", closeSidebarMobile);
 
 /* =========================================================
-   Settings drawer
+   Settings Drawer
    ========================================================= */
 function openDrawer() {
   apikeyEl.value = state.apiKey;
@@ -942,12 +228,12 @@ function openDrawer() {
   systemPromptEl.value = state.systemPrompt;
   toggleMarkdown.checked = state.markdown;
   toggleStats.checked = state.showStats;
-  drawerEl.classList.add("open");
-  overlayEl.classList.add("open");
+  drawerEl.classList.remove("translate-x-full");
+  overlayEl.classList.remove("hidden");
 }
 function closeDrawerFn() {
-  drawerEl.classList.remove("open");
-  overlayEl.classList.remove("open");
+  drawerEl.classList.add("translate-x-full");
+  overlayEl.classList.add("hidden");
 }
 
 settingsBtn.addEventListener("click", openDrawer);
@@ -973,7 +259,6 @@ saveSettings.addEventListener("click", () => {
   localStorage.setItem("ollama_stats", state.showStats);
 
   closeDrawerFn();
-  updateHint();
 });
 
 exportBtn.addEventListener("click", () => {
@@ -999,56 +284,69 @@ clearAllBtn.addEventListener("click", () => {
   currentModelName.textContent = state.currentModel;
   renderModelList();
   chatEl.innerHTML = "";
-  chatEl.appendChild(emptyEl);
   setStatus(null);
-  updateHint();
   closeDrawerFn();
 });
 
 /* =========================================================
-   Status / hint
+   Status
    ========================================================= */
 function setStatus(s) {
-  statusDot.classList.remove("on", "err");
-  if (s === "ok") statusDot.classList.add("on");
-  if (s === "err") statusDot.classList.add("err");
-}
-function updateHint() {
-  hintEl.textContent = state.apiKey
-    ? "Streaming via your proxy · key stored locally"
-    : "Add your API key in settings to begin";
+  statusDot.classList.remove("bg-emerald-500", "bg-red-500");
+  if (s === "ok") statusDot.classList.add("bg-emerald-500");
+  if (s === "err") statusDot.classList.add("bg-red-500");
 }
 
 /* =========================================================
-   Chat rendering
+   Chat Rendering
    ========================================================= */
 function scrollBottom() {
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-function addMessage(role, text = "") {
-  if (emptyEl.parentNode) emptyEl.remove();
-  const wrap = document.createElement("div");
-  wrap.className = "msg-wrap " + role;
+function showEmptyState() {
+  if (chatEl.querySelector(".empty-state")) return;
+  const empty = document.createElement("div");
+  empty.className = "empty-state m-auto text-center text-slate-500 text-sm leading-relaxed max-w-md p-5";
+  empty.innerHTML = `
+    <h2 class="text-slate-200 text-xl font-bold mb-2">Ready when you are</h2>
+    <p>Pick a model from the sidebar, then start chatting.</p>
+    <p class="mt-4 text-xs">
+      <span class="inline-block bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono">Enter</span> to send &nbsp;·&nbsp;
+      <span class="inline-block bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono">Shift</span> + <span class="inline-block bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono">Enter</span> for newline
+    </p>
+  `;
+  chatEl.appendChild(empty);
+}
 
-  if (role === "assistant") {
+function addMessage(role, text = "") {
+  chatEl.querySelector(".empty-state")?.remove();
+  const wrap = document.createElement("div");
+  wrap.className = `max-w-3xl w-full mx-auto flex gap-3 ${role === "user" ? "justify-end" : ""}`;
+
+  if (role === "assistant" || role === "user") {
     const av = document.createElement("div");
-    av.className = "avatar assistant";
-    av.textContent = "AI";
-    wrap.appendChild(av);
-  } else if (role === "user") {
-    const av = document.createElement("div");
-    av.className = "avatar user";
-    av.textContent = "You";
+    av.className = `w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
+      role === "assistant"
+        ? "bg-gradient-to-br from-indigo-500 to-purple-500 text-white"
+        : "bg-slate-800 text-slate-400"
+    }`;
+    av.textContent = role === "assistant" ? "AI" : "You";
     wrap.appendChild(av);
   }
 
   const msg = document.createElement("div");
-  msg.className = "msg " + role;
+  msg.className = `px-4 py-3 rounded-xl text-sm leading-relaxed break-words min-w-0 ${
+    role === "user"
+      ? "bg-indigo-950/60 border border-indigo-900/50 rounded-br-sm"
+      : role === "assistant"
+      ? "bg-slate-800/80 border border-slate-700 rounded-bl-sm flex-1"
+      : "bg-red-500/10 border border-red-500/30 text-red-300 text-xs mx-auto"
+  }`;
 
   if (role === "error") {
-    wrap.removeChild(wrap.firstChild);
     msg.textContent = text;
+    wrap.removeChild(wrap.firstChild);
     wrap.appendChild(msg);
     chatEl.appendChild(wrap);
     scrollBottom();
@@ -1065,48 +363,36 @@ function addMessage(role, text = "") {
   return body;
 }
 
-/* ---------- Markdown (small, safe, no deps) ---------- */
+/* ---------- Markdown Parser (no deps) ---------- */
 function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[c]));
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function renderMarkdown(text) {
-  // Extract fenced code blocks first
   const codeBlocks = [];
   let src = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const idx = codeBlocks.length;
     codeBlocks.push({ lang, code });
-    return `\u0000CODE${idx}\u0000`;
+    return `\u0000CODE${codeBlocks.length - 1}\u0000`;
   });
 
   src = escapeHtml(src);
-
-  // Headings
-  src = src.replace(/^### (.*)$/gm, "<h3>$1</h3>");
-  src = src.replace(/^## (.*)$/gm, "<h2>$1</h2>");
-  src = src.replace(/^# (.*)$/gm, "<h1>$1</h1>");
-
-  // Blockquotes
-  src = src.replace(/^&gt; (.*)$/gm, "<blockquote>$1</blockquote>");
-
-  // Bold / italic / inline code
+  src = src.replace(/^### (.*)$/gm, "<h3 class=\"text-base font-semibold mt-3 mb-1\">$1</h3>");
+  src = src.replace(/^## (.*)$/gm, "<h2 class=\"text-lg font-semibold mt-3 mb-1\">$1</h2>");
+  src = src.replace(/^# (.*)$/gm, "<h1 class=\"text-xl font-bold mt-4 mb-2\">$1</h1>");
+  src = src.replace(/^&gt; (.*)$/gm, "<blockquote class=\"border-l-2 border-slate-600 pl-3 my-2 text-slate-400\">$1</blockquote>");
   src = src.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   src = src.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  src = src.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-  // Links
-  src = src.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  src = src.replace(/`([^`\n]+)`/g, '<code class="bg-slate-700/50 px-1.5 py-0.5 rounded text-[0.88em] font-mono">$1</code>');
+  src = src.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-indigo-400 hover:underline">$1</a>');
 
   // Lists
   src = src.replace(/(?:^|\n)((?:[-*] .*(?:\n|$))+)/g, (m, block) => {
-    const items = block.trim().split("\n").map((l) => "<li>" + l.replace(/^[-*]\s/, "") + "</li>").join("");
-    return "\n<ul>" + items + "</ul>";
+    const items = block.trim().split("\n").map((l) => "<li class=\"ml-5 list-disc\">" + l.replace(/^[-*]\s/, "") + "</li>").join("");
+    return "\n<ul class=\"my-2 space-y-1\">" + items + "</ul>";
   });
   src = src.replace(/(?:^|\n)((?:\d+\. .*(?:\n|$))+)/g, (m, block) => {
-    const items = block.trim().split("\n").map((l) => "<li>" + l.replace(/^\d+\.\s/, "") + "</li>").join("");
-    return "\n<ol>" + items + "</ol>";
+    const items = block.trim().split("\n").map((l) => "<li class=\"ml-5 list-decimal\">" + l.replace(/^\d+\.\s/, "") + "</li>").join("");
+    return "\n<ol class=\"my-2 space-y-1\">" + items + "</ol>";
   });
 
   // Paragraphs
@@ -1119,7 +405,7 @@ function renderMarkdown(text) {
   // Restore code blocks
   src = src.replace(/\u0000CODE(\d+)\u0000/g, (_, i) => {
     const { lang, code } = codeBlocks[+i];
-    return `<pre><button class="copy-code" data-code="${encodeURIComponent(code)}">Copy</button><code class="lang-${lang}">${escapeHtml(code)}</code></pre>`;
+    return `<pre class="bg-slate-950 border border-slate-700 rounded-lg p-3 overflow-x-auto my-3 text-[13px] leading-relaxed relative"><button class="copy-code absolute top-2 right-2 bg-slate-800 border border-slate-700 text-slate-400 rounded px-2 py-0.5 text-[10px] opacity-0 hover:opacity-100 transition-opacity" data-code="${encodeURIComponent(code)}">Copy</button><code class="font-mono">${escapeHtml(code)}</code></pre>`;
   });
 
   return src;
@@ -1132,15 +418,15 @@ function attachCopyButtons(container) {
       try {
         await navigator.clipboard.writeText(code);
         btn.textContent = "Copied";
-        btn.classList.add("copied");
-        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1400);
+        btn.classList.add("text-emerald-400");
+        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("text-emerald-400"); }, 1400);
       } catch {}
     });
   });
 }
 
 /* =========================================================
-   Send / stream
+   Send / Stream
    ========================================================= */
 async function send() {
   const text = inputEl.value.trim();
@@ -1157,7 +443,6 @@ async function send() {
   state.busy = true;
   sendEl.disabled = true;
 
-  // Build messages with system prompt if this is a new conversation
   if (state.messages.length === 0 && state.systemPrompt.trim()) {
     state.messages.push({ role: "system", content: state.systemPrompt.trim() });
   }
@@ -1176,10 +461,7 @@ async function send() {
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Ollama-Key": state.apiKey,
-      },
+      headers: { "Content-Type": "application/json", "X-Ollama-Key": state.apiKey },
       body: JSON.stringify({
         model: state.currentModel,
         messages: state.messages,
@@ -1193,7 +475,6 @@ async function send() {
     }
 
     setStatus("ok");
-
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -1223,7 +504,7 @@ async function send() {
           }
           if (chunk.done) finalChunk = chunk;
           if (chunk.error) throw new Error(chunk.error);
-        } catch (e) { /* ignore partial */ }
+        } catch {}
       }
     }
 
@@ -1237,12 +518,11 @@ async function send() {
     if (state.showStats && finalChunk) {
       const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
       const meta = document.createElement("div");
-      meta.className = "msg-meta";
+      meta.className = "text-[11px] text-slate-600 mt-2 flex gap-3";
       const parts = [`${elapsed}s`];
       if (finalChunk.eval_count) parts.push(`${finalChunk.eval_count} tokens`);
       if (finalChunk.eval_count && finalChunk.eval_duration) {
-        const tps = finalChunk.eval_count / (finalChunk.eval_duration / 1e9);
-        parts.push(`${tps.toFixed(1)} tok/s`);
+        parts.push(`${(finalChunk.eval_count / (finalChunk.eval_duration / 1e9)).toFixed(1)} tok/s`);
       }
       meta.textContent = parts.join(" · ");
       bodyEl.parentElement.appendChild(meta);
@@ -1260,7 +540,7 @@ async function send() {
 }
 
 /* =========================================================
-   Input handling
+   Input Handling
    ========================================================= */
 function autoGrow() {
   inputEl.style.height = "auto";
@@ -1276,14 +556,14 @@ inputEl.addEventListener("keydown", (e) => {
 sendEl.addEventListener("click", send);
 
 /* =========================================================
-   New chat
+   New Chat
    ========================================================= */
 newChatBtn.addEventListener("click", () => {
   if (state.busy) return;
   if (state.messages.length && !confirm("Start a new chat? Current conversation will be cleared.")) return;
   state.messages = [];
   chatEl.innerHTML = "";
-  chatEl.appendChild(emptyEl);
+  showEmptyState();
   setStatus(null);
   closeSidebarMobile();
   inputEl.focus();
@@ -1294,11 +574,10 @@ newChatBtn.addEventListener("click", () => {
    ========================================================= */
 currentModelName.textContent = state.currentModel;
 renderModelList();
-updateHint();
+showEmptyState();
 autoGrow();
 inputEl.focus();
 
-// Close drawer / sidebar with Escape
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeDrawerFn();
