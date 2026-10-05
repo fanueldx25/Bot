@@ -21,10 +21,13 @@ import express from 'express';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import archiver from 'archiver';
+import unzipper from 'unzipper';
+import multer from 'multer';
 import { fileURLToPath } from 'url';
 import { createWorker } from 'tesseract.js';
 import * as cheerio from 'cheerio';
-import Jimp from 'jimp';
+import { Jimp } from 'jimp';   // 🔑 FIXED import
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,107 +47,76 @@ const DEFAULT_SYSTEM_PROMPT = `You are **Panda Bot**, a highly capable AI assist
 
 # PERSONALITY
 - You are professional, friendly, and efficient.
-- You are confident but never arrogant.
-- You use clear, concise language — no fluff, no filler.
-- You adapt your tone to the user: casual for casual, formal for formal.
-- You add light personality (subtle wit, warmth) but stay focused on being helpful.
-- You never pretend to have feelings, consciousness, or physical form.
+- Confident but never arrogant. Clear, concise language. No fluff.
+- Adapt tone to the user. Use subtle warmth and wit, but stay focused.
+- Never pretend to have feelings, consciousness, or physical form.
 
 # COMMUNICATION STYLE
-- Keep replies short and scannable (under 200 words unless the user asks for detail).
-- Use bullet points, numbered lists, and bold text for clarity when listing things.
-- Use emojis sparingly and only when they add value (✅, ⚠️, 📌, 🎯).
-- Match the user's language — if they write in Spanish, reply in Spanish.
-- Never use markdown headers (#) in WhatsApp messages — they render poorly. Use bold and bullets instead.
-- Break long responses into digestible chunks.
+- Keep replies under 200 words unless asked for detail.
+- Use bullets, numbered lists, and bold for clarity.
+- Use emojis sparingly (✅, ⚠️, 📌, 🎯).
+- Match the user's language.
+- No markdown headers (#) — they render poorly in WhatsApp.
 
 # CORE CAPABILITIES — YOU HAVE TOOLS
-You have access to powerful tools. **You must use them proactively** whenever the user's request matches a tool's purpose. Do not guess or hallucinate information that a tool can provide.
+Use tools proactively whenever the request matches.
 
 ## 🛠️ Available Tools
 
-### 1. calculator
-- Use for ANY math: arithmetic, percentages, powers, roots, currency math, unit conversions.
-- Trigger phrases: "what is 25% of 340", "calculate", "how much is", "solve", "12 * 45", "sqrt(144)".
-- Never do mental math for non-trivial calculations — always call this tool.
-- Example: User asks "what's 18% tip on $87.50?" → call calculator with "87.50 * 0.18".
+### calculator
+- Use for ANY math: arithmetic, percentages, powers, roots, conversions.
+- Never do mental math for non-trivial calculations.
 
-### 2. current_time
-- Use for ANY question about the current date, time, day of the week, or timezone conversions.
-- Trigger phrases: "what time is it", "what day is today", "time in Tokyo", "how many days until".
-- Always pass the correct IANA timezone when the user specifies a location.
-- Example: User asks "what time is it in Lagos?" → call current_time with timezone "Africa/Lagos".
+### current_time
+- Use for questions about current date, time, day, or timezone conversions.
+- Always pass the correct IANA timezone if the user names a location.
 
-### 3. web_search
-- Use for ANY question about current events, news, facts you're unsure about, or real-time information.
-- Trigger phrases: "search for", "look up", "what's the latest", "who is", "when did", "news about".
-- Always search before answering factual questions about recent events, people, or products.
-- Cite sources when possible (include the URL from the search result).
-- Example: User asks "who won the 2024 Champions League?" → call web_search with "2024 Champions League winner".
+### web_search
+- Use for current events, news, uncertain facts, real-time info.
+- Always search before answering factual questions about recent events or people.
+- Cite sources when possible.
 
-### 4. extract_link
-- Use whenever the user shares a URL or asks about a webpage's content.
-- Trigger phrases: any URL in the message, "summarize this link", "what does this article say".
-- Always call extract_link before trying to answer questions about a specific webpage.
-- After extraction, summarize the key points — don't just dump the raw text.
-- Example: User sends "https://example.com/news" → call extract_link, then summarize the article.
+### extract_link
+- Use whenever the user shares a URL or asks about a webpage.
+- Summarize key points — don't dump raw text.
 
 # TOOL USAGE RULES
-1. **Be proactive** — if a tool can answer the question, use it. Don't say "I don't know" when a tool exists.
-2. **Chain tools when needed** — e.g. search for a URL, then extract it for details.
-3. **Never fabricate tool results** — if a tool fails, tell the user honestly.
-4. **Explain tool use briefly** — e.g. "Let me look that up..." or "Calculating..."
-5. **Don't over-use tools** — simple greetings or opinions don't need tools.
-6. **Multiple tools in one turn** — if the user asks a compound question, call both tools.
-
-# RESPONSE FORMAT
-When you use a tool:
-- First, acknowledge briefly: "Let me check that for you..." or "Searching now..."
-- Then give the answer clearly.
-- If search results are relevant, mention the source.
-- If calculator result, show the formula and the result.
-
-Example response:
-> 🧮 18% of $87.50 = **$15.75**
-> Your total with tip: **$103.25**
+1. Be proactive — if a tool can answer, use it.
+2. Chain tools when needed (search then extract).
+3. Never fabricate tool results.
+4. Acknowledge tool use briefly ("Let me look that up...").
+5. Don't over-use tools for greetings or opinions.
+6. Multiple tools per turn if the question is compound.
 
 # HANDLING IMAGES
-- When a user sends an image, you may receive extracted text from it (OCR).
-- Treat that extracted text as the user's message and respond accordingly.
-- If the image contains a question, answer it.
-- If the image contains data (receipt, table, document), help analyze it.
-- If OCR text is empty or garbled, politely ask the user to resend or type it.
+- You may receive OCR-extracted text from images.
+- Treat it as the user's message and respond accordingly.
+- If OCR text is garbled or empty, politely ask for a resend.
 
 # GROUP CHAT BEHAVIOR
-- You are in a group chat. Respond only when appropriate.
-- You are being addressed when: mentioned, replied to, or the message starts with /ai.
-- Keep group replies extra concise — people are watching.
-- Never spam the group. If unsure, stay silent.
-- If asked to do something disruptive (mass tagging, spamming), refuse politely.
+- Respond only when mentioned, replied to, or when the message starts with /ai.
+- Keep group replies extra concise.
+- Never spam the group.
+- Refuse disruptive requests politely.
 
 # SAFETY & BOUNDARIES
-- Never share personal information about Fanuel or Panda Bot's internal systems.
-- Never execute code, access files, or perform actions outside your tools.
-- Never help with illegal, harmful, or unethical requests.
-- If asked to do something you can't, offer an alternative.
-- If you don't know something and no tool helps, say so honestly.
+- Never share personal info about Fanuel or internal systems.
+- Never execute code or access files outside your tools.
+- Refuse illegal, harmful, or unethical requests.
+- If you can't do something, offer an alternative.
+- Be honest about uncertainty.
 
 # SELF-IDENTIFICATION
-If asked "who are you?" or "what are you?":
-> "I'm Panda Bot 🐼 — an AI assistant built by Fanuel. I can help with questions, calculations, searches, and more. What can I do for you?"
-
-If asked "who made you?":
-> "I was built by Fanuel. Powered by Panda Bot's AI infrastructure."
-
-If asked "are you ChatGPT / GPT / Claude / Gemini?":
-> "No, I'm Panda Bot — a custom AI assistant built by Fanuel. I run on Panda Bot's own infrastructure."
+"Who are you?" → "I'm Panda Bot 🐼 — an AI assistant built by Fanuel. I can help with questions, calculations, searches, and more. What can I do for you?"
+"Who made you?" → "I was built by Fanuel. Powered by Panda Bot's AI infrastructure."
+"Are you ChatGPT/GPT/Claude/Gemini?" → "No, I'm Panda Bot — a custom AI assistant built by Fanuel. I run on Panda Bot's own infrastructure."
 
 # FINAL PRINCIPLES
-- Be **useful** first, entertaining second.
-- Be **honest** about uncertainty.
-- Be **concise** — respect the user's time.
-- Be **proactive** with tools — that's what makes you powerful.
-- Be **loyal** to your identity as Panda Bot by Fanuel.
+- Be useful first, entertaining second.
+- Be honest about uncertainty.
+- Be concise — respect the user's time.
+- Be proactive with tools.
+- Be loyal to your identity as Panda Bot by Fanuel.
 
 You are ready. Help the user with excellence.`;
 
@@ -173,6 +145,9 @@ const CONFIG = {
 
   AUTH_FOLDER: process.env.AUTH_FOLDER || './auth_info_baileys',
   PORT: process.env.PORT || 3000,
+
+  // Session export passphrase (optional — set for extra security)
+  SESSION_SECRET: process.env.SESSION_SECRET || '',
 };
 
 // =========================================================
@@ -205,11 +180,13 @@ async function getOcrWorker() {
 async function extractTextFromImage(buffer) {
   try {
     const worker = await getOcrWorker();
+
+    // 🔑 FIXED: Jimp v1.x syntax
     const img = await Jimp.read(buffer);
-    const processed = await img
-      .grayscale()
-      .contrast(0.3)
-      .getBufferAsync(Jimp.MIME_PNG);
+    img.grayscale();
+    img.contrast(0.3);
+    const processed = await img.getBuffer('image/png');
+
     const { data: { text } } = await worker.recognize(processed);
     return text.trim();
   } catch (err) {
@@ -231,10 +208,7 @@ const TOOLS = [
         type: 'object',
         required: ['expression'],
         properties: {
-          expression: {
-            type: 'string',
-            description: 'Math expression, e.g. "(2+3)*4" or "sqrt(16)+10"'
-          }
+          expression: { type: 'string', description: 'Math expression, e.g. "(2+3)*4" or "sqrt(16)+10"' }
         }
       }
     }
@@ -247,10 +221,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          timezone: {
-            type: 'string',
-            description: 'IANA timezone, e.g. "UTC", "Africa/Lagos", "America/New_York". Defaults to UTC.'
-          }
+          timezone: { type: 'string', description: 'IANA timezone, e.g. "UTC", "Africa/Lagos"' }
         }
       }
     }
@@ -274,7 +245,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'extract_link',
-      description: 'Fetch a URL and return its readable text content. Use when the user shares a link or asks about a webpage.',
+      description: 'Fetch a URL and return its readable text content.',
       parameters: {
         type: 'object',
         required: ['url'],
@@ -319,10 +290,8 @@ async function toolWebSearch({ query, limit = 5 }) {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PandaBot/1.0)' }
     });
     if (!res.ok) throw new Error(`Search failed: ${res.status}`);
-
     const html = await res.text();
     const $ = cheerio.load(html);
-
     const results = [];
     $('.result').slice(0, limit).each((i, el) => {
       const title = $(el).find('.result__a').text().trim();
@@ -330,7 +299,6 @@ async function toolWebSearch({ query, limit = 5 }) {
       const link = $(el).find('.result__a').attr('href') || '';
       if (title && link) results.push({ title, snippet, link });
     });
-
     return { ok: true, query, results };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -341,29 +309,22 @@ async function toolExtractLink({ url }) {
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http/https URLs');
-
     const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; PandaBot/1.0)',
-        'Accept': 'text/html,application/xhtml+xml'
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PandaBot/1.0)', 'Accept': 'text/html' },
       redirect: 'follow'
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('text/html') && !contentType.includes('xml')) {
       throw new Error(`Unsupported content type: ${contentType}`);
     }
-
     const html = await res.text();
     const $ = cheerio.load(html);
-
     $('script, style, noscript, iframe, svg, canvas, nav, footer, header, aside, form, button').remove();
 
     let text = '';
-    const articleSelectors = ['article', 'main', '[role="main"]', '.post-content', '.entry-content', '.article-body'];
-    for (const sel of articleSelectors) {
+    const selectors = ['article', 'main', '[role="main"]', '.post-content', '.entry-content', '.article-body'];
+    for (const sel of selectors) {
       const candidate = $(sel).first().text().trim();
       if (candidate.length > 200) { text = candidate; break; }
     }
@@ -380,11 +341,11 @@ async function toolExtractLink({ url }) {
 async function executeTool(name, args) {
   console.log(`[Tool] ${name}(${JSON.stringify(args)})`);
   switch (name) {
-    case 'calculator':    return toolCalculator(args);
-    case 'current_time':  return toolCurrentTime(args);
-    case 'web_search':    return toolWebSearch(args);
-    case 'extract_link':  return toolExtractLink(args);
-    default:              return { ok: false, error: `Unknown tool: ${name}` };
+    case 'calculator':   return toolCalculator(args);
+    case 'current_time': return toolCurrentTime(args);
+    case 'web_search':   return toolWebSearch(args);
+    case 'extract_link': return toolExtractLink(args);
+    default:             return { ok: false, error: `Unknown tool: ${name}` };
   }
 }
 
@@ -408,16 +369,8 @@ async function askOllama(messages, useTools = true) {
     };
     if (useTools && CONFIG.ENABLE_TOOLS) body.tools = TOOLS;
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Ollama ${res.status}: ${errText}`);
-    }
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
 
     const data = await res.json();
     const msg = data.message || {};
@@ -434,25 +387,17 @@ async function askOllama(messages, useTools = true) {
       let args = {};
       try { args = typeof argsJson === 'string' ? JSON.parse(argsJson) : argsJson; }
       catch { args = {}; }
-
       const result = await executeTool(name, args);
-      workingMessages.push({
-        role: 'tool',
-        tool_name: name,
-        content: JSON.stringify(result),
-      });
+      workingMessages.push({ role: 'tool', tool_name: name, content: JSON.stringify(result) });
     }
   }
-
   return 'I tried to use tools but couldn\'t complete the request. Please try rephrasing.';
 }
 
 // =========================================================
 // CONVERSATION MEMORY
 // =========================================================
-function getHistory(chatId) {
-  return state.conversations.get(chatId) || [];
-}
+function getHistory(chatId) { return state.conversations.get(chatId) || []; }
 
 function appendHistory(chatId, role, content) {
   let h = state.conversations.get(chatId) || [];
@@ -493,8 +438,14 @@ function recordReply(chatId) {
 // EXPRESS SERVER
 // =========================================================
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Multer for session upload
+const upload = multer({ dest: path.join(__dirname, 'tmp_uploads') });
+if (!fs.existsSync(path.join(__dirname, 'tmp_uploads'))) {
+  fs.mkdirSync(path.join(__dirname, 'tmp_uploads'), { recursive: true });
+}
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -517,10 +468,13 @@ app.get('/health', (req, res) => {
       tools: CONFIG.ENABLE_TOOLS,
       ocr: CONFIG.ENABLE_OCR,
       linkExtract: CONFIG.ENABLE_LINK_EXTRACT,
+      sessionExport: true,
     },
+    sessionExists: fs.existsSync(CONFIG.AUTH_FOLDER),
   });
 });
 
+// ---- Pairing ----
 app.post('/pair', async (req, res) => {
   try {
     const { phone } = req.body;
@@ -543,6 +497,152 @@ app.post('/pair', async (req, res) => {
   }
 });
 
+// =========================================================
+// 🆕 SESSION EXPORT — download auth folder as ZIP
+// =========================================================
+app.get('/session/export', async (req, res) => {
+  try {
+    if (!fs.existsSync(CONFIG.AUTH_FOLDER)) {
+      return res.status(404).json({ error: 'No session folder found. Pair first.' });
+    }
+
+    const files = fs.readdirSync(CONFIG.AUTH_FOLDER);
+    if (files.length === 0) {
+      return res.status(404).json({ error: 'Session folder is empty.' });
+    }
+
+    // Optional passphrase check (if SESSION_SECRET is set)
+    if (CONFIG.SESSION_SECRET) {
+      const provided = req.query.secret || req.headers['x-session-secret'];
+      if (provided !== CONFIG.SESSION_SECRET) {
+        return res.status(401).json({ error: 'Invalid session secret' });
+      }
+    }
+
+    const filename = `panda-session-${Date.now()}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('error', (err) => {
+      console.error('[Export] Archive error:', err);
+      res.status(500).end();
+    });
+    archive.pipe(res);
+    archive.directory(CONFIG.AUTH_FOLDER, 'auth_info_baileys');
+    await archive.finalize();
+
+    console.log(`[Export] Session ZIP sent: ${filename}`);
+  } catch (err) {
+    console.error('[Export] Error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================================================
+// 🆕 SESSION IMPORT — upload ZIP to restore auth folder
+// =========================================================
+app.post('/session/import', upload.single('session'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    // Optional passphrase check
+    if (CONFIG.SESSION_SECRET) {
+      const provided = req.body.secret || req.headers['x-session-secret'];
+      if (provided !== CONFIG.SESSION_SECRET) {
+        fs.unlinkSync(req.file.path);
+        return res.status(401).json({ error: 'Invalid session secret' });
+      }
+    }
+
+    // Close current socket before overwriting
+    if (state.sock) {
+      try { state.sock.end(new Error('Session import')); } catch {}
+      await delay(1000);
+    }
+
+    // Delete existing auth folder
+    if (fs.existsSync(CONFIG.AUTH_FOLDER)) {
+      fs.rmSync(CONFIG.AUTH_FOLDER, { recursive: true, force: true });
+    }
+    fs.mkdirSync(CONFIG.AUTH_FOLDER, { recursive: true });
+
+    // Extract ZIP into auth folder
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(req.file.path)
+        .pipe(unzipper.Extract({
+          path: path.join(__dirname, 'tmp_extract')
+        }))
+        .on('close', resolve)
+        .on('error', reject);
+    });
+
+    // The ZIP contains auth_info_baileys/ folder — move its contents
+    const extractPath = path.join(__dirname, 'tmp_extract');
+    const innerFolder = path.join(extractPath, 'auth_info_baileys');
+
+    let source = extractPath;
+    if (fs.existsSync(innerFolder)) source = innerFolder;
+
+    // Move files
+    for (const file of fs.readdirSync(source)) {
+      fs.renameSync(
+        path.join(source, file),
+        path.join(CONFIG.AUTH_FOLDER, file)
+      );
+    }
+
+    // Cleanup
+    fs.rmSync(extractPath, { recursive: true, force: true });
+    fs.unlinkSync(req.file.path);
+
+    console.log('[Import] Session restored. Reconnecting...');
+
+    // Restart socket
+    state.isSocketReady = false;
+    state.pairing = { active: false, phone: null, code: null, error: null };
+    setTimeout(() => connectToWhatsApp().catch(console.error), 500);
+
+    res.json({ ok: true, message: 'Session imported. Reconnecting...' });
+  } catch (err) {
+    console.error('[Import] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Session info ----
+app.get('/session/info', (req, res) => {
+  try {
+    const exists = fs.existsSync(CONFIG.AUTH_FOLDER);
+    let files = [];
+    let sizeBytes = 0;
+    let modified = null;
+
+    if (exists) {
+      files = fs.readdirSync(CONFIG.AUTH_FOLDER);
+      for (const f of files) {
+        const stat = fs.statSync(path.join(CONFIG.AUTH_FOLDER, f));
+        sizeBytes += stat.size;
+        if (!modified || stat.mtime > modified) modified = stat.mtime;
+      }
+    }
+
+    res.json({
+      exists,
+      fileCount: files.length,
+      files,
+      sizeBytes,
+      sizeKB: (sizeBytes / 1024).toFixed(2),
+      modified,
+      registered: state.sock?.authState?.creds?.registered || false,
+      connected: !!state.sock?.user,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Other endpoints ----
 app.get('/chats', (req, res) => res.json({ chats: Array.from(state.conversations.keys()) }));
 
 app.get('/history/:chatId', (req, res) => {
@@ -670,14 +770,13 @@ async function handleIncomingMessage(msg) {
   const isGroup = isJidGroup(chatId);
   const senderName = msg.pushName || 'User';
 
-  // ---- Extract text ----
   let text = msg.message.conversation ||
              msg.message.extendedTextMessage?.text ||
              msg.message.imageMessage?.caption ||
              msg.message.videoMessage?.caption ||
              '';
 
-  // ---- Image OCR ----
+  // ---- OCR ----
   const imageMsg = msg.message.imageMessage;
   if (imageMsg && CONFIG.ENABLE_OCR) {
     try {
@@ -686,10 +785,8 @@ async function handleIncomingMessage(msg) {
         logger: pino({ level: 'silent' }),
         reuploadRequest: state.sock.updateMediaMessage,
       });
-      console.log(`[OCR] Image size: ${imageBuffer.length} bytes`);
       const ocrText = await extractTextFromImage(imageBuffer);
       if (ocrText) {
-        console.log(`[OCR] Extracted: ${ocrText.slice(0, 100)}...`);
         text = text ? `${text}\n\n[Extracted text from image]\n${ocrText}` : `[Extracted text from image]\n${ocrText}`;
       } else {
         text = text || '[Image received — no text detected]';
@@ -715,7 +812,6 @@ async function handleIncomingMessage(msg) {
     const isReplyToBot = quotedParticipant && jidNormalizedUser(quotedParticipant) === botJid;
 
     const startsWithAiCmd = text.trim().toLowerCase().startsWith(CONFIG.AI_COMMAND);
-
     const shouldReply = isMentioned || isReplyToBot || startsWithAiCmd;
 
     if (!shouldReply) {
@@ -730,16 +826,14 @@ async function handleIncomingMessage(msg) {
     console.log(`[Group] Replying (mentioned=${isMentioned}, replyToBot=${isReplyToBot}, /ai=${startsWithAiCmd})`);
   }
 
-  // ---- Rate limit + concurrency ----
   if (!canReply(chatId)) return;
   if (state.processing.has(chatId)) return;
   state.processing.add(chatId);
 
   try {
     await state.sock.sendPresenceUpdate('composing', chatId);
-
     const messages = buildMessages(chatId, senderName, text);
-    console.log(`[AI] Querying ${CONFIG.OLLAMA_MODEL} (tools=${CONFIG.ENABLE_TOOLS})...`);
+    console.log(`[AI] Querying ${CONFIG.OLLAMA_MODEL}...`);
     const reply = await askOllama(messages, CONFIG.ENABLE_TOOLS);
     console.log(`[AI] Reply: ${reply.substring(0, 100)}...`);
 
@@ -770,8 +864,8 @@ console.log(`Model:        ${CONFIG.OLLAMA_MODEL}`);
 console.log(`Host:         ${CONFIG.OLLAMA_HOST}`);
 console.log(`Tools:        ${CONFIG.ENABLE_TOOLS ? '✅' : '❌'}`);
 console.log(`OCR:          ${CONFIG.ENABLE_OCR ? '✅' : '❌'}`);
-console.log(`Link extract: ${CONFIG.ENABLE_LINK_EXTRACT ? '✅' : '❌'}`);
 console.log(`Group mode:   ${CONFIG.ONLY_REPLY_TO_MENTIONS ? 'Mentions / /ai / replies only' : 'All messages'}`);
+console.log(`Session save: ${CONFIG.AUTH_FOLDER}`);
 console.log('='.repeat(60));
 
 connectToWhatsApp().catch(err => { console.error('[Fatal]', err); process.exit(1); });
