@@ -8,19 +8,11 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "node-telegram-bot-api": "^0.66.0",
+    "node-telegram-bot-api": "^2.1.0",
     "openai": "^4.80.0"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": [
-    "telegram",
-    "bot",
-    "ollama",
-    "ai",
-    "llm"
-  ],
-  "author": "",
   "license": "ISC"
 }
