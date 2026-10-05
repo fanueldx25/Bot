@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
@@ -15,102 +14,127 @@
       theme: {
         extend: {
           colors: {
-            bg: '#0f0f10',
-            panel: '#17171a',
-            panel2: '#1f1f23',
-            border: '#2a2a30',
-            accent: '#6366f1',
-            accent2: '#818cf8',
+            bg: '#0f0f10', panel: '#17171a', panel2: '#1f1f23',
+            border: '#2a2a30', accent: '#6366f1', accent2: '#818cf8',
           },
-          fontFamily: {
-            sans: ['-apple-system', 'BlinkMacSystemFont', 'Inter', 'Segoe UI', 'sans-serif'],
-          },
+          fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','Inter','Segoe UI','sans-serif'] },
         },
       },
-    };
+    }
   </script>
 </head>
-
 <body class="bg-bg text-white font-sans antialiased overflow-hidden">
-  
-  <div id="app" class="flex flex-col h-[100dvh] max-w-2xl mx-auto border-x border-border">
-    
-    <!-- Header -->
-    <header class="flex items-center justify-between px-4 py-3 border-b border-border bg-panel/80 backdrop-blur-lg sticky top-0 z-20">
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-accent to-purple-600 flex items-center justify-center text-sm font-bold shadow-lg shadow-accent/20">
-          N
-        </div>
-        <div>
-          <h1 class="text-[15px] font-semibold leading-tight">Nexus Chat</h1>
-          <button id="modelBtn" class="text-[11px] text-gray-400 hover:text-accent2 transition flex items-center gap-1">
-            <span id="currentModel">Gemma 4 31B</span>
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      <button id="clearBtn" class="p-2 rounded-lg hover:bg-panel2 transition text-gray-400 hover:text-white" title="New chat">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-        </svg>
-      </button>
-    </header>
-    
-    <!-- Messages -->
-    <main id="messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4 scroll-smooth">
-      <!-- Welcome -->
-      <div id="welcome" class="flex flex-col items-center justify-center h-full text-center px-4">
-        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-purple-600 flex items-center justify-center text-2xl font-bold mb-4 shadow-xl shadow-accent/20">
-          N
-        </div>
-        <h2 class="text-xl font-semibold mb-1">How can I help?</h2>
-        <p class="text-sm text-gray-500 mb-6">Ask anything. Switch models anytime.</p>
-        <div class="grid grid-cols-1 gap-2 w-full max-w-sm">
-          <button class="suggestion text-left text-sm px-4 py-3 rounded-xl bg-panel border border-border hover:border-accent/50 transition">
-            💡 Explain quantum computing simply
-          </button>
-          <button class="suggestion text-left text-sm px-4 py-3 rounded-xl bg-panel border border-border hover:border-accent/50 transition">
-            ✍️ Write a haiku about the ocean
-          </button>
-          <button class="suggestion text-left text-sm px-4 py-3 rounded-xl bg-panel border border-border hover:border-accent/50 transition">
-            🧮 Solve: 2x + 5 = 17
-          </button>
-        </div>
-      </div>
-    </main>
-    
-    <!-- Input -->
-    <footer class="border-t border-border bg-panel/80 backdrop-blur-lg px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      <form id="chatForm" class="flex items-end gap-2">
-        <div class="flex-1 bg-panel2 rounded-2xl border border-border focus-within:border-accent/60 transition">
-          <textarea id="input" rows="1" placeholder="Message..." class="w-full bg-transparent text-[15px] px-4 py-3 resize-none outline-none placeholder-gray-500 max-h-32"></textarea>
-        </div>
-        <button id="sendBtn" type="submit" class="w-11 h-11 rounded-2xl bg-accent hover:bg-accent2 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition shadow-lg shadow-accent/20 shrink-0">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7" />
-          </svg>
+
+<div id="app" class="flex flex-col h-[100dvh] max-w-2xl mx-auto border-x border-border">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between px-4 py-3 border-b border-border bg-panel/80 backdrop-blur-lg sticky top-0 z-20">
+    <div class="flex items-center gap-3 min-w-0">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-accent to-purple-600 flex items-center justify-center text-sm font-bold shadow-lg shadow-accent/20 shrink-0">N</div>
+      <div class="min-w-0">
+        <h1 class="text-[15px] font-semibold leading-tight">Nexus Chat</h1>
+        <button id="modelBtn" class="text-[11px] text-gray-400 hover:text-accent2 transition flex items-center gap-1 max-w-full">
+          <span id="currentModel" class="truncate">Gemma 4 31B</span>
+          <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </button>
-      </form>
-      <p class="text-[10px] text-center text-gray-600 mt-2">AI can make mistakes. Verify important info.</p>
-    </footer>
-  </div>
-  
-  <!-- Model Picker Sheet -->
-  <div id="modelSheet" class="fixed inset-0 z-50 hidden">
-    <div id="sheetBackdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm opacity-0 transition-opacity"></div>
-    <div id="sheetPanel" class="absolute bottom-0 left-0 right-0 bg-panel border-t border-border rounded-t-3xl max-h-[80vh] overflow-y-auto translate-y-full transition-transform">
-      <div class="sticky top-0 bg-panel px-5 pt-3 pb-4 border-b border-border">
-        <div class="w-10 h-1 bg-gray-600 rounded-full mx-auto mb-4"></div>
-        <h3 class="text-base font-semibold">Choose model</h3>
-        <p class="text-xs text-gray-500 mt-0.5">Free usage applies to all listed models</p>
       </div>
-      <div id="modelList" class="p-3 space-y-1.5 pb-[max(1rem,env(safe-area-inset-bottom))]"></div>
+    </div>
+    <div class="flex items-center gap-1">
+      <button id="settingsBtn" class="p-2 rounded-lg hover:bg-panel2 transition text-gray-400 hover:text-white" title="Settings">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      </button>
+      <button id="clearBtn" class="p-2 rounded-lg hover:bg-panel2 transition text-gray-400 hover:text-white" title="New chat">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Messages -->
+  <main id="messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4 scroll-smooth">
+    <div id="welcome" class="flex flex-col items-center justify-center h-full text-center px-4">
+      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-purple-600 flex items-center justify-center text-2xl font-bold mb-4 shadow-xl shadow-accent/20">N</div>
+      <h2 class="text-xl font-semibold mb-1">How can I help?</h2>
+      <p class="text-sm text-gray-500 mb-6">Chat, upload images, do math, and check dates.</p>
+      <div class="grid grid-cols-1 gap-2 w-full max-w-sm">
+        <button class="suggestion text-left text-sm px-4 py-3 rounded-xl bg-panel border border-border hover:border-accent/50 transition">🧮 What is (245 × 12) + 17?</button>
+        <button class="suggestion text-left text-sm px-4 py-3 rounded-xl bg-panel border border-border hover:border-accent/50 transition">📅 What day is it in 2 weeks?</button>
+        <button class="suggestion text-left text-sm px-4 py-3 rounded-xl bg-panel border border-border hover:border-accent/50 transition">⏰ What time is it in Tokyo?</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Image preview strip -->
+  <div id="imagePreview" class="hidden px-3 pb-2 flex gap-2 overflow-x-auto border-t border-border bg-panel/60 pt-2"></div>
+
+  <!-- Input -->
+  <footer class="border-t border-border bg-panel/80 backdrop-blur-lg px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <form id="chatForm" class="flex items-end gap-2">
+      <button type="button" id="attachBtn" class="w-11 h-11 rounded-2xl bg-panel2 border border-border hover:border-accent/60 flex items-center justify-center transition shrink-0" title="Attach image">
+        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      </button>
+      <input type="file" id="fileInput" accept="image/*" multiple class="hidden" />
+
+      <div class="flex-1 bg-panel2 rounded-2xl border border-border focus-within:border-accent/60 transition">
+        <textarea id="input" rows="1" placeholder="Message..." class="w-full bg-transparent text-[15px] px-4 py-3 resize-none outline-none placeholder-gray-500 max-h-32"></textarea>
+      </div>
+
+      <button id="sendBtn" type="submit" class="w-11 h-11 rounded-2xl bg-accent hover:bg-accent2 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition shadow-lg shadow-accent/20 shrink-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </form>
+    <p class="text-[10px] text-center text-gray-600 mt-2">AI can make mistakes. Verify important info.</p>
+  </footer>
+</div>
+
+<!-- Model Picker -->
+<div id="modelSheet" class="fixed inset-0 z-50 hidden">
+  <div id="sheetBackdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm opacity-0 transition-opacity"></div>
+  <div id="sheetPanel" class="absolute bottom-0 left-0 right-0 bg-panel border-t border-border rounded-t-3xl max-h-[80vh] overflow-y-auto translate-y-full transition-transform">
+    <div class="sticky top-0 bg-panel px-5 pt-3 pb-4 border-b border-border">
+      <div class="w-10 h-1 bg-gray-600 rounded-full mx-auto mb-4"></div>
+      <h3 class="text-base font-semibold">Choose model</h3>
+      <p class="text-xs text-gray-500 mt-0.5">Free usage applies to all listed models</p>
+    </div>
+    <div id="modelList" class="p-3 space-y-1.5 pb-[max(1rem,env(safe-area-inset-bottom))]"></div>
+  </div>
+</div>
+
+<!-- Settings Sheet (System Prompt) -->
+<div id="settingsSheet" class="fixed inset-0 z-50 hidden">
+  <div id="settingsBackdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm opacity-0 transition-opacity"></div>
+  <div id="settingsPanel" class="absolute bottom-0 left-0 right-0 bg-panel border-t border-border rounded-t-3xl max-h-[85vh] overflow-y-auto translate-y-full transition-transform">
+    <div class="sticky top-0 bg-panel px-5 pt-3 pb-4 border-b border-border">
+      <div class="w-10 h-1 bg-gray-600 rounded-full mx-auto mb-4"></div>
+      <h3 class="text-base font-semibold">Settings</h3>
+      <p class="text-xs text-gray-500 mt-0.5">Customize how the assistant behaves</p>
+    </div>
+    <div class="p-5 space-y-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+      <div>
+        <label class="text-sm font-medium block mb-2">System prompt</label>
+        <textarea id="systemPrompt" rows="5" placeholder="e.g. You are a helpful assistant that answers concisely." class="w-full bg-panel2 border border-border rounded-xl px-3 py-2 text-sm resize-none outline-none focus:border-accent/60"></textarea>
+      </div>
+      <div class="flex items-center justify-between bg-panel2 border border-border rounded-xl px-4 py-3">
+        <div>
+          <div class="text-sm font-medium">Enable tools</div>
+          <div class="text-[11px] text-gray-500">Calculator, time, date utilities</div>
+        </div>
+        <label class="relative inline-block w-11 h-6 shrink-0">
+          <input id="toolsToggle" type="checkbox" checked class="peer sr-only" />
+          <span class="absolute inset-0 bg-gray-600 rounded-full transition peer-checked:bg-accent"></span>
+          <span class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition peer-checked:translate-x-5"></span>
+        </label>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button id="saveSettings" class="py-3 rounded-xl bg-accent hover:bg-accent2 text-sm font-medium transition">Save</button>
+        <button id="resetSettings" class="py-3 rounded-xl bg-panel2 border border-border hover:border-accent/50 text-sm transition">Reset</button>
+      </div>
+      <p class="text-[11px] text-gray-500 leading-relaxed">
+        Tip: Tools let the model fetch the current date/time and do exact math. The model decides when to use them.
+      </p>
     </div>
   </div>
-  
-  <script src="/app.js"></script>
-</body>
+</div>
 
+<script src="/app.js"></script>
+</body>
 </html>
