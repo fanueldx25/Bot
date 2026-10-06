@@ -7,20 +7,20 @@ Werkzeug==3.0.3
 # --- Telegram ---
 python-telegram-bot==21.6
 
-# --- AI backend (Ollama's OpenAI-compatible endpoint) ---
+# --- AI backend ---
 openai==1.51.0
 
 # --- Document / image tooling ---
 fpdf2==2.7.9
 Pillow==10.4.0
 
-# --- Web scraping for web_search / fetch_url ---
+# --- Web scraping ---
 beautifulsoup4==4.12.3
 lxml==5.3.0
 
-# --- WhatsApp (unofficial, Baileys port) ---
-neonize==0.2.5
+# --- WhatsApp (unofficial) ---
+neonize==0.5.2
 
-# --- neonize transitive deps that occasionally need to be explicit ---
+# --- neonize transitive deps pinned to avoid resolver churn ---
 protobuf==4.25.5
 websockets==12.0
