@@ -12,7 +12,7 @@ openai==1.51.0
 
 # --- Document / image tooling ---
 fpdf2==2.7.9
-Pillow==10.4.0
+Pillow==11.1.0
 
 # --- Web scraping ---
 beautifulsoup4==4.12.3
