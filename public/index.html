@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NovaBot Dashboard</title>
+<style>
+  :root {
+    --bg: #0b1220; --panel: #131a2b; --panel-2: #1a2238; --text: #e6ebf5;
+    --muted: #8896b3; --accent: #25d366; --accent-2: #1ea34d;
+    --danger: #ef4444; --border: #223052;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 20% -10%, #17223b, var(--bg));
+    color: var(--text); min-height: 100vh;
+  }
+  .container { max-width: 900px; margin: 0 auto; padding: 32px 20px; }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  p.sub { color: var(--muted); margin: 0 0 28px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 24px; margin-bottom: 20px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+  input {
+    width: 100%; padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    font-size: 15px;
+  }
+  input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  button {
+    margin-top: 16px; width: 100%; padding: 12px 16px; border: 0;
+    border-radius: 10px; font-weight: 600; font-size: 15px; cursor: pointer;
+    background: var(--accent); color: #04140a; transition: background .15s;
+  }
+  button:hover { background: var(--accent-2); }
+  button.ghost {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+  }
+  button.danger { background: var(--danger); color: white; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row > * { margin-top: 0; }
+  .code {
+    font-family: ui-monospace, Menlo, monospace; font-size: 26px;
+    letter-spacing: 6px; text-align: center; padding: 18px;
+    background: var(--panel-2); border-radius: 12px; border: 1px dashed var(--border);
+    margin: 16px 0;
+  }
+  .session {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px; background: var(--panel-2); border-radius: 10px;
+    margin-bottom: 8px; border: 1px solid var(--border);
+  }
+  .badge {
+    font-size: 11px; padding: 3px 8px; border-radius: 999px; font-weight: 600;
+    background: #29365b; color: var(--muted);
+  }
+  .badge.ok { background: #12351f; color: #46d67e; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 8px; }
+  .hide { display: none !important; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tabs button { width: auto; margin: 0; padding: 8px 16px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🤖 NovaBot</h1>
+  <p class="sub">Link your WhatsApp and manage commands.</p>
+
+  <!-- Login / register -->
+  <div id="auth" class="card">
+    <div class="tabs">
+      <button id="tabLogin" class="ghost">Login</button>
+      <button id="tabRegister" class="ghost">Register</button>
+    </div>
+    <label>Email</label>
+    <input id="email" type="email" placeholder="you@example.com" />
+    <label>Password</label>
+    <input id="password" type="password" placeholder="At least 8 characters" />
+    <button id="authSubmit">Login</button>
+    <div id="authError" class="err"></div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dash" class="hide">
+    <div class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <div style="font-weight: 600;">Signed in</div>
+          <div id="userEmail" class="muted"></div>
+        </div>
+        <button id="logout" class="ghost" style="width: auto; padding: 8px 14px;">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top: 0; font-size: 18px;">Link a new number</h2>
+      <p class="muted" style="margin-top: 0;">
+        Enter your number in international format without “+”. We'll give you a
+        pairing code to enter inside WhatsApp → Linked Devices.
+      </p>
+      <label>Phone number</label>
+      <input id="phone" placeholder="254712345678" />
+      <button id="addSession">Get pairing code</button>
+      <div id="pairing" class="hide">
+        <div class="code" id="pairingCode">----</div>
+        <p class="muted" style="text-align:center;">
+          Open WhatsApp → Settings → Linked Devices → Link with phone number,
+          then enter the code above.
+        </p>
+      </div>
+      <div id="sessionError" class="err"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top: 0; font-size: 18px;">Your numbers</h2>
+      <div id="sessions"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+};
+
+let mode = 'login';
+
+function setMode(next) {
+  mode = next;
+  $('tabLogin').style.background = next === 'login' ? 'var(--accent)' : 'transparent';
+  $('tabLogin').style.color = next === 'login' ? '#04140a' : 'var(--text)';
+  $('tabRegister').style.background = next === 'register' ? 'var(--accent)' : 'transparent';
+  $('tabRegister').style.color = next === 'register' ? '#04140a' : 'var(--text)';
+  $('authSubmit').textContent = next === 'login' ? 'Login' : 'Create account';
+  $('authError').textContent = '';
+}
+$('tabLogin').onclick = () => setMode('login');
+$('tabRegister').onclick = () => setMode('register');
+
+$('authSubmit').onclick = async () => {
+  $('authError').textContent = '';
+  try {
+    const body = { email: $('email').value, password: $('password').value };
+    await api(mode === 'login' ? '/api/auth/login' : '/api/auth/register', {
+      method: 'POST', body,
+    });
+    await loadDashboard();
+  } catch (e) {
+    $('authError').textContent = e.message;
+  }
+};
+
+$('logout').onclick = async () => {
+  await api('/api/auth/logout', { method: 'POST' });
+  location.reload();
+};
+
+$('addSession').onclick = async () => {
+  $('sessionError').textContent = '';
+  $('pairing').classList.add('hide');
+  const phone = $('phone').value.trim();
+  if (!phone) return;
+
+  const btn = $('addSession');
+  btn.disabled = true;
+  btn.textContent = 'Requesting code…';
+  try {
+    const { code } = await api('/api/sessions', { method: 'POST', body: { phone } });
+    $('pairingCode').textContent = code;
+    $('pairing').classList.remove('hide');
+    await loadSessions();
+  } catch (e) {
+    $('sessionError').textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Get pairing code';
+  }
+};
+
+async function loadSessions() {
+  const { sessions } = await api('/api/sessions');
+  const box = $('sessions');
+  box.innerHTML = '';
+  if (!sessions.length) {
+    box.innerHTML = '<div class="muted">No numbers yet.</div>';
+    return;
+  }
+  for (const s of sessions) {
+    const row = document.createElement('div');
+    row.className = 'session';
+    const left = document.createElement('div');
+    left.innerHTML = `<div style="font-weight:600;">+${s.phone_number}</div>
+      <div class="muted">${s.status}</div>`;
+    const right = document.createElement('div');
+    right.className = 'row';
+    right.innerHTML = `<span class="badge ${s.status === 'connected' ? 'ok' : ''}">
+      ${s.status}</span>`;
+    const del = document.createElement('button');
+    del.className = 'danger';
+    del.style.width = 'auto';
+    del.style.padding = '6px 12px';
+    del.style.marginTop = '0';
+    del.textContent = 'Remove';
+    del.onclick = async () => {
+      if (!confirm('Disconnect this number?')) return;
+      await api('/api/sessions/' + s.id, { method: 'DELETE' });
+      await loadSessions();
+    };
+    right.appendChild(del);
+    row.appendChild(left);
+    row.appendChild(right);
+    box.appendChild(row);
+  }
+}
+
+async function loadDashboard() {
+  try {
+    const { user } = await api('/api/me');
+    $('userEmail').textContent = user.email;
+    $('auth').classList.add('hide');
+    $('dash').classList.remove('hide');
+    await loadSessions();
+  } catch {
+    $('dash').classList.add('hide');
+    $('auth').classList.remove('hide');
+  }
+}
+
+setMode('login');
+loadDashboard();
+</script>
+</body>
+</html>

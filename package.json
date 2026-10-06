@@ -1,6 +1,26 @@
 {
+  "name": "wa-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
   "scripts": {
-    "dev": "tsx src/index.ts",
-    "build": "tsc"
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mathjs": "^13.2.0",
+    "openai": "^4.73.0",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0",
+    "sharp": "^0.33.5"
   }
 }
