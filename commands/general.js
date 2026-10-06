@@ -1,17 +1,17 @@
 // commands/general.js
 import { uniqueCommands } from '../loader.js'
-import { header, section, row, kv, footer, pill, R } from '../lib/format.js'
+import { G, head, foot, stats, section, entry, pill, info, err } from '../lib/format.js'
 
 const BOOTED_AT = Date.now()
 
 const ICONS = {
-  general: '⚙️',
-  tools: '🧰',
-  download: '📥',
-  group: '👥',
-  owner: '👑',
-  ai: '🧠',
-  uncategorized: '📁',
+  general: G.hex,
+  tools: G.bolt,
+  download: G.bar,
+  group: G.diamond,
+  owner: G.star,
+  ai: G.pointer,
+  uncategorized: G.dot,
 }
 
 export default [
@@ -28,29 +28,32 @@ export default [
         if (!groups.has(cat)) groups.set(cat, [])
         groups.get(cat).push(cmd)
       }
-      
-      let out = header(config.botName || 'NovaBot', 'COMMAND SYSTEM') + '\n\n'
-      out +=
-        kv({
-          Status: 'ONLINE',
-          Prefix: prefix,
-          Session: sessionId ?? '—',
-          Commands: uniqueCommands(commands).size,
-          Modules: groups.size,
-        }) + '\n\n'
-      
+
+      const header = head(config.botName || 'NovaBot', 'Command Deck')
+      const meta = stats({
+        status: 'ONLINE',
+        prefix,
+        session: sessionId ?? '—',
+        commands: uniqueCommands(commands).size,
+        modules: groups.size,
+      })
+
+      let out = header + '\n\n' + meta + '\n\n'
+
       for (const [cat, list] of [...groups.entries()].sort()) {
-        out += `${section(cat, ICONS[cat] ?? '📁')}\n`
+        out += section(cat, ICONS[cat] ?? G.dot) + '\n'
         for (const c of list.sort((a, b) => a.name.localeCompare(b.name))) {
-          out += `${R.v2} ▸ ${prefix}${c.name.padEnd(11)} ${c.description}\n`
+          out += entry(c.name, c.description, prefix) + '\n'
         }
-        out += footer() + '\n\n'
+        out += '\n'
       }
-      
+
+      out += foot('Ready')
+
       await reply(out.trimEnd())
     },
   },
-  
+
   /* ── PING ────────────────────────────────────────────── */
   {
     name: 'ping',
@@ -62,25 +65,23 @@ export default [
       const ms = Date.now() - t0 + Math.floor(Math.random() * 20) + 30
       const signal = ms < 200 ? 'EXCELLENT' : ms < 500 ? 'GOOD' : 'SLOW'
       const uptimeSec = Math.floor((Date.now() - BOOTED_AT) / 1000)
-      
-      const out =
-        header('Ping', 'LATENCY PROBE') +
-        '\n\n' +
-        kv({
-          Status: 'RESPONSIVE',
-          Latency: `${ms} ms`,
-          Signal: signal,
-          Uptime: `${uptimeSec}s`,
-        }) +
-        '\n\n' +
-        footer() +
-        '\n' +
-        `  ${pill('SYSTEM ONLINE')}`
-      
-      await reply(out)
+
+      await reply(
+        info(
+          'Ping',
+          'Latency Probe',
+          stats({
+            status: 'RESPONSIVE',
+            latency: `${ms} ms`,
+            signal,
+            uptime: `${uptimeSec}s`,
+          }),
+          'System Online',
+        ),
+      )
     },
   },
-  
+
   /* ── UPTIME ──────────────────────────────────────────── */
   {
     name: 'uptime',
@@ -92,46 +93,41 @@ export default [
       const h = Math.floor((t % 86400) / 3600)
       const m = Math.floor((t % 3600) / 60)
       const s = t % 60
-      
-      const out =
-        header('Uptime', 'RUNTIME COUNTER') +
-        '\n\n' +
-        kv({
-          Days: d,
-          Hours: h,
-          Minutes: m,
-          Seconds: s,
-        }) +
-        '\n\n' +
-        row('Total', `${t}s`) +
-        '\n' +
-        row(
-          'Since',
-          new Date(BOOTED_AT).toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
-        )
-      
-      await reply(out)
+
+      await reply(
+        info(
+          'Uptime',
+          'Runtime Counter',
+          stats({
+            days: d, hours: h, minutes: m, seconds: s,
+            total: `${t}s`,
+            since: new Date(BOOTED_AT).toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+          }),
+        ),
+      )
     },
   },
-  
+
   /* ── ID ──────────────────────────────────────────────── */
   {
     name: 'id',
     category: 'general',
     description: 'Show chat and user JIDs',
     async run({ reply, chatId, sender, isGroup }) {
-      const out =
-        header('Identifiers', 'JID INSPECTOR') +
-        '\n\n' +
-        kv({
-          Chat: chatId,
-          User: sender,
-          Type: isGroup ? 'GROUP' : 'PRIVATE',
-        })
-      await reply(out)
+      await reply(
+        info(
+          'Identifiers',
+          'JID Inspector',
+          stats({
+            chat: chatId,
+            user: sender,
+            type: isGroup ? 'GROUP' : 'PRIVATE',
+          }),
+        ),
+      )
     },
   },
-  
+
   /* ── INFO ────────────────────────────────────────────── */
   {
     name: 'info',
@@ -139,27 +135,26 @@ export default [
     description: 'Bot information',
     async run({ reply, config, commands, sessionId }) {
       const mem = (process.memoryUsage().rss / 1024 / 1024).toFixed(1)
-      const out =
-        header(config.botName || 'NovaBot', 'SYSTEM INFO') +
-        '\n\n' +
-        kv({
-          Version: 'v1.0.0',
-          Session: sessionId ?? '—',
-          Prefix: config.prefix,
-          Node: process.version,
-          Platform: process.platform,
-          Arch: process.arch,
-          Memory: `${mem} MB`,
-          Commands: uniqueCommands(commands).size,
-        }) +
-        '\n\n' +
-        footer() +
-        '\n' +
-        `  ${pill('OPERATIONAL')}`
-      await reply(out)
+      await reply(
+        info(
+          config.botName || 'NovaBot',
+          'System Info',
+          stats({
+            version: 'v1.0.0',
+            session: sessionId ?? '—',
+            prefix: config.prefix,
+            node: process.version,
+            platform: process.platform,
+            arch: process.arch,
+            memory: `${mem} MB`,
+            commands: uniqueCommands(commands).size,
+          }),
+          'Operational',
+        ),
+      )
     },
   },
-  
+
   /* ── OWNER ───────────────────────────────────────────── */
   {
     name: 'owner',
@@ -167,14 +162,15 @@ export default [
     description: 'Get owner contact',
     async run({ reply, config }) {
       const list = (config.ownerNumbers || [])
-        .map((n, i) => `${R.v2} ${i + 1}. wa.me/${n.split('@')[0]}`)
+        .map((n, i) => `  ${G.pointer} ${i + 1}. wa.me/${n.split('@')[0]}`)
         .join('\n')
-      
-      const out =
-        header('Owner', 'CONTACT CARD') +
-        '\n\n' +
-        (list || `${R.v2} not configured`)
-      await reply(out)
+      await reply(
+        info(
+          'Owner',
+          'Contact Card',
+          list || `  ${G.cross} not configured`,
+        ),
+      )
     },
   },
 ]

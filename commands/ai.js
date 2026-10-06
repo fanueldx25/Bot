@@ -1,5 +1,6 @@
+// commands/ai.js
 import * as AI from '../ai.js'
-import { header, kv, row } from '../lib/format.js'
+import { G, info, err, stats, ok } from '../lib/format.js'
 
 export default [
   {
@@ -9,24 +10,26 @@ export default [
     description: 'Ask the AI anything',
     async run({ chatId, sender, text, reply }) {
       if (!text) {
-        return reply(
-          header('AI', 'ASSISTANT') + '\n\n' +
-          kv({ Usage: '.ai <prompt>', Model: 'ollama-cloud' }),
-        )
+        return reply(err('Usage: .ai <prompt>'))
       }
       if (!AI.isEnabled()) {
-        return reply(header('AI', 'OFFLINE') + '\n\n' + kv({ Reason: 'OLLAMA_API_KEY not set' }))
+        return reply(err('AI not configured (set OLLAMA_API_KEY)'))
       }
 
       try {
         const out = await AI.chat({ chatId, userId: sender, prompt: text })
         await reply(
-          header('AI', 'RESPONSE') + '\n\n' +
-          kv({ Prompt: text.slice(0, 60) + (text.length > 60 ? '…' : '') }) +
-          '\n\n' + out,
+          info(
+            'AI',
+            'Response',
+            stats({ prompt: text.slice(0, 50) + (text.length > 50 ? '…' : '') }) +
+              '\n\n' +
+              out,
+            'Ollama Cloud',
+          ),
         )
       } catch (e) {
-        await reply(header('AI', 'ERROR') + '\n\n' + kv({ Message: e.message }))
+        await reply(err(e.message))
       }
     },
   },
@@ -34,20 +37,15 @@ export default [
     name: 'imagine',
     aliases: ['img', 'draw'],
     category: 'ai',
-    description: 'Generate an image from a prompt (via Pollinations)',
+    description: 'Generate an image from a prompt',
     async run({ text, reply, send, msg }) {
-      if (!text) {
-        return reply(header('Imagine', 'IMAGE GEN') + '\n\n' + kv({ Usage: '.imagine <prompt>' }))
-      }
-      await reply(header('Imagine', 'GENERATING') + '\n\n' + kv({ Prompt: text }))
+      if (!text) return reply(err('Usage: .imagine <prompt>'))
+      await reply(info('Imagine', 'Generating', stats({ prompt: text })))
       try {
         const url = await AI.imagine(text)
-        await send(
-          { image: { url }, caption: `🎨 ${text}` },
-          { quoted: msg },
-        )
+        await send({ image: { url }, caption: `🎨 ${text}` }, { quoted: msg })
       } catch (e) {
-        await reply(header('Imagine', 'ERROR') + '\n\n' + kv({ Message: e.message }))
+        await reply(err(e.message))
       }
     },
   },
@@ -58,7 +56,7 @@ export default [
     description: 'Clear your AI conversation history',
     async run({ chatId, sender, reply }) {
       AI.forget(chatId, sender)
-      await reply(header('AI', 'HISTORY CLEARED') + '\n\n' + kv({ Status: 'done' }))
+      await reply(ok('AI', { action: 'HISTORY CLEARED' }, 'Done'))
     },
   },
 ]

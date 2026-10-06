@@ -1,6 +1,7 @@
+// commands/owner.js
 import { getTarget, onlyDigits } from '../lib/helpers.js'
 import { Sessions } from '../db.js'
-import { header, kv } from '../lib/format.js'
+import { G, info, err, stats, ok } from '../lib/format.js'
 
 export default [
   /* ── Mode switching ──────────────────────────────────── */
@@ -14,20 +15,16 @@ export default [
       if (!['private', 'public'].includes(next)) {
         const current = (await Sessions.getById(sessionId))?.mode ?? 'private'
         return reply(
-          header('Mode', 'ACCESS CONTROL') + '\n\n' +
-          kv({
-            Current: current.toUpperCase(),
-            Usage: '.mode private | .mode public',
-            Private: 'only the owner can command',
-            Public: 'anyone in DM/group can command',
-          }),
+          info('Mode', 'Access Control', stats({
+            current: current.toUpperCase(),
+            usage: '.mode private | .mode public',
+            private: 'only the owner can command',
+            public: 'anyone in DM/group can command',
+          })),
         )
       }
       await Sessions.setMode(sessionId, next)
-      await reply(
-        header('Mode', 'UPDATED') + '\n\n' +
-        kv({ Mode: next.toUpperCase() }),
-      )
+      await reply(ok('Mode', { mode: next.toUpperCase() }, 'Updated'))
     },
   },
   {
@@ -41,19 +38,15 @@ export default [
       if (!['on', 'off'].includes(arg)) {
         const s = await Sessions.getById(sessionId)
         return reply(
-          header('Self Mode', 'TOGGLE') + '\n\n' +
-          kv({
-            Current: s?.self_mode ? 'ON' : 'OFF',
-            Usage: '.self on | .self off',
-            Info: 'When ON you can command the bot in your own "Message yourself" chat.',
-          }),
+          info('Self Mode', 'Toggle', stats({
+            current: s?.self_mode ? 'ON' : 'OFF',
+            usage: '.self on | .self off',
+            info: 'Command the bot in your own "Message yourself" chat.',
+          })),
         )
       }
       await Sessions.setSelfMode(sessionId, arg === 'on')
-      await reply(
-        header('Self Mode', 'UPDATED') + '\n\n' +
-        kv({ State: arg.toUpperCase() }),
-      )
+      await reply(ok('Self Mode', { state: arg.toUpperCase() }, 'Updated'))
     },
   },
   
@@ -65,10 +58,10 @@ export default [
     description: 'Broadcast to every group',
     ownerOnly: true,
     async run({ sock, text, reply }) {
-      if (!text) return reply('Usage: *.broadcast <message>*')
+      if (!text) return reply(err('Usage: .broadcast <message>'))
       const chats = await sock.groupFetchAllParticipating()
       const ids = Object.keys(chats)
-      await reply(header('Broadcast', 'SENDING') + '\n\n' + kv({ Groups: ids.length }))
+      await reply(info('Broadcast', 'Sending', stats({ groups: ids.length })))
       let sent = 0
       for (const id of ids) {
         try {
@@ -77,7 +70,7 @@ export default [
           await new Promise((r) => setTimeout(r, 1500))
         } catch {}
       }
-      await reply(header('Broadcast', 'COMPLETE') + '\n\n' + kv({ Delivered: `${sent}/${ids.length}` }))
+      await reply(ok('Broadcast', { delivered: `${sent}/${ids.length}` }, 'Complete'))
     },
   },
   {
@@ -87,9 +80,9 @@ export default [
     ownerOnly: true,
     async run({ sock, msg, text, reply }) {
       const t = getTarget(msg) || (onlyDigits(text) ? `${onlyDigits(text)}@s.whatsapp.net` : null)
-      if (!t) return reply('Usage: *.block <number>* or reply to a message.')
+      if (!t) return reply(err('Usage: .block <number> or reply to a message'))
       await sock.updateBlockStatus(t, 'block')
-      await reply(header('Block', 'DONE') + '\n\n' + kv({ User: t.split('@')[0] }))
+      await reply(ok('Block', { user: t.split('@')[0], state: 'BLOCKED' }, 'Done'))
     },
   },
   {
@@ -99,9 +92,9 @@ export default [
     ownerOnly: true,
     async run({ sock, msg, text, reply }) {
       const t = getTarget(msg) || (onlyDigits(text) ? `${onlyDigits(text)}@s.whatsapp.net` : null)
-      if (!t) return reply('Usage: *.unblock <number>*')
+      if (!t) return reply(err('Usage: .unblock <number>'))
       await sock.updateBlockStatus(t, 'unblock')
-      await reply(header('Unblock', 'DONE') + '\n\n' + kv({ User: t.split('@')[0] }))
+      await reply(ok('Unblock', { user: t.split('@')[0], state: 'UNBLOCKED' }, 'Done'))
     },
   },
   {
@@ -112,10 +105,10 @@ export default [
     ownerOnly: true,
     async run({ text, reply, config }) {
       if (!text) {
-        return reply(header('Prefix', 'CURRENT') + '\n\n' + kv({ Prefix: config.prefix }))
+        return reply(info('Prefix', 'Current', stats({ prefix: config.prefix })))
       }
       config.prefix = text.trim().slice(0, 3)
-      await reply(header('Prefix', 'UPDATED') + '\n\n' + kv({ New: config.prefix }))
+      await reply(ok('Prefix', { new: config.prefix }, 'Updated'))
     },
   },
   {
@@ -124,7 +117,7 @@ export default [
     description: 'Restart the bot process',
     ownerOnly: true,
     async run({ reply }) {
-      await reply(header('System', 'RESTARTING') + '\n\n' + kv({ Action: 'process.exit(0)' }))
+      await reply(info('System', 'Restarting', stats({ action: 'process.exit(0)' }), 'Bye'))
       setTimeout(() => process.exit(0), 1000)
     },
   },
