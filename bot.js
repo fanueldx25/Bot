@@ -53,6 +53,51 @@ function extractBody(msg) {
   )
 }
 
+/** Strip a JID of any decoration, leaving only digits. */
+const digits = (jid = '') =>
+  String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
+
+/** Default presence for a command if it doesn't declare one. */
+const DEFAULT_PRESENCE = 'composing'
+
+/**
+ * Show the right presence + blue ticks for a command, run it,
+ * then clear presence. Never throws — presence errors are logged and ignored.
+ */
+async function withPresence(sock, chatId, key, cmd, fn) {
+  const presence = cmd?.presence ?? DEFAULT_PRESENCE
+
+  // 1. Mark the incoming message as read (blue ticks).
+  try {
+    await sock.readMessages([key])
+  } catch (e) {
+    console.error('[read]', e?.message ?? e)
+  }
+
+  // 2. Subscribe presence for the duration of the command.
+  try {
+    if (presence === 'recording') {
+      await sock.sendPresenceUpdate('recording', chatId)
+    } else if (presence === 'composing') {
+      await sock.sendPresenceUpdate('composing', chatId)
+    } else if (presence === 'paused') {
+      await sock.sendPresenceUpdate('paused', chatId)
+    } else if (presence !== 'none') {
+      await sock.sendPresenceUpdate(presence, chatId)
+    }
+  } catch (e) {
+    console.error('[presence]', e?.message ?? e)
+  }
+
+  try {
+    return await fn()
+  } finally {
+    try {
+      await sock.sendPresenceUpdate('paused', chatId)
+    } catch {}
+  }
+}
+
 export async function startBot(sessionId, { onPairingCode } = {}) {
   if (activeBots.has(sessionId)) return activeBots.get(sessionId)
 
@@ -146,78 +191,92 @@ export async function startBot(sessionId, { onPairingCode } = {}) {
 
     const isGroup  = chatId.endsWith('@g.us')
     const fromMe   = !!msg.key.fromMe
-    const sender   = jidNormalizedUser(msg.key.participant || msg.key.remoteJid)
-    const botJid   = jidNormalizedUser(sock.user?.id ?? '')
+    const senderJid = jidNormalizedUser(msg.key.participant || msg.key.remoteJid)
+    const senderDigits = digits(senderJid)
 
-    // Normalize both sides; strip :device suffix from both.
-    const chatIdNorm = jidNormalizedUser(chatId)
-    const botPhone   = botJid.split('@')[0].split(':')[0]
-    const chatPhone  = chatId.split('@')[0].split(':')[0]
-    const isSelfChat = fromMe && (chatIdNorm === botJid || chatPhone === botPhone)
+    const botDigits  = digits(sock.user?.id)
+    const chatDigits = digits(chatId)
+    const isSelfChat = fromMe && (chatDigits === botDigits || chatId.endsWith('@lid'))
 
-    const isOwner = config.ownerNumbers.includes(sender)
+    const isOwner =
+      config.ownerNumbers.some((n) => digits(n) === senderDigits) ||
+      (isSelfChat && fromMe)
 
     if (process.env.DEBUG_SELF === '1') {
       console.log('[self-check]', {
-        fromMe, chatId, chatIdNorm, botJid, chatPhone, botPhone,
-        isSelfChat, selfMode: runtime.selfMode, mode: runtime.mode,
+        fromMe, chatId, senderJid, senderDigits, botDigits,
+        isSelfChat, isOwner, selfMode: runtime.selfMode, mode: runtime.mode,
       })
     }
 
     if (fromMe && !isSelfChat) return
     if (isSelfChat && !runtime.selfMode) return
-    if (runtime.mode === 'private' && !isOwner && !isSelfChat) return
+    if (runtime.mode === 'private' && !isOwner) return
 
     const botJidFull = jidNormalizedUser(sock.user?.id ?? '')
     const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid
       ?.includes(botJidFull)
 
+    // ── Non-command path ──────────────────────────────────────────
+    // If the message is not a command (and not a mention in public mode),
+    // we do NOTHING — no read, no presence. The message stays unread.
     if (!body.startsWith(config.prefix)) {
       if (mentioned && runtime.mode === 'public') {
         const aiCmd = COMMANDS.get('ai')
         if (aiCmd) {
           const ctx = buildCtx({
-            sock, msg, chatId, sender, isGroup,
+            sock, msg, chatId, sender: senderJid, isGroup,
             args: body.split(/\s+/), text: body, command: 'ai',
             prefix: config.prefix, commands: COMMANDS,
             sessionId, markSent,
           })
-          try { await aiCmd.run(ctx) } catch (e) { console.error('[ai-mention]', e) }
+          try {
+            await withPresence(sock, chatId, msg.key, aiCmd, () => aiCmd.run(ctx))
+          } catch (e) {
+            console.error('[ai-mention]', e)
+          }
         }
       }
       return
     }
 
+    // ── Command path ──────────────────────────────────────────────
     const [rawName, ...args] = body
       .slice(config.prefix.length)
       .trim()
       .split(/\s+/)
     const cmd = COMMANDS.get(rawName.toLowerCase())
+
+    // Unknown command → treat like a normal message (leave unread).
     if (!cmd) return
 
     if (cmd.ownerOnly && !isOwner) return
     if (cmd.groupOnly && !isGroup) return
     if (cmd.adminOnly && isGroup) {
+      // Admin check happens *after* presence so the user sees the bot
+      // at least react; swap the two if you'd rather stay silent.
       try {
         const meta = await sock.groupMetadata(chatId)
-        const me = meta.participants.find((p) => p.id === sender)
+        const me = meta.participants.find((p) => p.id === senderJid)
         if (!me?.admin) {
-          const sent = await sock.sendMessage(chatId, { text: '🚫 Admins only.' }, { quoted: msg })
-          markSent(sessionId, sent?.key)
+          await sock.sendMessage(chatId, { text: '🚫 Admins only.' }, { quoted: msg })
+          markSent(sessionId, (await sock.sendMessage(
+            chatId, { text: '🚫 Admins only.' }, { quoted: msg },
+          ))?.key)
           return
         }
       } catch { return }
     }
 
     const ctx = buildCtx({
-      sock, msg, chatId, sender, isGroup, args,
+      sock, msg, chatId, sender: senderJid, isGroup, args,
       text: args.join(' '), command: cmd.name,
       prefix: config.prefix, commands: COMMANDS,
       sessionId, markSent,
     })
 
     try {
-      await cmd.run(ctx)
+      await withPresence(sock, chatId, msg.key, cmd, () => cmd.run(ctx))
     } catch (err) {
       console.error(`[${cmd.name}]`, err)
       try { await ctx.reply(`⚠️ *Error:* ${err.message}`) } catch {}
@@ -234,7 +293,7 @@ function buildCtx({
   return {
     sock, msg, chatId, sender, isGroup, args, text, command,
     prefix, commands,
-    config,                // ← critical: commands access config.botName etc.
+    config,
     sessionId,
 
     reply: async (content, opts = {}) => {
@@ -261,6 +320,10 @@ function buildCtx({
         logger,
         reuploadRequest: sock.updateMediaMessage,
       }),
+
+    /** Expose presence helper so individual commands can override. */
+    presence: (kind) => sock.sendPresenceUpdate(kind, chatId),
+    read: () => sock.readMessages([msg.key]),
   }
 }
 

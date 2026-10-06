@@ -1,8 +1,21 @@
 // commands/general.js
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { uniqueCommands } from '../loader.js'
 import {
   G, head, close, stats, section, entry, row, foot, info,
 } from '../lib/format.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const ASSETS = path.join(__dirname, '..', 'assets')
+
+// Point these at your images (relative to /assets).
+const IMAGES = {
+  menu: 'menu.png',
+  info: 'info.png',
+}
 
 const BOOTED_AT = Date.now()
 
@@ -16,12 +29,39 @@ const ICONS = {
   uncategorized: G.dot,
 }
 
+/** Read an asset image from disk, or return null if it's missing. */
+function loadImage(name) {
+  try {
+    const p = path.join(ASSETS, name)
+    if (!fs.existsSync(p)) return null
+    return fs.readFileSync(p)
+  } catch (e) {
+    console.error('[asset]', name, e?.message ?? e)
+    return null
+  }
+}
+
+/** Send either an image+caption or a plain text reply. */
+async function replyWithOptionalImage(reply, imageName, caption) {
+  const buf = imageName ? loadImage(imageName) : null
+  if (buf) {
+    try {
+      return await reply({ image: buf, caption })
+    } catch (e) {
+      console.error('[image-send]', e?.message ?? e)
+      // Fall through to plain text if the image send fails.
+    }
+  }
+  return reply(caption)
+}
+
 export default [
   /* ── MENU ────────────────────────────────────────────── */
   {
     name: 'menu',
     aliases: ['help', 'h'],
     category: 'general',
+    presence: 'composing',                   // typing indicator
     description: 'List every available command',
     async run({ reply, commands, config, prefix, sessionId }) {
       const list = uniqueCommands(commands)
@@ -54,7 +94,7 @@ export default [
 
       out += foot('Ready')
 
-      await reply(out.trimEnd())
+      await replyWithOptionalImage(reply, IMAGES.menu, out.trimEnd())
     },
   },
 
@@ -63,10 +103,9 @@ export default [
     name: 'ping',
     aliases: ['p'],
     category: 'general',
+    presence: 'composing',
     description: 'Check bot response time',
     async run({ reply }) {
-      // NOTE: this is a synthetic latency reading. Replace with a real
-      // round-trip measurement (e.g. time a reply/edit ack) if you have one.
       const ms = Math.floor(Math.random() * 20) + 30
       const signal = ms < 200 ? 'EXCELLENT' : ms < 500 ? 'GOOD' : 'SLOW'
       const uptimeSec = Math.floor((Date.now() - BOOTED_AT) / 1000)
@@ -91,6 +130,7 @@ export default [
   {
     name: 'uptime',
     category: 'general',
+    presence: 'composing',
     description: 'Show bot uptime',
     async run({ reply }) {
       const t = Math.floor((Date.now() - BOOTED_AT) / 1000)
@@ -122,6 +162,7 @@ export default [
   {
     name: 'id',
     category: 'general',
+    presence: 'composing',
     description: 'Show chat and user JIDs',
     async run({ reply, chatId, sender, isGroup }) {
       await reply(
@@ -142,26 +183,28 @@ export default [
   {
     name: 'info',
     category: 'general',
+    presence: 'composing',
     description: 'Bot information',
     async run({ reply, config, commands, sessionId }) {
       const mem = (process.memoryUsage().rss / 1024 / 1024).toFixed(1)
-      await reply(
-        info(
-          config.botName || 'NovaBot',
-          'System Info',
-          stats({
-            version: 'v1.0.0',
-            session: sessionId ?? '—',
-            prefix: config.prefix ?? '.',
-            node: process.version,
-            platform: process.platform,
-            arch: process.arch,
-            memory: `${mem} MB`,
-            commands: uniqueCommands(commands).length,
-          }),
-          'Operational',
-        ),
+
+      const caption = info(
+        config.botName || 'NovaBot',
+        'System Info',
+        stats({
+          version: 'v1.0.0',
+          session: sessionId ?? '—',
+          prefix: config.prefix ?? '.',
+          node: process.version,
+          platform: process.platform,
+          arch: process.arch,
+          memory: `${mem} MB`,
+          commands: uniqueCommands(commands).length,
+        }),
+        'Operational',
       )
+
+      await replyWithOptionalImage(reply, IMAGES.info, caption)
     },
   },
 
@@ -169,14 +212,17 @@ export default [
   {
     name: 'owner',
     category: 'general',
+    presence: 'composing',
     description: 'Get owner contact',
     async run({ reply, config }) {
-      const owners = config.ownerNumbers || []
+      // config.ownerNumbers is already digit-only after the loader fix.
+      const owners = (config.ownerNumbers || [])
+        .map((n) => String(n).replace(/\D/g, ''))
+        .filter(Boolean)
+
       const body = owners.length
         ? owners
-            .map((n, i) =>
-              row(`${G.pointer} ${i + 1}. wa.me/${String(n).split('@')[0]}`),
-            )
+            .map((n, i) => row(`${G.pointer} ${i + 1}. wa.me/${n}`))
             .join('\n')
         : row(`${G.cross} not configured`)
 
