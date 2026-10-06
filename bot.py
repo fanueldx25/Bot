@@ -15,7 +15,6 @@ from openai import OpenAI
 from PIL import Image
 from fpdf import FPDF
 
-# Optional WhatsApp (neonize). If not installed, Telegram side still runs.
 try:
     from neonize.client import NewClient
     from neonize.events import MessageEv, ConnectedEv, DisconnectedEv
@@ -85,10 +84,10 @@ class MemoryHarness:
             self._store[chat_id] = self._store[chat_id][-self.max:]
     def get(self, chat_id): return list(self._store.get(chat_id, []))
     def clear(self, chat_id): self._store.pop(chat_id, None)
-    def size(self, chat_id): return len(self._store.get(chat_id, 0))
+    def size(self, chat_id): return len(self._store.get(chat_id, []))
 
 memory = MemoryHarness()
-image_buffer = {}   # telegram chat_id OR "wa:<user>" -> {"bytes","mime","name"}
+image_buffer = {}
 CALENDAR = {}
 
 # ---------- 5. PDF helpers ----------
@@ -248,7 +247,8 @@ def _image_tool_resize(chat_id, width=800, height=None, keep_aspect=True, source
     w,h = img.size
     if keep_aspect and height is None: height = int(h*(width/float(w)))
     elif keep_aspect and width is None: width = int(w*(height/float(h)))
-    new_size = (int(width), int(height or h)); img = img.resize(new_size, Image.LANCZOS)
+    new_size = (int(width), int(height or h))
+    img = img.resize(new_size, Image.Resampling.LANCZOS)
     fmt = "PNG" if img.mode in ("RGBA","P") else "JPEG"
     if fmt=="JPEG" and img.mode!="RGB": img = img.convert("RGB")
     out = io.BytesIO(); img.save(out, format=fmt, quality=85)
@@ -479,7 +479,7 @@ async def help_command(u, c):
             "`/tools` \\- List tools\n`/run` \\- Python snippet\n"
             "`/search` \\- Web search\n`/fetch` \\- Read URL\n"
             "`/add` \\- Add event\n`/events` \\- List events\n\n"
-            "*WhatsApp*: connect at `/whatsapp` on this server\\. Commands there: "
+            "*WhatsApp*: connect at `/whatsapp`\\. Commands: "
             "`.ai on` / `.ai off` / `.ai status` / `.save` \\(reply to media\\)\\.")
     await u.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=main_menu())
 
@@ -651,11 +651,9 @@ async def handle_message(u, c):
 
 # ---------- 15. WhatsApp service ----------
 class WhatsAppService:
-    def __init__(self, on_message=None, model_getter=None, prompt_getter=None):
+    def __init__(self, on_message=None):
         self.client = None
         self.on_message = on_message
-        self.model_getter = model_getter or (lambda: DEFAULT_MODEL)
-        self.prompt_getter = prompt_getter or (lambda: DEFAULT_SYSTEM_PROMPT)
         self.lock = threading.Lock()
         self.ai_disabled_chats = set()
         self.ai_enabled_global = True
@@ -731,7 +729,7 @@ class WhatsAppService:
             self.client.send_message(chat, "🤖 AI on here."); return
         if low == ".ai status":
             st = "on" if self._ai_allowed(chat) else "off"
-            self.client.send_message(chat, f"🤖 AI here: *{st}*  (global: "
+            self.client.send_message(chat, f"🤖 AI here: {st}  (global: "
                                            f"{'on' if self.ai_enabled_global else 'off'})"); return
         if low == ".save":
             self._save_media(ev); return
@@ -749,7 +747,6 @@ class WhatsAppService:
         target = getattr(ctx, "quotedMessage", None) if ctx else None
         if target is None:
             self.client.send_message(chat, "↩️ Reply to an image/video/doc with `.save`."); return
-        # Refuse view-once
         if getattr(target, "viewOnceMessage", None) or getattr(target, "viewOnceMessageV2", None):
             self.client.send_message(chat, "❌ View-once media can't be saved."); return
         kind, node = None, None
@@ -763,7 +760,7 @@ class WhatsAppService:
             mime = getattr(node, "mimetype", "application/octet-stream")
             fname = getattr(node, "fileName", None) or f"{kind}_{int(time.time())}.{mime.split('/')[-1]}"
             (SAVE_DIR / fname).write_bytes(data)
-            self.client.send_message(chat, f"✅ Saved `{fname}` ({len(data):,} bytes).")
+            self.client.send_message(chat, f"✅ Saved {fname} ({len(data):,} bytes).")
         except Exception as e:
             logger.exception("save failed")
             self.client.send_message(chat, f"⚠️ Save failed: {e}")
@@ -785,7 +782,6 @@ class WhatsAppService:
         except Exception: pass
         self.state.update({"status":"idle","pairing_code":None,"me":None})
 
-# Wire WhatsApp AI to shared AI
 def wa_ai_reply(wa_id, text):
     chat_key = f"wa:{wa_id}"
     system = DEFAULT_SYSTEM_PROMPT + (
@@ -974,7 +970,6 @@ def api_fetch():
     try: return jsonify(tool_fetch_url(url, max_chars=4000)), 200
     except Exception as e: return jsonify({"error":str(e)}), 200
 
-# WhatsApp routes
 @flask_app.route("/whatsapp")
 def whatsapp_page(): return render_template_string(WHATSAPP_HTML)
 
@@ -999,7 +994,6 @@ def whatsapp_ai():
 def whatsapp_logout():
     wa_service.logout(); return jsonify({"status":"logged_out"}), 200
 
-# MCP
 def mcp_tool_list():
     return [{"name":t["function"]["name"],"description":t["function"]["description"],
              "inputSchema":t["function"]["parameters"]} for t in TOOL_SCHEMAS]
@@ -1078,8 +1072,7 @@ def main():
     if not TELEGRAM_BOT_TOKEN or not OLLAMA_API_KEY:
         logger.error("❌ Missing TELEGRAM_BOT_TOKEN or OLLAMA_API_KEY"); return
     if not WA_AVAILABLE:
-        logger.warning("⚠️ neonize not installed — WhatsApp features disabled. "
-                       "pip install neonize to enable.")
+        logger.warning("⚠️ neonize not installed — WhatsApp features disabled.")
     try:
         import requests
         r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=10)
