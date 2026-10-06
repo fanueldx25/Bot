@@ -1,6 +1,8 @@
 // commands/general.js
 import { uniqueCommands } from '../loader.js'
-import { G, head, foot, stats, section, entry, pill, info, err } from '../lib/format.js'
+import {
+  G, head, close, stats, section, entry, row, foot, info,
+} from '../lib/format.js'
 
 const BOOTED_AT = Date.now()
 
@@ -22,8 +24,10 @@ export default [
     category: 'general',
     description: 'List every available command',
     async run({ reply, commands, config, prefix, sessionId }) {
+      const list = uniqueCommands(commands)
+
       const groups = new Map()
-      for (const cmd of uniqueCommands(commands)) {
+      for (const cmd of list) {
         const cat = (cmd.category ?? 'uncategorized').toString()
         if (!groups.has(cat)) groups.set(cat, [])
         groups.get(cat).push(cmd)
@@ -34,18 +38,18 @@ export default [
         status: 'ONLINE',
         prefix,
         session: sessionId ?? '—',
-        commands: uniqueCommands(commands).size,
+        commands: list.length,
         modules: groups.size,
       })
 
-      let out = header + '\n\n' + meta + '\n\n'
+      let out = [header, meta, close()].join('\n') + '\n\n'
 
-      for (const [cat, list] of [...groups.entries()].sort()) {
+      for (const [cat, items] of [...groups.entries()].sort()) {
         out += section(cat, ICONS[cat] ?? G.dot) + '\n'
-        for (const c of list.sort((a, b) => a.name.localeCompare(b.name))) {
+        for (const c of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
           out += entry(c.name, c.description, prefix) + '\n'
         }
-        out += '\n'
+        out += close() + '\n\n'
       }
 
       out += foot('Ready')
@@ -61,8 +65,9 @@ export default [
     category: 'general',
     description: 'Check bot response time',
     async run({ reply }) {
-      const t0 = Date.now()
-      const ms = Date.now() - t0 + Math.floor(Math.random() * 20) + 30
+      // NOTE: this is a synthetic latency reading. Replace with a real
+      // round-trip measurement (e.g. time a reply/edit ack) if you have one.
+      const ms = Math.floor(Math.random() * 20) + 30
       const signal = ms < 200 ? 'EXCELLENT' : ms < 500 ? 'GOOD' : 'SLOW'
       const uptimeSec = Math.floor((Date.now() - BOOTED_AT) / 1000)
 
@@ -99,9 +104,14 @@ export default [
           'Uptime',
           'Runtime Counter',
           stats({
-            days: d, hours: h, minutes: m, seconds: s,
+            days: d,
+            hours: h,
+            minutes: m,
+            seconds: s,
             total: `${t}s`,
-            since: new Date(BOOTED_AT).toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+            since:
+              new Date(BOOTED_AT).toISOString().replace('T', ' ').slice(0, 19) +
+              ' UTC',
           }),
         ),
       )
@@ -119,8 +129,8 @@ export default [
           'Identifiers',
           'JID Inspector',
           stats({
-            chat: chatId,
-            user: sender,
+            chat: chatId ?? '—',
+            user: sender ?? '—',
             type: isGroup ? 'GROUP' : 'PRIVATE',
           }),
         ),
@@ -142,12 +152,12 @@ export default [
           stats({
             version: 'v1.0.0',
             session: sessionId ?? '—',
-            prefix: config.prefix,
+            prefix: config.prefix ?? '.',
             node: process.version,
             platform: process.platform,
             arch: process.arch,
             memory: `${mem} MB`,
-            commands: uniqueCommands(commands).size,
+            commands: uniqueCommands(commands).length,
           }),
           'Operational',
         ),
@@ -161,16 +171,16 @@ export default [
     category: 'general',
     description: 'Get owner contact',
     async run({ reply, config }) {
-      const list = (config.ownerNumbers || [])
-        .map((n, i) => `  ${G.pointer} ${i + 1}. wa.me/${n.split('@')[0]}`)
-        .join('\n')
-      await reply(
-        info(
-          'Owner',
-          'Contact Card',
-          list || `  ${G.cross} not configured`,
-        ),
-      )
+      const owners = config.ownerNumbers || []
+      const body = owners.length
+        ? owners
+            .map((n, i) =>
+              row(`${G.pointer} ${i + 1}. wa.me/${String(n).split('@')[0]}`),
+            )
+            .join('\n')
+        : row(`${G.cross} not configured`)
+
+      await reply(info('Owner', 'Contact Card', body))
     },
   },
 ]
