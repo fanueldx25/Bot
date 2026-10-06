@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { initAuthCreds, proto } from '@whiskeysockets/baileys'
+import { initAuthCreds, WAProto as proto } from '@whiskeysockets/baileys'
 import config from './config.js'
 
 export const pool = new pg.Pool({
