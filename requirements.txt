@@ -1,26 +1,9 @@
-# --- Core web / config ---
 Flask==3.0.3
 python-dotenv==1.0.1
 requests==2.32.3
-Werkzeug==3.0.3
-
-# --- Telegram ---
 python-telegram-bot==21.6
-
-# --- AI backend ---
 openai==1.51.0
-
-# --- Document / image tooling ---
 fpdf2==2.7.9
 Pillow==11.1.0
-
-# --- Web scraping ---
 beautifulsoup4==4.12.3
 lxml==5.3.0
-
-# --- WhatsApp (unofficial) ---
-neonize==0.5.2
-
-# --- neonize transitive deps pinned to avoid resolver churn ---
-protobuf==4.25.5
-websockets==12.0
