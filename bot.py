@@ -1,5 +1,6 @@
 import os
 import time
+import asyncio
 import logging
 import threading
 
@@ -22,7 +23,6 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "").strip()
 
-# System prompt comes from environment, with a default fallback
 DEFAULT_SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
     (
@@ -43,7 +43,6 @@ AVAILABLE_MODELS = [
     "nemotron-3-ultra",
 ]
 
-# Ensure the default model is always selectable
 if DEFAULT_MODEL not in AVAILABLE_MODELS:
     AVAILABLE_MODELS.insert(0, DEFAULT_MODEL)
 
@@ -92,9 +91,7 @@ def current_prompt(context: ContextTypes.DEFAULT_TYPE) -> str:
     return context.chat_data.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
 
 
-async def send_formatted(
-    update: Update, text: str, parse_mode: str = ParseMode.MARKDOWN_V2
-) -> None:
+async def send_formatted(update: Update, text: str, parse_mode: str = ParseMode.MARKDOWN_V2) -> None:
     try:
         await update.message.reply_text(text, parse_mode=parse_mode)
     except Exception as e:
@@ -136,19 +133,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     active = current_model(context)
     buttons = [
-        [
-            InlineKeyboardButton(
-                f"{'✅ ' if m == active else ''}{m}",
-                callback_data=f"model:{m}",
-            )
-        ]
+        [InlineKeyboardButton(f"{'✅ ' if m == active else ''}{m}", callback_data=f"model:{m}")]
         for m in AVAILABLE_MODELS
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     text = f"*Current model:* `{escape_markdown(active)}`\n\nChoose a model below:"
-    await update.message.reply_text(
-        text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard
-    )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
 
 
 async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -166,14 +156,7 @@ async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """View or set the system prompt for this chat.
-    Usage:
-      /prompt                -> shows current prompt
-      /prompt <new prompt>   -> sets a custom prompt
-    """
-    # context.args contains the words after /prompt
     args = context.args
-
     if not args:
         active = current_prompt(context)
         text = (
@@ -186,7 +169,6 @@ async def prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         try:
             await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception:
-            # Prompt may contain characters that break MarkdownV2; fall back
             await update.message.reply_text(
                 f"Current system prompt:\n\n{active}\n\n"
                 "To set a new prompt, send: /prompt <your prompt>\n"
@@ -207,20 +189,13 @@ async def prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
-async def reset_prompt_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def reset_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.chat_data.pop("system_prompt", None)
-    await update.message.reply_text(
-        "✅ System prompt restored to default.",
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    await update.message.reply_text("✅ System prompt restored to default.", parse_mode=ParseMode.MARKDOWN_V2)
 
 
 async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await context.bot.send_chat_action(
-        update.effective_chat.id, ChatAction.UPLOAD_PHOTO
-    )
+    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
     await update.message.reply_photo(
         photo="https://telegram.org/img/t_logo.png",
         caption=escape_markdown("Here's a sample photo! 📸"),
@@ -229,9 +204,7 @@ async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def document_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await context.bot.send_chat_action(
-        update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT
-    )
+    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
     await update.message.reply_document(
         document="https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
         caption=escape_markdown("Here's a sample document! 📄"),
@@ -261,9 +234,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await send_formatted(update, escape_markdown(ai_response))
     except Exception as e:
         logger.error(f"Error calling Ollama API: {e}")
-        await update.message.reply_text(
-            "Sorry, I encountered an error. Please try again later."
-        )
+        await update.message.reply_text("Sorry, I encountered an error. Please try again later.")
 
 
 # ---------- 7. Register Handlers ----------
@@ -275,9 +246,7 @@ application.add_handler(CommandHandler("resetprompt", reset_prompt_command))
 application.add_handler(CommandHandler("photo", photo_command))
 application.add_handler(CommandHandler("document", document_command))
 application.add_handler(CallbackQueryHandler(model_callback, pattern=r"^model:"))
-application.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-)
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 
 # ---------- 8. Frontend (HTML Status Page) ----------
@@ -419,16 +388,11 @@ def index():
 
 @flask_app.route("/health")
 def health():
-    return (
-        jsonify(
-            {
-                "status": "ok",
-                "uptime": get_uptime(),
-                "bot_running": BOT_STATE["running"],
-            }
-        ),
-        200,
-    )
+    return jsonify({
+        "status": "ok",
+        "uptime": get_uptime(),
+        "bot_running": BOT_STATE["running"],
+    }), 200
 
 
 # ---------- 9. Self-Ping (keep-alive for Render free tier) ----------
@@ -458,11 +422,23 @@ def main() -> None:
         logger.error("❌ Missing env vars. Check Render settings.")
         return
 
+    # Clean up any old webhook that might block polling
+    try:
+        import requests
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook")
+        logger.info(f"Webhook cleanup: {r.json()}")
+    except Exception as e:
+        logger.warning(f"Could not delete webhook: {e}")
+
     def run_bot():
         try:
             logger.info(f"🚀 Bot starting with default model: {DEFAULT_MODEL}")
+            
+            # CRITICAL: Create a new asyncio event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
             BOT_STATE["running"] = True
-            # stop_signals=None is REQUIRED when running in a non-main thread
             application.run_polling(
                 allowed_updates=Update.ALL_TYPES,
                 stop_signals=None,
