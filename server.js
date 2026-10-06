@@ -15,24 +15,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export function createServer() {
   const app = express()
-  
-  app.use(
-    helmet({
-      contentSecurityPolicy: false, // allow inline scripts in the single-file frontend
-    }),
-  )
+  app.use(helmet({ contentSecurityPolicy: false }))
   app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
   
-  /* Rate limits */
   const authLimiter = rateLimit({ windowMs: 15 * 60_000, max: 30 })
   const apiLimiter = rateLimit({ windowMs: 60_000, max: 120 })
-  
   app.use('/api/', apiLimiter)
   
-  /* -------- auth helpers -------- */
-  const signToken = (userId) =>
-    jwt.sign({ uid: userId }, config.jwtSecret, { expiresIn: '7d' })
+  const signToken = (uid) =>
+    jwt.sign({ uid }, config.jwtSecret, { expiresIn: '7d' })
   
   const setCookie = (res, token) =>
     res.cookie(config.cookieName, token, {
@@ -54,13 +46,12 @@ export function createServer() {
     }
   }
   
-  /* -------- auth routes -------- */
+  /* ── Auth ──────────────────────────────────────────────── */
   app.post('/api/auth/register', authLimiter, async (req, res) => {
     try {
       const { email, password } = req.body ?? {}
       if (!email || !password || password.length < 8)
         return res.status(400).json({ error: 'Email + password (8+ chars) required' })
-      
       const hash = await bcrypt.hash(password, 12)
       const user = await Users.create(email, hash)
       setCookie(res, signToken(user.id))
@@ -77,7 +68,6 @@ export function createServer() {
       const user = await Users.findByEmail(email ?? '')
       if (!user || !(await bcrypt.compare(password ?? '', user.password_hash)))
         return res.status(401).json({ error: 'Invalid credentials' })
-      
       setCookie(res, signToken(user.id))
       res.json({ user: { id: user.id, email: user.email } })
     } catch (e) {
@@ -91,11 +81,10 @@ export function createServer() {
   })
   
   app.get('/api/me', auth, async (req, res) => {
-    const user = await Users.findById(req.userId)
-    res.json({ user })
+    res.json({ user: await Users.findById(req.userId) })
   })
   
-  /* -------- sessions -------- */
+  /* ── Sessions ──────────────────────────────────────────── */
   app.get('/api/sessions', auth, async (req, res) => {
     const list = await Sessions.listByUser(req.userId)
     res.json({
@@ -110,12 +99,8 @@ export function createServer() {
       
       const session = await Sessions.create(req.userId, phone)
       
-      // Start bot, wait for pairing code
       const pairingPromise = new Promise((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error('Pairing code timeout')),
-          20_000,
-        )
+        const timer = setTimeout(() => reject(new Error('Pairing code timeout')), 20_000)
         startBot(session.id, {
           onPairingCode: (code, err) => {
             clearTimeout(timer)
@@ -133,17 +118,44 @@ export function createServer() {
     }
   })
   
-  app.delete('/api/sessions/:id', auth, async (req, res) => {
+  app.patch('/api/sessions/:id', auth, async (req, res) => {
     const id = Number(req.params.id)
     const session = await Sessions.get(id, req.userId)
     if (!session) return res.status(404).json({ error: 'Not found' })
     
+    const { mode, selfMode } = req.body ?? {}
+    
+    if (mode !== undefined) {
+      if (!['private', 'public'].includes(mode))
+        return res.status(400).json({ error: 'mode must be private or public' })
+      await Sessions.setMode(id, mode)
+    }
+    if (selfMode !== undefined) {
+      await Sessions.setSelfMode(id, Boolean(selfMode))
+    }
+    
+    const updated = await Sessions.get(id, req.userId)
+    res.json({
+      session: {
+        id: updated.id,
+        phone_number: updated.phone_number,
+        status: updated.status,
+        mode: updated.mode,
+        self_mode: updated.self_mode,
+      },
+    })
+  })
+  
+  app.delete('/api/sessions/:id', auth, async (req, res) => {
+    const id = Number(req.params.id)
+    const session = await Sessions.get(id, req.userId)
+    if (!session) return res.status(404).json({ error: 'Not found' })
     await stopBot(id)
     await Sessions.delete(id, req.userId)
     res.json({ ok: true })
   })
   
-  /* -------- static frontend -------- */
+  /* ── Static frontend ──────────────────────────────────── */
   app.use(express.static(path.join(__dirname, 'public')))
   app.get('*', (_req, res) =>
     res.sendFile(path.join(__dirname, 'public', 'index.html')),

@@ -8,7 +8,7 @@
   :root {
     --bg: #0b1220; --panel: #131a2b; --panel-2: #1a2238; --text: #e6ebf5;
     --muted: #8896b3; --accent: #25d366; --accent-2: #1ea34d;
-    --danger: #ef4444; --border: #223052;
+    --danger: #ef4444; --border: #223052; --warn: #f59e0b;
   }
   * { box-sizing: border-box; }
   body {
@@ -49,15 +49,32 @@
     margin: 16px 0;
   }
   .session {
+    padding: 16px; background: var(--panel-2); border-radius: 12px;
+    margin-bottom: 10px; border: 1px solid var(--border);
+  }
+  .session-head {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 14px; background: var(--panel-2); border-radius: 10px;
-    margin-bottom: 8px; border: 1px solid var(--border);
+    margin-bottom: 12px;
   }
   .badge {
     font-size: 11px; padding: 3px 8px; border-radius: 999px; font-weight: 600;
     background: #29365b; color: var(--muted);
   }
   .badge.ok { background: #12351f; color: #46d67e; }
+  .badge.warn { background: #3a2c0d; color: #fbbf24; }
+  .toggles { display: flex; gap: 10px; flex-wrap: wrap; }
+  .toggle {
+    flex: 1; min-width: 150px; padding: 10px 12px; border-radius: 10px;
+    background: #0f1526; border: 1px solid var(--border); cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px;
+  }
+  .toggle:hover { border-color: var(--accent); }
+  .toggle .label { color: var(--muted); }
+  .toggle .value { font-weight: 600; }
+  .toggle .value.on  { color: var(--accent); }
+  .toggle .value.off { color: var(--muted); }
+  .toggle .value.pub { color: var(--warn); }
   .muted { color: var(--muted); font-size: 13px; }
   .err { color: var(--danger); font-size: 13px; margin-top: 8px; }
   .hide { display: none !important; }
@@ -70,7 +87,6 @@
   <h1>🤖 NovaBot</h1>
   <p class="sub">Link your WhatsApp and manage commands.</p>
 
-  <!-- Login / register -->
   <div id="auth" class="card">
     <div class="tabs">
       <button id="tabLogin" class="ghost">Login</button>
@@ -84,7 +100,6 @@
     <div id="authError" class="err"></div>
   </div>
 
-  <!-- Dashboard -->
   <div id="dash" class="hide">
     <div class="card">
       <div class="row" style="justify-content: space-between;">
@@ -99,17 +114,15 @@
     <div class="card">
       <h2 style="margin-top: 0; font-size: 18px;">Link a new number</h2>
       <p class="muted" style="margin-top: 0;">
-        Enter your number in international format without “+”. We'll give you a
-        pairing code to enter inside WhatsApp → Linked Devices.
+        International format, no “+”. Example: <code>237651858408</code>.
       </p>
       <label>Phone number</label>
-      <input id="phone" placeholder="254712345678" />
+      <input id="phone" placeholder="237651858408" />
       <button id="addSession">Get pairing code</button>
       <div id="pairing" class="hide">
         <div class="code" id="pairingCode">----</div>
         <p class="muted" style="text-align:center;">
-          Open WhatsApp → Settings → Linked Devices → Link with phone number,
-          then enter the code above.
+          WhatsApp → Settings → Linked Devices → Link with phone number → enter the code.
         </p>
       </div>
       <div id="sessionError" class="err"></div>
@@ -137,13 +150,12 @@ const api = async (path, opts = {}) => {
 };
 
 let mode = 'login';
-
 function setMode(next) {
   mode = next;
-  $('tabLogin').style.background = next === 'login' ? 'var(--accent)' : 'transparent';
-  $('tabLogin').style.color = next === 'login' ? '#04140a' : 'var(--text)';
-  $('tabRegister').style.background = next === 'register' ? 'var(--accent)' : 'transparent';
-  $('tabRegister').style.color = next === 'register' ? '#04140a' : 'var(--text)';
+  $('tabLogin').style.background   = next === 'login'    ? 'var(--accent)' : 'transparent';
+  $('tabLogin').style.color        = next === 'login'    ? '#04140a'       : 'var(--text)';
+  $('tabRegister').style.background= next === 'register' ? 'var(--accent)' : 'transparent';
+  $('tabRegister').style.color     = next === 'register' ? '#04140a'       : 'var(--text)';
   $('authSubmit').textContent = next === 'login' ? 'Login' : 'Create account';
   $('authError').textContent = '';
 }
@@ -154,13 +166,10 @@ $('authSubmit').onclick = async () => {
   $('authError').textContent = '';
   try {
     const body = { email: $('email').value, password: $('password').value };
-    await api(mode === 'login' ? '/api/auth/login' : '/api/auth/register', {
-      method: 'POST', body,
-    });
+    await api(mode === 'login' ? '/api/auth/login' : '/api/auth/register',
+      { method: 'POST', body });
     await loadDashboard();
-  } catch (e) {
-    $('authError').textContent = e.message;
-  }
+  } catch (e) { $('authError').textContent = e.message; }
 };
 
 $('logout').onclick = async () => {
@@ -173,22 +182,23 @@ $('addSession').onclick = async () => {
   $('pairing').classList.add('hide');
   const phone = $('phone').value.trim();
   if (!phone) return;
-
   const btn = $('addSession');
-  btn.disabled = true;
-  btn.textContent = 'Requesting code…';
+  btn.disabled = true; btn.textContent = 'Requesting code…';
   try {
     const { code } = await api('/api/sessions', { method: 'POST', body: { phone } });
     $('pairingCode').textContent = code;
     $('pairing').classList.remove('hide');
     await loadSessions();
-  } catch (e) {
-    $('sessionError').textContent = e.message;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Get pairing code';
-  }
+  } catch (e) { $('sessionError').textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = 'Get pairing code'; }
 };
+
+async function toggleSession(id, patch) {
+  try {
+    await api(`/api/sessions/${id}`, { method: 'PATCH', body: patch });
+    await loadSessions();
+  } catch (e) { alert(e.message); }
+}
 
 async function loadSessions() {
   const { sessions } = await api('/api/sessions');
@@ -199,15 +209,20 @@ async function loadSessions() {
     return;
   }
   for (const s of sessions) {
-    const row = document.createElement('div');
-    row.className = 'session';
-    const left = document.createElement('div');
-    left.innerHTML = `<div style="font-weight:600;">+${s.phone_number}</div>
-      <div class="muted">${s.status}</div>`;
-    const right = document.createElement('div');
-    right.className = 'row';
-    right.innerHTML = `<span class="badge ${s.status === 'connected' ? 'ok' : ''}">
-      ${s.status}</span>`;
+    const card = document.createElement('div');
+    card.className = 'session';
+
+    const head = document.createElement('div');
+    head.className = 'session-head';
+    head.innerHTML = `
+      <div>
+        <div style="font-weight:600;">+${s.phone_number}</div>
+        <div class="muted">${s.status}</div>
+      </div>
+      <div class="row">
+        <span class="badge ${s.status === 'connected' ? 'ok' : ''}">${s.status}</span>
+      </div>`;
+
     const del = document.createElement('button');
     del.className = 'danger';
     del.style.width = 'auto';
@@ -219,10 +234,30 @@ async function loadSessions() {
       await api('/api/sessions/' + s.id, { method: 'DELETE' });
       await loadSessions();
     };
-    right.appendChild(del);
-    row.appendChild(left);
-    row.appendChild(right);
-    box.appendChild(row);
+    head.querySelector('.row').appendChild(del);
+
+    const toggles = document.createElement('div');
+    toggles.className = 'toggles';
+
+    const modeBtn = document.createElement('div');
+    modeBtn.className = 'toggle';
+    modeBtn.innerHTML = `<span class="label">Mode</span>
+      <span class="value ${s.mode === 'public' ? 'pub' : 'on'}">${(s.mode || 'private').toUpperCase()}</span>`;
+    modeBtn.onclick = () =>
+      toggleSession(s.id, { mode: s.mode === 'public' ? 'private' : 'public' });
+
+    const selfBtn = document.createElement('div');
+    selfBtn.className = 'toggle';
+    selfBtn.innerHTML = `<span class="label">Self-mode</span>
+      <span class="value ${s.self_mode ? 'on' : 'off'}">${s.self_mode ? 'ON' : 'OFF'}</span>`;
+    selfBtn.onclick = () => toggleSession(s.id, { selfMode: !s.self_mode });
+
+    toggles.appendChild(modeBtn);
+    toggles.appendChild(selfBtn);
+
+    card.appendChild(head);
+    card.appendChild(toggles);
+    box.appendChild(card);
   }
 }
 

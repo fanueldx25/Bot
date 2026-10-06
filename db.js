@@ -4,15 +4,15 @@ import config from './config.js'
 
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
-  ssl: config.databaseUrl?.includes('localhost') ?
-    false :
-    { rejectUnauthorized: false },
+  ssl: config.databaseUrl?.includes('localhost')
+    ? false
+    : { rejectUnauthorized: false },
   max: 10,
 })
 
-/* ------------------------------------------------------------------ */
-/*  Schema                                                             */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────────────────────────────────── */
+/*  Schema                                                     */
+/* ──────────────────────────────────────────────────────────── */
 export async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -28,9 +28,15 @@ export async function initDb() {
       phone_number   TEXT NOT NULL,
       creds          JSONB,
       status         TEXT NOT NULL DEFAULT 'pending',
+      mode           TEXT NOT NULL DEFAULT 'private',
+      self_mode      BOOLEAN NOT NULL DEFAULT TRUE,
       created_at     TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE(user_id, phone_number)
     );
+
+    -- idempotent migrations for existing deployments
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'private';
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS self_mode BOOLEAN NOT NULL DEFAULT TRUE;
 
     CREATE TABLE IF NOT EXISTS auth_keys (
       session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -41,9 +47,9 @@ export async function initDb() {
   `)
 }
 
-/* ------------------------------------------------------------------ */
-/*  Buffer-safe JSON (Baileys keys contain Buffers)                    */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────────────────────────────────── */
+/*  Buffer-safe JSON                                           */
+/* ──────────────────────────────────────────────────────────── */
 const bufferReviver = (_k, v) =>
   v?.type === 'Buffer' && Array.isArray(v.data) ? Buffer.from(v.data) : v
 
@@ -53,20 +59,20 @@ const bufferReplacer = (_k, v) => {
   return v
 }
 
-/* ------------------------------------------------------------------ */
-/*  Baileys auth state backed by PostgreSQL                            */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────────────────────────────────── */
+/*  Baileys auth state backed by Postgres                      */
+/* ──────────────────────────────────────────────────────────── */
 export async function usePostgresAuthState(sessionId) {
   const { rows } = await pool.query(
     'SELECT creds FROM sessions WHERE id = $1',
     [sessionId],
   )
   if (!rows[0]) throw new Error(`Session ${sessionId} not found`)
-  
-  const creds = rows[0].creds ?
-    JSON.parse(JSON.stringify(rows[0].creds), bufferReviver) :
-    initAuthCreds()
-  
+
+  const creds = rows[0].creds
+    ? JSON.parse(JSON.stringify(rows[0].creds), bufferReviver)
+    : initAuthCreds()
+
   return {
     state: {
       creds,
@@ -78,10 +84,8 @@ export async function usePostgresAuthState(sessionId) {
           )
           const all = rows[0]?.data ?? {}
           const out = {}
-          for (const id of ids) {
-            if (all[id] !== undefined) out[id] = all[id]
-          }
-          // Deserialize Buffers and apply proto coercion for app-state keys
+          for (const id of ids) if (all[id] !== undefined) out[id] = all[id]
+
           const parsed = JSON.parse(JSON.stringify(out), bufferReviver)
           if (type === 'app-state-sync-key' && parsed) {
             for (const k of Object.keys(parsed)) {
@@ -92,7 +96,7 @@ export async function usePostgresAuthState(sessionId) {
           }
           return parsed
         },
-        
+
         set: async (data) => {
           for (const [type, values] of Object.entries(data)) {
             const { rows } = await pool.query(
@@ -100,12 +104,12 @@ export async function usePostgresAuthState(sessionId) {
               [sessionId, type],
             )
             const existing = rows[0]?.data ?? {}
-            
+
             for (const [id, val] of Object.entries(values)) {
               if (val === null) delete existing[id]
               else existing[id] = JSON.parse(JSON.stringify(val, bufferReplacer))
             }
-            
+
             await pool.query(
               `INSERT INTO auth_keys (session_id, type, data)
                VALUES ($1, $2, $3)
@@ -125,9 +129,9 @@ export async function usePostgresAuthState(sessionId) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Users                                                              */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────────────────────────────────── */
+/*  Users                                                      */
+/* ──────────────────────────────────────────────────────────── */
 export const Users = {
   async create(email, passwordHash) {
     const { rows } = await pool.query(
@@ -151,24 +155,24 @@ export const Users = {
   },
 }
 
-/* ------------------------------------------------------------------ */
-/*  Sessions                                                           */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────────────────────────────────── */
+/*  Sessions                                                   */
+/* ──────────────────────────────────────────────────────────── */
 export const Sessions = {
   async create(userId, phoneNumber) {
     const { rows } = await pool.query(
-      `INSERT INTO sessions (user_id, phone_number, status)
-       VALUES ($1, $2, 'pending')
+      `INSERT INTO sessions (user_id, phone_number, status, mode, self_mode)
+       VALUES ($1, $2, 'pending', $3, $4)
        ON CONFLICT (user_id, phone_number)
        DO UPDATE SET status = 'pending'
        RETURNING *`,
-      [userId, phoneNumber],
+      [userId, phoneNumber, config.defaults.mode, config.defaults.selfMode],
     )
     return rows[0]
   },
   async listByUser(userId) {
     const { rows } = await pool.query(
-      `SELECT id, phone_number, status, created_at
+      `SELECT id, phone_number, status, mode, self_mode, created_at
        FROM sessions WHERE user_id = $1 ORDER BY id DESC`,
       [userId],
     )
@@ -187,6 +191,15 @@ export const Sessions = {
   },
   async setStatus(id, status) {
     await pool.query('UPDATE sessions SET status = $1 WHERE id = $2', [status, id])
+  },
+  async setMode(id, mode) {
+    await pool.query('UPDATE sessions SET mode = $1 WHERE id = $2', [mode, id])
+  },
+  async setSelfMode(id, enabled) {
+    await pool.query('UPDATE sessions SET self_mode = $1 WHERE id = $2', [
+      enabled,
+      id,
+    ])
   },
   async delete(id, userId) {
     await pool.query('DELETE FROM sessions WHERE id = $1 AND user_id = $2', [
